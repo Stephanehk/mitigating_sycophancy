@@ -61,7 +61,9 @@ import threading
 
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Moved to legacy/; the harness modules it imports live in ../mitigations/.
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mitigations"))
 from explore_mitigations import call_llm, make_client, OEQ_DATA_CSV
 from our_mitigation import format_concerns
 

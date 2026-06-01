@@ -4,9 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository nature
 
-This is an OSF (Open Science Framework) data archive accompanying a research project on **sycophancy in LLM responses to interpersonal-advice scenarios**. It is not a software product — it is a reproducibility bundle of analysis code, raw response data, and study materials. There is no build system, test suite, package manifest, or git repo here. Work is done ad hoc in Python / Jupyter.
+This is a research codebase for **studying and mitigating sycophancy in LLM responses to interpersonal-advice scenarios**, built on the ELEPHANT social-sycophancy benchmark. It is a git repo, but not a packaged product: no build system or package manifest, and work is done ad hoc in Python / Jupyter — though there are runnable harness scripts and a couple of `test_*` files under `mitigations/`. Use the project interpreter `/next/u/stephhk/miniconda3/envs/llm/bin/python` (the base env lacks `matplotlib` / `anthropic`); set `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` before running anything that calls an LLM.
 
-Everything lives under `osfstorage-archive/`:
+## Repository layout
+
+See `README.md` for the full description. In brief:
+
+- `mitigations/` — the single-turn mitigation harness. The entry point `explore_mitigations.py` (envs `PAS`/`AITA`/`OEQ`/`AITA-NTA-FLIP`/`OEQ_2`) re-exports its shared library from the `mitigations/core/` package (`config`, `models`, `prompts`, `data`, `llm`, `checkpoint`, `metrics`, `run`), so existing `from explore_mitigations import ...` callers keep working — preserve those re-exports. The proposed stakeholder-concerns method is in `our_mitigation.py` / `our_mitigation_v2.py` (v1 is kept on purpose because v2 imports helpers from it). Plots: `plot_explore_mitigations.py`. Outputs land in `mitigations/results/` and `mitigations/plots_*/`.
+- `eval_empathy/` — empathy-judging pipeline (`judge_empathy.py`, `empathy_judge_prompt.py`, `run_empathy_baselines.py`, `plot_empathy*.py`); imports the harness from `mitigations/` via `sys.path`.
+- `reproduce/` — scripts that re-derive the ELEPHANT PAS action-endorsement judge against the paper's own released labels (`reproduce_pas_judge_*.py`, `sanity_rejudge_paper_pas.py`, `for_myra/`). OSF paths are anchored to the repo root, so they run from any cwd.
+- `legacy/` — superseded one-off scripts, kept for reference only; not part of the active pipeline.
+- `open_router_utils/` — OpenRouter client used to route non-Claude models.
+- `data/` — `aita_clean.csv` (checked in); other large CSVs are gitignored.
+- `osfstorage-archive/` — the vendored OSF reproducibility bundle for the ELEPHANT paper. Obtained via download (see `README.md` "Required data"), gitignored.
+- `accommodation/`, `elephant/`, `ELEPHANT_datasets/`, `SYCON-Bench/` — third-party checkouts (prompts / source datasets), gitignored.
+
+The remaining sections document the **`osfstorage-archive/` bundle** specifically, which contains:
 
 - `Code/` — analysis scripts and notebooks
 - `Data/` — large CSVs of LLM responses and human survey responses (some files are 100s of MB; one is a 280 MB zip)

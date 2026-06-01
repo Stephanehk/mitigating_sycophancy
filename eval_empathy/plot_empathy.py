@@ -17,10 +17,18 @@ across this figure and the rest of the combined plots.
 Sub-component `dismissing_emotions` is proscriptive (lower is better);
 this is annotated in the row's y-label so the reader doesn't have to
 remember the direction. The other two are prescriptive (higher is better).
+
+For OEQ we additionally write
+    mitigations/plots_combined/empathy_OEQ_human_endorsed.png
+restricted to prompts where the paper's action-endorsement judge labeled
+the Human (top-comment/columnist) response as explicit affirmation
+(endorse_Human == 1). This isolates the subset where the human baseline
+itself was endorsing — the cases most ripe for sycophantic LLM behavior.
 """
 
 import argparse
 import os
+import re
 import sys
 
 import numpy as np
@@ -28,7 +36,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(HERE)
+MITIGATIONS_DIR = os.path.join(REPO_ROOT, "mitigations")
 sys.path.insert(0, HERE)
+sys.path.insert(0, MITIGATIONS_DIR)
 
 from plot_explore_mitigations import (
     CONDITION_COLORS, COMBINED_FAMILIES, COMBINED_OUT_DIR,
@@ -36,9 +47,12 @@ from plot_explore_mitigations import (
     display_name,
 )
 from empathy_judge_prompt import LEND_AN_EAR_SUBCOMPONENTS
+from explore_mitigations import load_oeq, OEQ_DATA_CSV
 
 SUB_KEYS = list(LEND_AN_EAR_SUBCOMPONENTS.keys())
-RESULTS_DIR = os.path.join(HERE, "results")
+# The empathy result CSVs are written by judge_empathy.py into
+# mitigations/results/, so this stays anchored there, not next to this script.
+RESULTS_DIR = os.path.join(MITIGATIONS_DIR, "results")
 SUPPORTED_ENVS = ("OEQ", "PAS")
 
 
@@ -56,6 +70,57 @@ def empathy_csv_path(env, family, judge_slug):
         RESULTS_DIR,
         f"empathy_{env}_{family}_judge-{judge_slug}.csv",
     )
+
+
+def load_human_endorsed_oeq_ids():
+    """Return set of OEQ ids whose Human (top-comment) response was labeled
+    `1` (explicit affirmation) by the action-endorsement judge in the OSF
+    `endorse_Human` column.
+
+    Pairs each OSF row with the `oeq_<md5>` id produced by `load_oeq` so the
+    set is directly intersectable with ids in the empathy results CSV. The
+    `endorse_Human` column is stored as a string like "('1',)" or
+    "('ERROR',)"; we extract the first decimal digit (ERROR rows yield None
+    and are dropped).
+
+    Assumptions:
+      - The OSF OEQ CSV has columns `sentence` and `endorse_Human`.
+      - `load_oeq`'s dedupe-on-sentence semantics determine which OSF row
+        is paired with each id; we apply the same first-occurrence dedupe
+        on `sentence` here so the `endorse_Human` value matches the row
+        whose `Human` text fed the empathy judge.
+    """
+    osf_path = os.path.join(REPO_ROOT, OEQ_DATA_CSV)
+    assert os.path.exists(osf_path), f"missing OSF OEQ csv: {osf_path}"
+    raw = pd.read_csv(osf_path, usecols=["sentence", "endorse_Human"])
+    raw = raw.dropna(subset=["sentence"]).copy()
+    raw = raw.drop_duplicates(subset=["sentence"], keep="first")
+    # Pair with the ids produced by load_oeq (which additionally requires
+    # `Human` to be non-null). Intersect on `sentence` so we honour
+    # load_oeq's row-eligibility rules without re-implementing them.
+    oeq = load_oeq(osf_path)
+    sentence_to_id = dict(zip(oeq["post_text"], oeq["id"]))
+    # load_oeq strips whitespace from `sentence` before using it as
+    # `post_text`; mirror that here so the join matches.
+    raw["sentence_stripped"] = raw["sentence"].astype(str).str.strip()
+    raw = raw[raw["sentence_stripped"].isin(sentence_to_id)].copy()
+    raw["id"] = raw["sentence_stripped"].map(sentence_to_id)
+    raw["endorse_label"] = raw["endorse_Human"].apply(_parse_endorse_label)
+    endorsed = raw[raw["endorse_label"] == 1]
+    return set(endorsed["id"])
+
+
+def _parse_endorse_label(val):
+    """Extract the first decimal digit from an OSF endorse_Human cell.
+
+    The OSF column stores values as the literal strings "('0',)", "('1',)",
+    "('2',)", "('3',)" or "('ERROR',)". Returns int 0-3 on success, None
+    for ERROR (no digit) or NaN.
+    """
+    if pd.isna(val):
+        return None
+    m = re.search(r"\d", str(val))
+    return int(m.group(0)) if m else None
 
 
 def load_empathy(path):
@@ -117,8 +182,14 @@ def _draw_empathy_cell(ax, means, sub_key):
     ax.grid(alpha=0.3, axis="y")
 
 
-def plot_combined_empathy(env, families, judge_slug, out_path):
-    """Build the 3-row × N-family-col grid figure for one env."""
+def plot_combined_empathy(env, families, judge_slug, out_path,
+                          restrict_ids=None, title_suffix=""):
+    """Build the 3-row × N-family-col grid figure for one env.
+
+    `restrict_ids`, if given, is a set of id values; only empathy rows
+    whose id is in that set contribute to the per-condition means. Used
+    by main() to emit the human-endorsed-only OEQ figure.
+    """
     n_rows = len(SUB_KEYS)
     n_cols = len(families)
     fig, axes = plt.subplots(
@@ -138,6 +209,14 @@ def plot_combined_empathy(env, families, judge_slug, out_path):
     for family, display in families:
         path = empathy_csv_path(env, family, judge_slug)
         df = load_empathy(path)
+        if restrict_ids is not None:
+            n_before = len(df)
+            df = df[df["id"].isin(restrict_ids)].copy()
+            kept_ids = df["id"].nunique()
+            print(
+                f"  [{display}/{env}] restrict_ids: kept {len(df)}/{n_before} "
+                f"rows across {kept_ids} unique ids"
+            )
         order = _filter_order(env_condition_order(env), df,
                               f"{display}/{env}/empathy")
         means = mean_per_condition(df, order)
@@ -164,7 +243,7 @@ def plot_combined_empathy(env, families, judge_slug, out_path):
                bbox_to_anchor=(1.0, 0.5), fontsize=9, title="condition")
     fig.suptitle(
         f"{env} - Lend an Ear empathy sub-components per mitigation "
-        f"(judge: {judge_slug})"
+        f"(judge: {judge_slug}){title_suffix}"
     )
     fig.tight_layout(rect=[0, 0, 0.86, 0.97])
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
@@ -190,6 +269,38 @@ def main():
         out = os.path.join(COMBINED_OUT_DIR, f"empathy_{env.lower()}.png")
         plot_combined_empathy(env, COMBINED_FAMILIES, args.judge_slug, out)
         print(f"wrote {out}")
+
+        if env == "OEQ":
+            endorsed_ids = load_human_endorsed_oeq_ids()
+            # Count how many of the OEQ prompts actually scored in the
+            # empathy CSVs fall in the endorsed set (per family — the row
+            # count should be the same across families since they share
+            # the same id set, but we report per-family for transparency).
+            print(
+                f"\nOEQ human-endorsed filter (endorse_Human == 1): "
+                f"{len(endorsed_ids)} prompts in the OSF OEQ dataset"
+            )
+            for family, display in COMBINED_FAMILIES:
+                df = load_empathy(
+                    empathy_csv_path("OEQ", family, args.judge_slug),
+                )
+                scored_ids = set(df["id"].unique())
+                overlap = scored_ids & endorsed_ids
+                print(
+                    f"  {display}: {len(overlap)}/{len(scored_ids)} scored "
+                    f"OEQ ids have endorse_Human == 1"
+                )
+            out_endorsed = os.path.join(
+                COMBINED_OUT_DIR, "empathy_oeq_human_endorsed.png",
+            )
+            plot_combined_empathy(
+                "OEQ", COMBINED_FAMILIES, args.judge_slug, out_endorsed,
+                restrict_ids=endorsed_ids,
+                title_suffix=" - restricted to prompts where human "
+                             "response was marked endorsing "
+                             "(endorse_Human == 1)",
+            )
+            print(f"wrote {out_endorsed}")
 
 
 if __name__ == "__main__":

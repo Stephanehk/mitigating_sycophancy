@@ -53,7 +53,13 @@ import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
+# judge_empathy.py now lives in eval_empathy/ but reuses the LLM client, the
+# judge-prompt builder, and the OEQ/PAS loaders that live in mitigations/.
+# Put that dir on the path so the imports below resolve regardless of cwd.
+MITIGATIONS_DIR = os.path.join(REPO_ROOT, "mitigations")
+# empathy_judge_prompt lives alongside this file in eval_empathy/.
 sys.path.insert(0, HERE)
+sys.path.insert(0, MITIGATIONS_DIR)
 
 from explore_mitigations import (
     make_client, model_slug, call_llm,
@@ -65,8 +71,26 @@ from empathy_judge_prompt import build_prompt, LEND_AN_EAR_SUBCOMPONENTS
 
 
 SUB_KEYS = list(LEND_AN_EAR_SUBCOMPONENTS.keys())
-RESULTS_DIR = os.path.join(HERE, "results")
+# The OEQ/PAS pipeline in main() reads/writes the explore_mitigations results
+# that live alongside the mitigations code, so RESULTS_DIR stays anchored
+# there rather than following this file into eval_empathy/.
+RESULTS_DIR = os.path.join(MITIGATIONS_DIR, "results")
 SUPPORTED_ENVS = ("OEQ", "PAS")
+
+# Restrict the empathy judge to the four conditions reported in the paper's
+# main empathy comparison (plot labels in plot_explore_mitigations.py):
+#   baseline             -> "no prompt"
+#   be_critical          -> "be critical"
+#   no_syco_critical     -> "(a) + (b)"
+#   stakeholder_concerns -> "ours"
+# All other conditions present in the explore_mitigations results CSV are
+# dropped before judging.
+CONDITIONS_TO_JUDGE = (
+    "baseline",
+    "be_critical",
+    "no_syco_critical",
+    "stakeholder_concerns",
+)
 
 
 def load_post_text(env):
@@ -112,6 +136,18 @@ def load_results(env, family):
     n_dropped = n_before - len(df)
     if n_dropped:
         print(f"[{env}/{family}] dropped {n_dropped} rows with NaN response")
+    present = set(df["condition"].unique())
+    missing = [c for c in CONDITIONS_TO_JUDGE if c not in present]
+    assert not missing, (
+        f"{path}: required conditions absent from results CSV: {missing}. "
+        f"Present conditions: {sorted(present)}"
+    )
+    n_before_cond = len(df)
+    df = df[df["condition"].isin(CONDITIONS_TO_JUDGE)].copy()
+    print(
+        f"[{env}/{family}] kept {len(df)}/{n_before_cond} rows after filtering "
+        f"to conditions {list(CONDITIONS_TO_JUDGE)}"
+    )
     return df[["id", "condition", "response"]]
 
 

@@ -139,8 +139,8 @@ CONDITION_DISPLAY_NAMES = {
     "repeat_question": "Dubois et al.",
     "sharma_honesty": "Sharma et al., prompt",
     "explicit": "explicit (Cheng et al., 2026)",
-    "stakeholder_concerns": "ours",
-    "stakeholder_concerns_v2": "ours v2",
+    "stakeholder_concerns": "prompt-stakeholders",
+    "stakeholder_concerns_v2": "prompt-stakeholders v2",
     "no_syco_critical_avoid_validation": "(a) + (b) + avoiding validation prompt",
 }
 
@@ -495,10 +495,56 @@ def oeq_label_counts_per_condition(df, condition_order):
     return pd.DataFrame(rows).set_index("condition")
 
 
-def _draw_aita_panel(ax, rates):
+def paper_ci_halfwidths(rates, ns, z=1.96):
+    """Return (lower_err, upper_err) arrays of 95% CI half-widths for each
+    proportion in `rates`, formatted for use as a matplotlib errorbar
+    `xerr`/`yerr`.
+
+    Matches the CI definition used in the OSF archive
+    (`osfstorage-archive/Code/evaluate_action_endorsement_stephane.py:
+    action_endorsement_rate`): a half-width of `1.96 * SEM`, where
+    `SEM = std(ddof=1) / sqrt(n)` of the binary {0,1} label vector. Every
+    proportion plotted in these figures is the mean of such a 0/1 indicator
+    vector (FPR/FNR over parsed verdicts, endorsement rate over {0,1} labels,
+    flipped-pair sycophancy/critical scores, judge-vs-human mismatch), so for a
+    binary vector that SEM reduces in closed form to `sqrt(p*(1-p)/(n-1))`,
+    which this computes directly from `(p, n)` — numerically identical to the
+    archive's `v.std(ddof=1)/sqrt(len(v))`.
+
+    The interval is symmetric (normal/Wald approximation), so the lower and
+    upper half-widths are equal; both are returned so the errorbar call site
+    stays uniform with the asymmetric-CI shape.
+
+    Inputs:
+      rates: sequence of proportions in [0, 1], each equal to k / n.
+      ns:    sequence of integer denominators (>= 2), aligned with `rates`.
+
+    Assumptions (validated):
+      - every n >= 2 (SEM with ddof=1 is undefined for n < 2; the archive
+        returns NaN there, which would break plotting),
+      - rates[i] * ns[i] rounds to an integer count (i.e. the inputs really are
+        a raw k/n proportion, not some already-derived ratio).
+    """
+    rates = np.asarray(rates, dtype=float)
+    ns = np.asarray(ns, dtype=float)
+    assert (ns >= 2).all(), "1.96*SEM CI undefined for n < 2 (ddof=1)"
+    counts = np.round(rates * ns)
+    assert np.allclose(counts, rates * ns), (
+        "paper_ci_halfwidths expects integer success counts; got non-integral "
+        "rate*n — the input is not a raw k/n proportion"
+    )
+    half = z * np.sqrt(rates * (1.0 - rates) / (ns - 1.0))
+    return half, half
+
+
+def _draw_aita_panel(ax, rates, ci=False):
     """Render the FPR-vs-FNR scatter onto `ax`. Does NOT set a title or add
     a legend — those belong to the caller so the same helper drives both the
     single-axes `plot_aita_pareto` and the multi-axes combined facet plot.
+
+    When `ci=True`, overlays 95% CIs (1.96·SEM, matching the OSF archive) as x/y error bars,
+    using the per-condition denominators (`n_nta_truth` for FPR, `n_yta_truth`
+    for FNR) already carried in `rates`.
 
     Draws a fan of iso-error diagonals (FPR + FNR = c for c in
     0.2, 0.4, 0.6, 0.8, 1.0) so the eye can read which point lies on the
@@ -523,7 +569,11 @@ def _draw_aita_panel(ax, rates):
                 linewidth=0.8, alpha=0.6, zorder=1)
     ax.plot([0, 1], [1, 0], linestyle="--", color="grey", linewidth=1,
             label="FPR + FNR = 1 (no-skill baseline)", zorder=1)
-    _scatter_conditions(ax, xs, ys, conds)
+    xerr = yerr = None
+    if ci:
+        xerr = paper_ci_halfwidths(rates["fpr"], rates["n_nta_truth"])
+        yerr = paper_ci_halfwidths(rates["fnr"], rates["n_yta_truth"])
+    _scatter_conditions(ax, xs, ys, conds, xerr=xerr, yerr=yerr)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.set_xlabel("FPR")
@@ -531,7 +581,7 @@ def _draw_aita_panel(ax, rates):
     ax.grid(alpha=0.3)
 
 
-def _draw_endorse_pareto_panel(ax, counts, env_label):
+def _draw_endorse_pareto_panel(ax, counts, env_label, ci=False):
     """Render the {0,1}-only endorsement-vs-unendorsement scatter onto `ax`,
     over a per-condition `counts` DataFrame (as built by
     `oeq_label_counts_per_condition`). Reused by OEQ and PAS — paper §6.1.2's
@@ -541,7 +591,7 @@ def _draw_endorse_pareto_panel(ax, counts, env_label):
     `env_label` is used only in the assertion message when a condition has
     zero label-0/1 rows.
     """
-    xs, ys, conds = [], [], []
+    xs, ys, conds, ns = [], [], [], []
     for cond, row in counts.iterrows():
         denom = row[0] + row[1]
         assert denom > 0, (
@@ -551,9 +601,14 @@ def _draw_endorse_pareto_panel(ax, counts, env_label):
         xs.append(row[0] / denom)
         ys.append(row[1] / denom)
         conds.append(cond)
+        ns.append(denom)
     ax.plot([0, 1], [1, 0], linestyle="--", color="grey", linewidth=1,
             label="endorsement + unendorsement = 1", zorder=1)
-    _scatter_conditions(ax, xs, ys, conds)
+    # Both axes are proportions over the same {0,1} denominator, so the x and y
+    # 1.96·SEM CIs share `ns`.
+    xerr = paper_ci_halfwidths(xs, ns) if ci else None
+    yerr = paper_ci_halfwidths(ys, ns) if ci else None
+    _scatter_conditions(ax, xs, ys, conds, xerr=xerr, yerr=yerr)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.set_xlabel("unendorsement rate")
@@ -576,12 +631,16 @@ def plot_aita_pareto(rates, out_path):
     plt.close(fig)
 
 
-def _draw_aita_nta_flip_panel(ax, rates):
+def _draw_aita_nta_flip_panel(ax, rates, ci=False):
     """Render a bar chart of sycophancy_score_rate per condition onto `ax`.
     sycophancy_score_rate = #(both-NTA on the POV-flipped pair) / N. Lower
     is better — high values mean the model always sided with the user
     regardless of which POV was framed. One bar per condition, colored using
     CONDITION_COLORS; bar height annotated above the bar.
+
+    When `ci=True`, draws a 95% CI (1.96·SEM, matching the OSF archive) as a black vertical error
+    bar on each bar (denominator `n_total`), and lifts the numeric label above
+    the upper bound so it doesn't collide with the cap.
     """
     conds = rates["condition"].tolist()
     heights = rates["sycophancy_score_rate"].tolist()
@@ -591,8 +650,14 @@ def _draw_aita_nta_flip_panel(ax, rates):
     for xi, h, cond in zip(x, heights, conds):
         ax.bar(xi, h, color=CONDITION_COLORS[cond], edgecolor="black",
                linewidth=0.5, label=display_name(cond))
-    for xi, v in zip(x, heights):
-        ax.text(xi, v + 0.01, f"{v:.2f}", ha="center", va="bottom", fontsize=8)
+    upper = [0.0] * len(heights)
+    if ci:
+        yerr = paper_ci_halfwidths(heights, rates["n_total"])
+        ax.errorbar(x, heights, yerr=np.array(yerr), fmt="none", ecolor="black",
+                    elinewidth=1.0, capsize=3, zorder=4)
+        upper = yerr[1]
+    for xi, v, u in zip(x, heights, upper):
+        ax.text(xi, v + u + 0.01, f"{v:.2f}", ha="center", va="bottom", fontsize=8)
     ax.set_xticks(x)
     ax.set_xticklabels([display_name(c) for c in conds],
                        rotation=30, ha="right", fontsize=8)
@@ -646,16 +711,27 @@ def _overlap_sizes(xs, ys, base_size=120, step=110, tol=2):
     return sizes
 
 
-def _scatter_conditions(ax, xs, ys, conditions):
+def _scatter_conditions(ax, xs, ys, conditions, xerr=None, yerr=None):
     """Plot one colored point per condition using CONDITION_COLORS, with the
     display name as `label=` so a subsequent ax.legend() picks them up.
     Overlapping points get progressively-larger sizes for the back markers
     (see `_overlap_sizes`) so every condition's color stays visible.
+
+    `xerr` / `yerr`, if given, are each a `(lower_err, upper_err)` pair of
+    length-N arrays (as returned by `paper_ci_halfwidths`) drawn as per-point
+    error bars in the point's own color. The bars are drawn behind the markers
+    (lower zorder) so the colored dot stays on top.
     """
     sizes = _overlap_sizes(xs, ys)
-    for x, y, cond, size in zip(xs, ys, conditions, sizes):
+    for i, (x, y, cond, size) in enumerate(zip(xs, ys, conditions, sizes)):
         assert cond in CONDITION_COLORS, f"no color assigned for condition {cond!r}"
-        ax.scatter(x, y, s=size, zorder=3, color=CONDITION_COLORS[cond],
+        color = CONDITION_COLORS[cond]
+        if xerr is not None or yerr is not None:
+            xe = None if xerr is None else np.array([[xerr[0][i]], [xerr[1][i]]])
+            ye = None if yerr is None else np.array([[yerr[0][i]], [yerr[1][i]]])
+            ax.errorbar(x, y, xerr=xe, yerr=ye, fmt="none", ecolor=color,
+                        elinewidth=1.0, capsize=3, alpha=0.6, zorder=2)
+        ax.scatter(x, y, s=size, zorder=3, color=color,
                    edgecolor="black", linewidth=0.5, label=display_name(cond))
 
 
@@ -947,7 +1023,7 @@ def plot_oeq_summary(counts, disagreement, out_path):
     plt.close(fig)
 
 
-def _draw_pas_bar_panel(ax, counts, env_label):
+def _draw_pas_bar_panel(ax, counts, env_label, ci=False):
     """Render a bar chart of endorsement_rate (the sycophancy rate) per
     condition onto `ax`, over a per-condition `counts` DataFrame (as built
     by `oeq_label_counts_per_condition`).
@@ -963,6 +1039,7 @@ def _draw_pas_bar_panel(ax, counts, env_label):
     """
     conds = list(counts.index)
     heights = []
+    ns = []
     for cond in conds:
         row = counts.loc[cond]
         denom = row[0] + row[1]
@@ -971,14 +1048,21 @@ def _draw_pas_bar_panel(ax, counts, env_label):
             f"endorsement_rate is undefined"
         )
         heights.append(row[1] / denom)
+        ns.append(denom)
     x = np.arange(len(conds))
     for cond in conds:
         assert cond in CONDITION_COLORS, f"no color assigned for condition {cond!r}"
     for xi, h, cond in zip(x, heights, conds):
         ax.bar(xi, h, color=CONDITION_COLORS[cond], edgecolor="black",
                linewidth=0.5, label=display_name(cond))
-    for xi, v in zip(x, heights):
-        ax.text(xi, v + 0.01, f"{v:.2f}", ha="center", va="bottom", fontsize=8)
+    upper = [0.0] * len(heights)
+    if ci:
+        yerr = paper_ci_halfwidths(heights, ns)
+        ax.errorbar(x, heights, yerr=np.array(yerr), fmt="none", ecolor="black",
+                    elinewidth=1.0, capsize=3, zorder=4)
+        upper = yerr[1]
+    for xi, v, u in zip(x, heights, upper):
+        ax.text(xi, v + u + 0.01, f"{v:.2f}", ha="center", va="bottom", fontsize=8)
     ax.set_xticks(x)
     ax.set_xticklabels([display_name(c) for c in conds],
                        rotation=30, ha="right", fontsize=8)
@@ -1130,7 +1214,7 @@ def plot_combined_aita(families, out_path):
         df = load_aita(csv)
         order = _filter_order(AITA_CONDITION_ORDER, df, f"{display}/AITA")
         rates = aita_rates_per_condition(df, order)
-        _draw_aita_panel(ax, rates)
+        _draw_aita_panel(ax, rates, ci=True)
         ax.set_title(f"AITA - {display}")
     # One shared legend at the figure level (right side) instead of per-axes.
     handles, labels = axes[0].get_legend_handles_labels()
@@ -1160,7 +1244,7 @@ def plot_combined_endorse(env, condition_order, families, out_path):
         df = load_oeq(csv)
         order = _filter_order(condition_order, df, f"{display}/{env}")
         counts = oeq_label_counts_per_condition(df, order)
-        _draw_endorse_pareto_panel(ax, counts, env_label=f"{display}/{env}")
+        _draw_endorse_pareto_panel(ax, counts, env_label=f"{display}/{env}", ci=True)
         ax.set_title(f"{env} - {display}")
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="center right", bbox_to_anchor=(1.0, 0.5),
@@ -1171,7 +1255,7 @@ def plot_combined_endorse(env, condition_order, families, out_path):
     plt.close(fig)
 
 
-def _draw_oeq_human_diff_panel(ax, counts, env_label):
+def _draw_oeq_human_diff_panel(ax, counts, env_label, ci=False):
     """Render a horizontal bar of endorsement_rate per non-human condition,
     with a dotted red vertical line marking the `human_reference` condition's
     rate (no bar drawn for the human reference itself). Each bar is labeled
@@ -1197,6 +1281,7 @@ def _draw_oeq_human_diff_panel(ax, counts, env_label):
 
     method_conds = [c for c in counts.index if c != "human_reference"]
     rates = []
+    ns = []
     for cond in method_conds:
         row = counts.loc[cond]
         denom = row[0] + row[1]
@@ -1205,6 +1290,7 @@ def _draw_oeq_human_diff_panel(ax, counts, env_label):
             "endorsement_rate is undefined"
         )
         rates.append(row[1] / denom)
+        ns.append(denom)
     rates = np.array(rates)
     diffs = rates - human_rate
 
@@ -1214,17 +1300,28 @@ def _draw_oeq_human_diff_panel(ax, counts, env_label):
         ax.barh(yi, rate, color=CONDITION_COLORS[cond], edgecolor="black",
                 linewidth=0.5, label=display_name(cond))
 
+    # 95% CI (1.96·SEM, OSF-archive method) on each method's endorsement_rate (horizontal error
+    # bar). The human-reference line itself is a point estimate over the same
+    # {0,1} denominator; the per-method bars are what's being compared to it.
+    upper = np.zeros(len(rates))
+    if ci:
+        xerr = paper_ci_halfwidths(rates, ns)
+        ax.errorbar(rates, y, xerr=np.array(xerr), fmt="none", ecolor="black",
+                    elinewidth=1.0, capsize=3, zorder=4)
+        upper = xerr[1]
+
     ax.axvline(
         human_rate, color="red", linestyle=":", linewidth=2,
         label=f"human reference ({human_rate:.2f})",
     )
 
     # +x / -x label above each bar (slightly above the bar's vertical position,
-    # past the right end). Two decimal places so the sign is always readable.
-    for yi, rate, diff in zip(y, rates, diffs):
+    # past the right end of the bar / its error bar). Two decimal places so the
+    # sign is always readable.
+    for yi, rate, diff, u in zip(y, rates, diffs, upper):
         sign = "+" if diff >= 0 else "-"
         ax.text(
-            rate + 0.01, yi - 0.35,
+            rate + u + 0.01, yi - 0.35,
             f"{sign}{abs(diff):.2f}",
             va="bottom", ha="left", fontsize=8,
         )
@@ -1252,7 +1349,7 @@ def plot_combined_oeq_human_diff(families, out_path):
         df = load_oeq(csv)
         order = _filter_order(OEQ_CONDITION_ORDER, df, f"{display}/OEQ")
         counts = oeq_label_counts_per_condition(df, order)
-        _draw_oeq_human_diff_panel(ax, counts, env_label=f"{display}/OEQ")
+        _draw_oeq_human_diff_panel(ax, counts, env_label=f"{display}/OEQ", ci=True)
         ax.set_title(f"OEQ - {display}")
     # Shared figure-level legend (includes the human-reference dotted-line
     # entry from each axes). Pull from the first axes — all axes share the
@@ -1281,7 +1378,7 @@ def plot_combined_pas(families, out_path):
         df = load_oeq(csv)
         order = _filter_order(PAS_CONDITION_ORDER, df, f"{display}/PAS")
         counts = oeq_label_counts_per_condition(df, order)
-        _draw_pas_bar_panel(ax, counts, env_label=f"{display}/PAS")
+        _draw_pas_bar_panel(ax, counts, env_label=f"{display}/PAS", ci=True)
         ax.set_title(f"PAS - {display}")
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="center right", bbox_to_anchor=(1.0, 0.5),
@@ -1337,8 +1434,14 @@ def plot_combined_oeq_2(families, out_path):
             ax = axes[row_idx][col_idx]
             heights = rates[f"{metric}_mismatch_rate"].tolist()
             ax.bar(x, heights, color=colors)
-            for xi, v in zip(x, heights):
-                ax.text(xi, v + 0.01, f"{v:.2f}", ha="center", va="bottom",
+            # 95% CI (1.96·SEM, OSF-archive method) on the judge-vs-human
+            # mismatch rate; denominator = per-condition count of parsed (0/1)
+            # labels.
+            yerr = paper_ci_halfwidths(heights, rates[f"{metric}_n_classified"])
+            ax.errorbar(x, heights, yerr=np.array(yerr), fmt="none",
+                        ecolor="black", elinewidth=0.8, capsize=2, zorder=4)
+            for xi, v, u in zip(x, heights, yerr[1]):
+                ax.text(xi, v + u + 0.01, f"{v:.2f}", ha="center", va="bottom",
                         fontsize=7)
             ax.set_ylim(0, 1.05)
             ax.grid(alpha=0.3, axis="y")
@@ -1362,7 +1465,7 @@ def plot_combined_oeq_2(families, out_path):
     plt.close(fig)
 
 
-def _draw_aita_nta_flip_scatter_panel(ax, rates):
+def _draw_aita_nta_flip_scatter_panel(ax, rates, ci=False):
     """Render a critical_score_rate (x) vs sycophancy_score_rate (y) scatter,
     one point per condition. Both rates come from the same flipped-pair
     accounting in `aita_nta_flip_rates_per_condition`:
@@ -1374,7 +1477,10 @@ def _draw_aita_nta_flip_scatter_panel(ax, rates):
     xs = rates["critical_score_rate"].tolist()
     ys = rates["sycophancy_score_rate"].tolist()
     conds = rates["condition"].tolist()
-    _scatter_conditions(ax, xs, ys, conds)
+    # Both rates share the same per-condition denominator N (= n_total).
+    xerr = paper_ci_halfwidths(xs, rates["n_total"]) if ci else None
+    yerr = paper_ci_halfwidths(ys, rates["n_total"]) if ci else None
+    _scatter_conditions(ax, xs, ys, conds, xerr=xerr, yerr=yerr)
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.set_xlabel("critical rate  (#(both YTA) / N)")
@@ -1398,7 +1504,7 @@ def plot_combined_aita_nta_flip_scatter(families, out_path):
         df = load_aita_nta_flip(csv)
         order = _filter_order(AITA_NTA_FLIP_CONDITION_ORDER, df, f"{display}/AITA-NTA-FLIP")
         rates = aita_nta_flip_rates_per_condition(df, order)
-        _draw_aita_nta_flip_scatter_panel(ax, rates)
+        _draw_aita_nta_flip_scatter_panel(ax, rates, ci=True)
         ax.set_title(f"AITA-NTA-FLIPPED - {display}")
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="center right", bbox_to_anchor=(1.0, 0.5),
@@ -1425,7 +1531,7 @@ def plot_combined_aita_nta_flip(families, out_path):
         df = load_aita_nta_flip(csv)
         order = _filter_order(AITA_NTA_FLIP_CONDITION_ORDER, df, f"{display}/AITA-NTA-FLIP")
         rates = aita_nta_flip_rates_per_condition(df, order)
-        _draw_aita_nta_flip_panel(ax, rates)
+        _draw_aita_nta_flip_panel(ax, rates, ci=True)
         ax.set_title(f"AITA-NTA-FLIPPED - {display}")
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="center right", bbox_to_anchor=(1.0, 0.5),

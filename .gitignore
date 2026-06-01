@@ -1,15 +1,42 @@
 # Datasets — see README "Required data" for download instructions.
 accommodation/
+data/
 elephant/
 ELEPHANT_datasets/
-osfstorage-archive/
 SYCON-Bench/
+
+# osfstorage-archive is a vendored bundle (gitignored), but a few of our own
+# scripts under Code/ are checked in. Ignore everything except those.
+# (Git can't re-include a path whose parent dir is excluded, so ignore by
+# contents — `osfstorage-archive/*` — rather than the directory itself.)
+osfstorage-archive/*
+!osfstorage-archive/Code/
+osfstorage-archive/Code/*
+!osfstorage-archive/Code/evaluate_action_endorsement_stephane.py
 
 # Python
 __pycache__/
 *.py[cod]
 *.egg-info/
 .ipynb_checkpoints/
+
+# Run logs and regenerated reproduction outputs (large; not source).
+*.log
+*.out
+*.err
+*.bak
+reproduce/reproduce_pas_papercode_*.csv
+reproduce/results/
+# Regenerated judge/consistency CSVs under reproduce/ (incl. for_myra/) — outputs, not source.
+reproduce/**/*.csv
+
+# Model-training artifacts (adapters, checkpoints, response dumps; 100s of MB).
+training_mitigations/runs/
+training_mitigations/logs/
+*.safetensors
+*.bin
+*.pt
+*.ckpt
 
 # Local env / editor
 .env

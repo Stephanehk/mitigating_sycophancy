@@ -2,21 +2,34 @@
 
 Research code for studying and mitigating sycophancy in LLM responses to
 interpersonal-advice scenarios. Builds on the ELEPHANT social-sycophancy
-benchmark (arxiv:2510.01395) and the SYCON-Bench multi-turn benchmark
-(Hong et al. 2025, https://aclanthology.org/2025.findings-emnlp.121.pdf),
-adds new prompt- and multi-call mitigations on top, and sweeps them
-against a no-mitigation baseline across single-turn and multi-turn
-settings.
+benchmark (arxiv:2510.01395), adds new prompt- and multi-call mitigations
+on top, and sweeps them against a no-mitigation baseline across the
+single-turn AITA / OEQ / PAS settings.
 
 ## Layout
 
-- `mitigations/` — the main harness. Single-turn sweeps live in
+- `mitigations/` — the main harness. The sweep entrypoint is
   `explore_mitigations.py` (envs: `PAS`, `AITA`, `OEQ`, `AITA-NTA-FLIP`,
-  `OEQ_2`); multi-turn sweeps live in `explore_mitigations_multiturn.py`
-  (envs: `ethical`, `fp`). The proposed stakeholder-concerns method is in
-  `our_mitigation.py` / `our_mitigation_v2.py`. Empathy judging is in
-  `judge_empathy.py`. Plot scripts (`plot_*.py`) read the CSVs in
+  `OEQ_2`); its shared library lives in the `mitigations/core/` package
+  (`config`, `models`, `prompts`, `data`, `llm`, `checkpoint`, `metrics`,
+  `run`) and is re-exported by `explore_mitigations`, so
+  `from explore_mitigations import ...` keeps working. The proposed
+  stakeholder-concerns method is in `our_mitigation.py` /
+  `our_mitigation_v2.py`. Plot scripts (`plot_*.py`) read the CSVs in
   `mitigations/results/` and write into `mitigations/plots_*/`.
+- `eval_empathy/` — the empathy-evaluation pipeline: `judge_empathy.py`
+  scores harness responses on the Lend-an-Ear sub-components, with
+  `empathy_judge_prompt.py` (prompt builder), `run_empathy_baselines.py`,
+  and the `plot_empathy*.py` figures. Imports the harness from
+  `mitigations/` via `sys.path`.
+- `reproduce/` — standalone scripts that re-derive the ELEPHANT PAS
+  action-endorsement judge against the paper's own released labels
+  (`reproduce_pas_judge_*.py`, `sanity_rejudge_paper_pas.py`, and the
+  `for_myra/` colleague export). OSF paths are anchored to the repo root,
+  so these run from any working directory.
+- `legacy/` — superseded one-off scripts kept for reference (the early
+  `explore_desired_response.py`, the gpt-4o reruns, the trace inspector).
+  Not part of the active pipeline.
 - `open_router_utils/` — thin OpenRouter chat-completion client used by
   the harness to route non-Claude models. Reads `OPENROUTER_API_KEY` from
   the environment. Claude models are routed through the Anthropic SDK
