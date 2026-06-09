@@ -484,15 +484,29 @@ def main():
                     break
     if errors:
         n_done_this_run = len(results) - len(checkpoint)
-        print(f"\n{len(errors)} task(s) raised this run. "
-              f"Checkpoint at {ckpt_path} preserves "
+        # Per-task failures (e.g. a model that ignored the "fewer than N
+        # stakeholders" instruction and tripped the parse_stakeholders
+        # assertion) drop just that (id, condition) task. We surface every
+        # one loudly here, then still emit the CSV below from whatever
+        # completed — a few disobedient model outputs out of N posts must
+        # not discard an otherwise-finished sweep. The per-task assertions
+        # remain the fail-loud guard against genuinely runaway lists; this
+        # only changes whether the *run* aborts before writing the CSV.
+        print(f"\n{len(errors)} task(s) raised this run and were dropped "
+              f"from the output. Checkpoint at {ckpt_path} preserves "
               f"{n_done_this_run} successful task(s) from this run "
-              f"(plus {len(checkpoint)} from prior runs). "
-              f"Re-run the same command to retry the failed tasks.")
-        # Print cost over whatever did complete so the user can see how
-        # much was burned on a crashed run before we re-raise.
-        print_total_cost(pd.DataFrame(results), args.model, args.judge_model)
-        raise errors[0]
+              f"(plus {len(checkpoint)} from prior runs). Re-run the same "
+              f"command with --resume to retry the dropped tasks.")
+        for e in errors:
+            print(f"  - {type(e).__name__}: {e}")
+        # Still fail loud if NOTHING succeeded — a wholesale failure (not a
+        # few stray model outputs) must not silently write a degenerate CSV.
+        # Under --resume `results` is seeded with the checkpoint, so this only
+        # trips on a from-scratch run where every task failed.
+        assert results, (
+            f"every task failed; refusing to write an empty CSV. "
+            f"first error: {errors[0]!r}"
+        )
 
     results_df = pd.DataFrame(results)
     # Use the FULL condition registry (not the --only_run_ours-filtered set)
@@ -680,7 +694,10 @@ def main():
                                 print(f"    support: {s}")
                         print(f"  judge raw: {tr['judge_raw'].strip()}")
                         print(f"  judge reasoning: {tr['judge_reasoning']}")
-                        print(f"  judge verdict (parsed): {tr['judge_verdict']}")
+                        # FLIP per-variant traces store the parsed verdict under
+                        # `judge_response` (same as the OEQ/PAS stakeholder
+                        # traces), not `judge_verdict`.
+                        print(f"  judge response (parsed): {tr['judge_response']}")
                     continue
 
                 trace = r["trace"]

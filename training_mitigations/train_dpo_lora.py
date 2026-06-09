@@ -35,6 +35,9 @@ What it does:
        - all-vetoed prompts contribute 0 pairs that iteration; the
          next iteration re-samples them from the now-updated policy
          and may produce non-vetoed responses that contribute pairs;
+       - snapshots the adapter to `output_dir/adapter_iter_<k>` after
+         each iteration so every iteration is independently loadable
+         for evaluation;
        - saves the final LoRA adapter to `output_dir`.
 
 Per-env user prompt format used for sampling AND for the DPO prompt
@@ -219,6 +222,40 @@ def main():
         help="N — candidate responses sampled per training prompt (default: 10)",
     )
     parser.add_argument(
+        "--mixed-sampling", action="store_true",
+        help="variation 1: split the N candidates per prompt across sources "
+             "instead of all from the bare post — --n-source-model from the "
+             "bare post, --n-source-critical from the post + 'Be critical.', "
+             "and the remaining N budget round-robin across the prompt's "
+             "identified stakeholders (each voiced with its concerns). The "
+             "DPO prompt column stays the bare post.",
+    )
+    parser.add_argument(
+        "--n-source-model", type=int, default=2,
+        help="mixed sampling: candidates drawn from the bare post (default: 2)",
+    )
+    parser.add_argument(
+        "--n-source-critical", type=int, default=2,
+        help="mixed sampling: candidates drawn from the post + 'Be critical.' "
+             "(default: 2). The stakeholder budget is n_samples minus these two.",
+    )
+    parser.add_argument(
+        "--self-preference", action="store_true",
+        help="variation 2: for every unordered pair of NON-vetoed responses, "
+             "ask the policy (the model under training) to pick the better "
+             "advice (post in context) and add the resulting preference pair "
+             "to the DPO dataset, on top of the veto-based pairs.",
+    )
+    parser.add_argument(
+        "--preference-max-tokens", type=int, default=128,
+        help="max new tokens per self-preference label call (default: 128)",
+    )
+    parser.add_argument(
+        "--preference-max-pairs", type=int, default=0,
+        help="per-prompt cap on self-preference pairs (0 = no cap, i.e. all "
+             "C(k,2) pairs over k non-vetoed responses). Default: 0.",
+    )
+    parser.add_argument(
         "--max-tokens", type=int, default=DEFAULT_MAX_TOKENS,
         help=f"max new tokens for stakeholder / veto LLM calls (default: {DEFAULT_MAX_TOKENS})",
     )
@@ -377,6 +414,19 @@ def main():
         max_new_tokens=args.sample_max_tokens,
         temperature=args.temperature,
         top_p=args.top_p,
+        mixed_sampling=args.mixed_sampling,
+        n_source_model=args.n_source_model,
+        n_source_critical=args.n_source_critical,
+        self_preference=args.self_preference,
+        preference_max_tokens=args.preference_max_tokens,
+        preference_max_pairs=args.preference_max_pairs,
+    )
+    print(
+        f"[train] mixed_sampling={args.mixed_sampling} "
+        f"(model={args.n_source_model} critical={args.n_source_critical} "
+        f"stakeholder={args.n_samples - args.n_source_model - args.n_source_critical})  "
+        f"self_preference={args.self_preference} "
+        f"(max_pairs={args.preference_max_pairs or 'unlimited'})"
     )
 
     print(f"[train] starting iterative DPO+LoRA  iters={args.num_iterations}  output_dir={args.output_dir}")

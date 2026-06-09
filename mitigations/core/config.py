@@ -85,9 +85,14 @@ PRICING_PER_MTOK = {
     "deepseek/deepseek-chat": (0.28, 0.88),
     # Llama 4 Maverick (OpenRouter standard provider, looked up May 2026).
     "meta-llama/llama-4-maverick": (0.15, 0.60),
+    # Llama 4 Scout (OpenRouter standard provider, looked up Jun 2026).
+    "meta-llama/llama-4-scout": (0.08, 0.30),
     "meta-llama/llama-3.3-70b-instruct": (0.10, 0.32),
     "qwen/qwen3-235b-a22b-2507": (0.071, 0.10),
     "qwen/qwen3.6-plus": (0.325, 1.95),
+    # Qwen2.5-7B-Instruct (OpenRouter standard provider, looked up Jun 2026).
+    # Together's "-Turbo" variant maps here on OpenRouter.
+    "qwen/qwen-2.5-7b-instruct": (0.04, 0.10),
 }
 
 

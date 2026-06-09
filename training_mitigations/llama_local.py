@@ -48,6 +48,7 @@ def load_llama(
     dtype=None,
     device="cuda",
     cache_dir=None,
+    device_map=None,
 ):
     """Load `model_id` and its tokenizer onto `device`.
 
@@ -57,28 +58,41 @@ def load_llama(
         than later inside generate().
       - The user is authenticated for gated repos. HF picks up $HF_TOKEN
         automatically; if missing for a gated id, model load will raise.
-      - One process, one GPU. We do not use device_map="auto" because the
-        8B fits in a single a6000-48G in bf16 (~16 GB) and a single device
-        avoids cross-GPU traffic that we don't need for inference.
+      - By default (device_map=None): one process, one GPU — the 8B fits in
+        a single a6000-48G in bf16 (~16 GB) and a single device avoids the
+        cross-GPU traffic we don't need for inference. Pass `device_map`
+        (e.g. "auto") to shard the weights across multiple GPUs instead;
+        accelerate then dispatches the forward pass and we do NOT call
+        `.to(device)` (the model is already placed). This is the path for
+        running the 8B on >1 small GPU (e.g. 2x16 GB a4000) when one card
+        can't hold the bf16 weights.
 
     `dtype` defaults to bfloat16 on CUDA, float32 on CPU.
     `cache_dir` is passed through to HF; if None the env var $HF_HOME / the
     default ~/.cache/huggingface is used.
     """
-    if device.startswith("cuda"):
+    if device.startswith("cuda") or device_map is not None:
         assert torch.cuda.is_available(), (
-            f"requested device={device!r} but torch.cuda.is_available() is False"
+            f"requested device={device!r} / device_map={device_map!r} but "
+            f"torch.cuda.is_available() is False"
         )
     if dtype is None:
-        dtype = torch.bfloat16 if device.startswith("cuda") else torch.float32
+        on_cuda = device.startswith("cuda") or device_map is not None
+        dtype = torch.bfloat16 if on_cuda else torch.float32
 
     tokenizer = AutoTokenizer.from_pretrained(model_id, cache_dir=cache_dir)
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         torch_dtype=dtype,
         cache_dir=cache_dir,
+        device_map=device_map,
     )
-    model.to(device)
+    # When device_map is set, accelerate has already placed the shards;
+    # calling .to(device) would try to move the whole model onto one GPU and
+    # defeat the point (and OOM). Only place explicitly in the single-device
+    # path.
+    if device_map is None:
+        model.to(device)
     model.eval()
 
     # Greedy decoding doesn't need a pad token, but generate() warns if one

@@ -38,6 +38,16 @@ training_mitigations/logs/
 *.pt
 *.ckpt
 
+# Large regenerable mitigation outputs and downloaded bundles (10s–100s of MB
+# each). Small summary CSVs under mitigations/results/ stay trackable; the
+# per-response trace and judge-checkpoint streams, run backups, timestamped
+# .bak files, and the vendored OSF download zip do not.
+*.zip
+*_traces.jsonl
+*.checkpoint.jsonl
+*.bak_*
+mitigations/results/backup_*/
+
 # Local env / editor
 .env
 .venv/

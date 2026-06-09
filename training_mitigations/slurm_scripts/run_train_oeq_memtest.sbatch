@@ -1,6 +1,6 @@
 #!/bin/bash
 # MEMORY DIAGNOSTIC run — submit with:
-#   sbatch training_mitigations/run_train_oeq_memtest.sbatch
+#   sbatch training_mitigations/slurm_scripts/run_train_oeq_memtest.sbatch
 # (from the repo root). Short OEQ DPO run used only to capture the
 # host/GPU memory curve via training_mitigations/mem_probe.py while we
 # chase the OOM that killed the full runs (jobs 15601660 / 15601662).
