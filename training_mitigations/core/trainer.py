@@ -62,6 +62,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from llama_local import build_chat_input
 from mem_probe import mem_line
 from simulated_stakeholders import _format_bullets
+from concurrency import concurrent_map
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +133,30 @@ A or B
 <one-sentence justification>"""
 
 
+def _preference_pair_indices(k, max_pairs):
+    """Enumerate the index pairs (i, j), i < j, over k responses in
+    offset-major order: all adjacent pairs (j - i == 1) first, then
+    offset 2, and so on. Returns a list of (i, j) tuples, truncated to
+    `max_pairs` if it is > 0 (0 = no cap, all C(k, 2) pairs).
+
+    Why offset-major instead of the lexicographic nested-loop order:
+    when a cap is active, lexicographic order exhausts response 0's
+    pairings first (a cap of 10 at k=10 keeps response 0 in 9 of the 10
+    pairs), and with mixed sampling the low indices are all bare-model
+    samples — the capped subset would systematically over-represent one
+    source. Offset-major order spreads the kept pairs nearly evenly
+    across all k responses. Deterministic — no RNG, so the reproducible
+    train path and resume stay intact.
+    """
+    pairs = []
+    for offset in range(1, k):
+        for i in range(k - offset):
+            pairs.append((i, i + offset))
+    if max_pairs:
+        pairs = pairs[:max_pairs]
+    return pairs
+
+
 class Trainer:
     """Pairs a sampler (HF model + tokenizer) with a SimulatedStakeholders
     veto judge to produce a DPO-ready preference dataset.
@@ -160,7 +185,12 @@ class Trainer:
                  n_source_critical=2,
                  self_preference=False,
                  preference_max_tokens=128,
-                 preference_max_pairs=0):
+                 preference_max_pairs=0,
+                 policy_sampler=None,
+                 sync_policy_to_vllm=None,
+                 policy_adapter_name="policy",
+                 chunk_size=64,
+                 stage_concurrency=128):
         """
         sim_stake:     a SimulatedStakeholders instance (see
                        simulated_stakeholders.py).
@@ -200,7 +230,10 @@ class Trainer:
                        (one A/B token + a one-sentence reason fits in 128).
         preference_max_pairs: per-prompt cap on preference pairs (0 = no cap,
                        i.e. all C(k,2) pairs over k non-vetoed responses). A
-                       safety valve since C(k,2) grows quadratically.
+                       safety valve since C(k,2) grows quadratically. When
+                       the cap binds, pairs are kept in the offset-major
+                       order of `_preference_pair_indices`, which spreads
+                       them nearly evenly across the k responses.
         """
         assert temperature > 0, (
             f"temperature must be > 0 for stochastic sampling (got {temperature}); "
@@ -228,6 +261,23 @@ class Trainer:
         self.self_preference = self_preference
         self.preference_max_tokens = preference_max_tokens
         self.preference_max_pairs = preference_max_pairs
+        # Optional vLLM policy sampling. When `policy_sampler` is set, candidate
+        # sampling and the greedy preference labeler run on the shared vLLM
+        # engine (base + the current LoRA, served as `policy_adapter_name`)
+        # instead of HF `self.model.generate`; `sync_policy_to_vllm(adapter_dir)`
+        # hot-loads the current adapter into that engine before each iteration's
+        # sampling so vLLM reflects the latest policy weights. When None, the
+        # original in-process HF generation path is used (unchanged).
+        self.policy_sampler = policy_sampler
+        self.sync_policy_to_vllm = sync_policy_to_vllm
+        self.policy_adapter_name = policy_adapter_name
+        # Per-stage batching: prompts are processed in chunks of `chunk_size`,
+        # and within each chunk every stage (sample / veto / preference) fans
+        # its per-prompt or per-(response, stakeholder) calls out across up to
+        # `stage_concurrency` threads so the vLLM server batches them. See
+        # `_build_iteration`.
+        self.chunk_size = chunk_size
+        self.stage_concurrency = stage_concurrency
 
     def _generate_n(self, user_prompt, n):
         """Draw `n` stochastic responses from the policy for an arbitrary
@@ -242,6 +292,14 @@ class Trainer:
         """
         if n <= 0:
             return []
+        # vLLM policy path: sample n completions on the shared engine using the
+        # current policy adapter. Same chat template / enable_thinking=False as
+        # the HF path (see vllm_sim.make_vllm_policy_sampler), validated to
+        # parity with HF logprobs in build_vllm_parity_check.py.
+        if self.policy_sampler is not None:
+            return self.policy_sampler(
+                user_prompt, int(n), self.temperature, self.top_p,
+                int(self.max_new_tokens), adapter=self.policy_adapter_name)
         device = next(self.model.parameters()).device
         input_ids = build_chat_input(self.tokenizer, user_prompt, system=None, device=device)
         in_len = input_ids.shape[1]
@@ -342,6 +400,11 @@ class Trainer:
         Used by the preference labeler so the A/B verdict is deterministic
         given the current policy weights. Returns the decoded new text.
         """
+        if self.policy_sampler is not None:
+            return self.policy_sampler(
+                user_prompt, 1, self.temperature, self.top_p,
+                int(max_new_tokens), adapter=self.policy_adapter_name,
+                greedy=True)[0]
         device = next(self.model.parameters()).device
         input_ids = build_chat_input(self.tokenizer, user_prompt, system=None, device=device)
         in_len = input_ids.shape[1]
@@ -387,32 +450,31 @@ class Trainer:
         order of A/B alternates by pair index; the verdict is mapped back to
         the actual responses regardless of presentation order.
 
-        Honors `preference_max_pairs` (0 = unlimited). Returns a list of
+        Honors `preference_max_pairs` (0 = unlimited); pairs are enumerated
+        in `_preference_pair_indices` offset-major order so a capped subset
+        covers all responses nearly evenly instead of exhausting response
+        0's pairings first. Returns a list of
         {"prompt", "chosen", "rejected"} dicts; `prompt` is the bare post.
         """
         pairs = []
         k = len(non_vetoed)
         if k < 2:
             return pairs
-        pair_idx = 0
-        for i in range(k):
-            for j in range(i + 1, k):
-                if self.preference_max_pairs and len(pairs) >= self.preference_max_pairs:
-                    return pairs
-                # Alternate presentation order to balance position bias.
-                if pair_idx % 2 == 0:
-                    shown_a, shown_b = non_vetoed[i], non_vetoed[j]
-                else:
-                    shown_a, shown_b = non_vetoed[j], non_vetoed[i]
-                pair_idx += 1
-                choice = self._elicit_preference(prompt, shown_a, shown_b)
-                chosen = shown_a if choice == "A" else shown_b
-                rejected = shown_b if choice == "A" else shown_a
-                pairs.append({
-                    "prompt": prompt,
-                    "chosen": chosen,
-                    "rejected": rejected,
-                })
+        index_pairs = _preference_pair_indices(k, self.preference_max_pairs)
+        for pair_idx, (i, j) in enumerate(index_pairs):
+            # Alternate presentation order to balance position bias.
+            if pair_idx % 2 == 0:
+                shown_a, shown_b = non_vetoed[i], non_vetoed[j]
+            else:
+                shown_a, shown_b = non_vetoed[j], non_vetoed[i]
+            choice = self._elicit_preference(prompt, shown_a, shown_b)
+            chosen = shown_a if choice == "A" else shown_b
+            rejected = shown_b if choice == "A" else shown_a
+            pairs.append({
+                "prompt": prompt,
+                "chosen": chosen,
+                "rejected": rejected,
+            })
         return pairs
 
     def create_prompt_sample(self, x):
@@ -477,11 +539,55 @@ class Trainer:
             all_pairs.extend(self.create_prompt_sample(x))
         return Dataset.from_list(all_pairs)
 
+    def _sample_chunk(self, chunk):
+        """Sample (responses, sources) for every prompt in `chunk`, fanned out
+        concurrently so the vLLM engine batches generation across prompts.
+        Returns a list aligned with `chunk`; each element is the
+        (responses, sources) pair the former per-prompt path produced.
+
+        Mixed sampling reads each prompt's stakeholder data from the sim cache
+        (primed in stage A, so this is a free hit). The non-mixed path tags
+        every sample "model", matching the original.
+        """
+        if self.mixed_sampling:
+            def _one(x):
+                _candidates, entries = self.sim_stake._stakeholder_data_for(x)
+                return self._sample_responses_mixed(x, entries)
+        else:
+            def _one(x):
+                responses = self._sample_responses(x)
+                return responses, ["model"] * len(responses)
+        return concurrent_map(_one, chunk, self.stage_concurrency)
+
+    def _preference_chunk(self, chunk, non_vetoed_list):
+        """Build variation-2 self-preference pairs for every prompt in `chunk`,
+        fanned out across prompts. `non_vetoed_list[i]` is prompt i's surviving
+        responses. Returns a list aligned with `chunk`; each element is that
+        prompt's pair list (empty when self_preference is off or < 2 survive).
+        Reuses `_policy_preference_pairs` unchanged, so each prompt's pairs and
+        their order match the per-prompt path exactly.
+        """
+        def _one(args):
+            x, non_vetoed = args
+            if self.self_preference and len(non_vetoed) >= 2:
+                return self._policy_preference_pairs(x, non_vetoed)
+            return []
+        return concurrent_map(
+            _one, list(zip(chunk, non_vetoed_list)), self.stage_concurrency)
+
     def _build_iteration(self, prompts, iter_idx, output_dir):
         """Sample + veto + build pairs for one outer iteration.
 
-        For each prompt: sample N candidates from the current policy,
-        veto via the sim, cross-pair vetoed × non-vetoed.
+        Processes `prompts` in chunks of `self.chunk_size`, running each stage
+        BREADTH-FIRST across the chunk (prime stakeholder data -> sample ->
+        veto -> preference -> reduce) so each stage's LLM calls fan out
+        concurrently and the vLLM server batches them. The reduce step (stage E)
+        runs in global prompt order, so the output — pairs, the
+        `responses_iter_*.jsonl` records, and the diagnostics — is identical to
+        the former per-prompt loop for a deterministic judge.
+
+        Per prompt the pipeline still: samples N candidates from the current
+        policy, vetoes via the sim, cross-pairs vetoed × non-vetoed.
 
         Persists every prompt's raw samples to
         `<output_dir>/responses_iter_<iter_idx+1>.jsonl` (one JSON object
@@ -523,73 +629,88 @@ class Trainer:
         contributing = 0
         responses_path = os.path.join(output_dir, f"responses_iter_{iter_idx + 1}.jsonl")
         with open(responses_path, "w") as responses_file:
-            for idx, x in enumerate(prompts):
+            for chunk_start in range(0, len(prompts), self.chunk_size):
+                chunk = prompts[chunk_start:chunk_start + self.chunk_size]
                 for d in range(torch.cuda.device_count()):
                     torch.cuda.reset_peak_memory_stats(d)
 
-                # Sampling. Mixed sampling (variation 1) needs the prompt's
-                # stakeholder data up front to generate stakeholder-voiced
-                # candidates; fetching it here populates the sim's per-prompt
-                # cache so the veto_responses call below reuses it for free.
-                if self.mixed_sampling:
-                    _candidates, entries = self.sim_stake._stakeholder_data_for(x)
-                    responses, sources = self._sample_responses_mixed(x, entries)
-                else:
-                    responses = self._sample_responses(x)
-                    sources = ["model"] * len(responses)
-                mem_line(f"it{iter_idx} p{idx} sampled in_chars={len(x)} n={len(responses)}")
+                # Stage A: stakeholder data (identify+filter+concerns) for every
+                # prompt in the chunk, primed concurrently. Needed by veto
+                # always, and by mixed sampling for stakeholder-voiced
+                # candidates. Afterwards the per-prompt _stakeholder_data_for
+                # lookups in stages B/C are free cache hits.
+                self.sim_stake.prime_stakeholder_cache(chunk, self.stage_concurrency)
 
-                vetoed = self.sim_stake.veto_responses(x, responses)
-                mem_line(f"it{iter_idx} p{idx} vetoed v={len(vetoed)}")
+                # Stage B: sample candidates for every prompt, fanned out.
+                sampled = self._sample_chunk(chunk)
+                mem_line(f"it{iter_idx} chunk@{chunk_start} sampled n_prompts={len(chunk)}")
 
-                vetoed_set = set(vetoed)
-                non_vetoed = [r for r in responses if r not in vetoed_set]
+                # Stage C: veto every (prompt, response, stakeholder) at once.
+                veto_items = [(chunk[i], sampled[i][0]) for i in range(len(chunk))]
+                vetoed_list = self.sim_stake.veto_responses_batch(
+                    veto_items, self.stage_concurrency)
+                mem_line(f"it{iter_idx} chunk@{chunk_start} vetoed")
 
-                # Veto-based cross pairs (every vetoed × every non-vetoed).
-                # Empty when nothing was vetoed or nothing survived.
-                prompt_pairs = []
-                for r in vetoed:
-                    for c in non_vetoed:
-                        prompt_pairs.append({
-                            "prompt": x,
-                            "chosen": c,
-                            "rejected": r,
-                        })
+                # Stage D: self-preference pairs over each prompt's non-vetoed
+                # responses, fanned out across prompts.
+                non_vetoed_list = []
+                for i in range(len(chunk)):
+                    responses = sampled[i][0]
+                    vetoed_set = set(vetoed_list[i])
+                    non_vetoed_list.append(
+                        [r for r in responses if r not in vetoed_set])
+                pref_list = self._preference_chunk(chunk, non_vetoed_list)
 
-                # Variation 2: add policy-labeled preference pairs over the
-                # non-vetoed responses, on top of the veto pairs.
-                num_pref_pairs = 0
-                if self.self_preference and len(non_vetoed) >= 2:
-                    pref_pairs = self._policy_preference_pairs(x, non_vetoed)
+                # Stage E: reduce in global prompt order — build pairs, persist
+                # the per-prompt responses record, accumulate diagnostics. Pure
+                # Python; produces output identical to the former per-prompt
+                # loop (same pair order, same jsonl schema, same global idx).
+                for i in range(len(chunk)):
+                    idx = chunk_start + i
+                    x = chunk[i]
+                    responses, sources = sampled[i]
+                    vetoed = vetoed_list[i]
+                    non_vetoed = non_vetoed_list[i]
+
+                    # Veto-based cross pairs (every vetoed × every non-vetoed),
+                    # then variation-2 preference pairs on top.
+                    prompt_pairs = []
+                    for r in vetoed:
+                        for c in non_vetoed:
+                            prompt_pairs.append({
+                                "prompt": x,
+                                "chosen": c,
+                                "rejected": r,
+                            })
+                    pref_pairs = pref_list[i]
                     num_pref_pairs = len(pref_pairs)
                     prompt_pairs.extend(pref_pairs)
-                    mem_line(f"it{iter_idx} p{idx} pref_pairs={num_pref_pairs}")
 
-                # Persist raw samples + veto subset (and sources / pref count)
-                # so every prompt's responses are saved; flush per prompt so a
-                # mid-iteration crash still preserves generated work.
-                responses_file.write(json.dumps({
-                    "iter": iter_idx,
-                    "prompt_idx": idx,
-                    "prompt": x,
-                    "responses": responses,
-                    "sources": sources,
-                    "vetoed": vetoed,
-                    "num_pref_pairs": num_pref_pairs,
-                }) + "\n")
-                responses_file.flush()
+                    # Persist raw samples + veto subset (and sources / pref
+                    # count); flush per prompt so a mid-iteration crash still
+                    # preserves generated work.
+                    responses_file.write(json.dumps({
+                        "iter": iter_idx,
+                        "prompt_idx": idx,
+                        "prompt": x,
+                        "responses": responses,
+                        "sources": sources,
+                        "vetoed": vetoed,
+                        "num_pref_pairs": num_pref_pairs,
+                    }) + "\n")
+                    responses_file.flush()
 
-                # Diagnostics. With self_preference on, a zero-vetoed prompt
-                # (all accepted) can still contribute preference pairs, so
-                # these index lists are no longer mutually exclusive with
-                # `contributing` — they remain useful as veto-signal stats.
-                if len(vetoed) == 0:
-                    zero_vetoed_idx.append(idx)
-                if len(non_vetoed) == 0:
-                    all_vetoed_idx.append(idx)
-                if prompt_pairs:
-                    contributing += 1
-                    pairs.extend(prompt_pairs)
+                    # Diagnostics. With self_preference on, a zero-vetoed prompt
+                    # (all accepted) can still contribute preference pairs, so
+                    # these index lists are no longer mutually exclusive with
+                    # `contributing` — they remain useful as veto-signal stats.
+                    if len(vetoed) == 0:
+                        zero_vetoed_idx.append(idx)
+                    if len(non_vetoed) == 0:
+                        all_vetoed_idx.append(idx)
+                    if prompt_pairs:
+                        contributing += 1
+                        pairs.extend(prompt_pairs)
         return pairs, all_vetoed_idx, zero_vetoed_idx, contributing
 
     def _retemplate_prompt(self, prompt):
@@ -628,8 +749,11 @@ class Trainer:
               lora_dropout=0.05,
               lora_target_modules="all-linear",
               gradient_checkpointing=True,
+              precompute_ref_batch_size=8,
               logging_steps=10,
-              report_to="none"):
+              report_to="none",
+              start_iteration=0,
+              resume_adapter=None):
         """Iteratively fit a LoRA adapter on `self.model` (the policy) via
         DPO against preference pairs produced by sampling from the
         current policy + the (frozen) `sim_stake` veto signal.
@@ -675,6 +799,7 @@ class Trainer:
           beta, learning_rate, num_train_epochs,
           per_device_train_batch_size, gradient_accumulation_steps,
           max_length, lora_*, gradient_checkpointing,
+          precompute_ref_batch_size,
           logging_steps, report_to:    standard DPO/LoRA/HF knobs;
                                        see prior comments for caveats.
                                        (trl>=1.x DPOConfig dropped
@@ -721,7 +846,17 @@ class Trainer:
         if gradient_checkpointing:
             self.model.enable_input_require_grads()
 
-        self.model = get_peft_model(self.model, peft_config)
+        if resume_adapter is not None:
+            # Resume: load the saved adapter (e.g. adapter_iter_1) as a
+            # TRAINABLE LoRA instead of a fresh one, so iterations continue from
+            # that policy rather than the base. Pair with start_iteration so the
+            # already-done iterations are skipped.
+            from peft import PeftModel
+            self.model = PeftModel.from_pretrained(
+                self.model, resume_adapter, is_trainable=True)
+            print(f"[resume] loaded adapter {resume_adapter} (start_iteration={start_iteration})")
+        else:
+            self.model = get_peft_model(self.model, peft_config)
 
         use_bf16 = next(self.model.parameters()).dtype == torch.bfloat16
         base_dpo_args = dict(
@@ -740,6 +875,17 @@ class Trainer:
             # sequences. Precomputing moves that allocation to a phase with
             # ample headroom and drops it from the per-step peak entirely.
             precompute_ref_log_probs=True,
+            # Batch the precompute pass. trl defaults this to
+            # per_device_train_batch_size (1 here), which made the pass a
+            # rows-at-a-time crawl (~2h+ per iteration on the n1000 runs).
+            # It's pure no-grad inference with no training graph resident,
+            # so a bigger batch is safe; the bound is the transient
+            # full-vocab logits of the concatenated chosen+rejected batch
+            # (2 * batch sequences x padded_len x 152k vocab in bf16 —
+            # ~14 GB worst case at batch 8 / max_length 3072, against the
+            # ~30 GB of headroom the non-training phase leaves on a 48 GB
+            # card). Default 8 is the conservative end of the safe range.
+            precompute_ref_batch_size=int(precompute_ref_batch_size),
             gradient_checkpointing=bool(gradient_checkpointing),
             gradient_checkpointing_kwargs={"use_reentrant": False},
             bf16=use_bf16,
@@ -751,14 +897,26 @@ class Trainer:
 
         os.makedirs(output_dir, exist_ok=True)
         last_trainer = None
+        # On resume, preserve the already-completed iterations' stats.
         iter_stats = []
-        for iter_idx in range(int(num_iterations)):
+        stats_path = os.path.join(output_dir, "iter_stats.json")
+        if int(start_iteration) > 0 and os.path.exists(stats_path):
+            with open(stats_path) as f:
+                iter_stats = json.load(f)
+        for iter_idx in range(int(start_iteration), int(num_iterations)):
             tag = f"iter {iter_idx + 1}/{int(num_iterations)}"
 
             # Sampling — eval() suppresses dropout. _sample_responses
             # uses torch.no_grad internally, so no backprop graph is
             # built.
             self.model.eval()
+            # vLLM policy path: hot-load the current adapter into the shared
+            # engine so this iteration samples from the up-to-date policy.
+            # (No-op for the HF generation path.)
+            if self.sync_policy_to_vllm is not None:
+                sync_dir = os.path.join(output_dir, "policy_current")
+                self.model.save_pretrained(sync_dir)
+                self.sync_policy_to_vllm(sync_dir)
             print(f"[{tag}] sampling from policy + vetoing...")
             pairs, all_vetoed_idx, zero_vetoed_idx, contributing = (
                 self._build_iteration(prompts, iter_idx, output_dir)

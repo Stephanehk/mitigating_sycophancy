@@ -30,7 +30,7 @@ RUNS = {
     },
 }
 
-OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plots_dpo_summary")
+OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plots_dpo_summary")
 
 
 def plot_run(env, run):

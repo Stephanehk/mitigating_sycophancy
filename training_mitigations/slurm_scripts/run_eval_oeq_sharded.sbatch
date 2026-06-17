@@ -13,8 +13,8 @@
 # After the array finishes, recombine each model's shards with:
 #   PY=/next/u/stephhk/miniconda3/envs/llm/bin/python
 #   RUN=training_mitigations/runs/dpo_lora_oeq_qwen3-8b_n1000
-#   $PY training_mitigations/aggregate_endorsement_shards.py --run-dir $RUN --adapter-tag final --num-shards 2
-#   $PY training_mitigations/aggregate_endorsement_shards.py --run-dir $RUN --adapter-tag base  --num-shards 2
+#   $PY training_mitigations/eval/aggregate_endorsement_shards.py --run-dir $RUN --adapter-tag final --num-shards 2
+#   $PY training_mitigations/eval/aggregate_endorsement_shards.py --run-dir $RUN --adapter-tag base  --num-shards 2
 
 #SBATCH --job-name=eval_oeq_shard
 #SBATCH --account=next
@@ -55,8 +55,8 @@ echo "[task $SLURM_ARRAY_TASK_ID] model=$MODEL shard=$si/$NUM_SHARDS"
 
 COMMON=(--run-dir "$RUN" --device-map auto --seed 0 --num-shards "$NUM_SHARDS" --shard-id "$si")
 if [[ "$MODEL" == "base" ]]; then
-    "$PY" training_mitigations/eval_endorsement_heldout.py "${COMMON[@]}" --base
+    "$PY" training_mitigations/eval/eval_endorsement_heldout.py "${COMMON[@]}" --base
 else
-    "$PY" training_mitigations/eval_endorsement_heldout.py "${COMMON[@]}"
+    "$PY" training_mitigations/eval/eval_endorsement_heldout.py "${COMMON[@]}"
 fi
 echo "[task $SLURM_ARRAY_TASK_ID] done."

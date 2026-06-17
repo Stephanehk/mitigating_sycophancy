@@ -35,12 +35,13 @@ import sys
 
 import torch
 
-THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+THIS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _REPO_ROOT = os.path.dirname(THIS_DIR)
 # Same path wiring as train_dpo_lora.py: the harness lives in mitigations/,
 # the local helpers in training_mitigations/.
 sys.path.insert(0, os.path.join(_REPO_ROOT, "mitigations"))
 sys.path.insert(0, THIS_DIR)
+sys.path.insert(0, os.path.join(THIS_DIR, "core"))
 
 import our_mitigation
 import our_mitigation_v2

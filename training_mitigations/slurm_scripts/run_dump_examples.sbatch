@@ -25,4 +25,4 @@ fi
 export HUGGING_FACE_HUB_TOKEN="$HF_TOKEN"
 PY=/next/u/stephhk/miniconda3/envs/llm/bin/python
 echo "[sbatch] node=$(hostname) gpu=$(nvidia-smi --query-gpu=name --format=csv,noheader | paste -sd, -)"
-"$PY" training_mitigations/dump_stakeholder_examples.py
+"$PY" training_mitigations/labeling/dump_stakeholder_examples.py

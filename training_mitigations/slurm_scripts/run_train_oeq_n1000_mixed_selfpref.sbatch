@@ -12,9 +12,14 @@
 # adapter_iter_<k> by the trainer so each iteration is independently
 # evaluable. Writes to a distinct output dir so no other run is clobbered.
 #
+# SPEED: the sim judge runs on a vLLM server (--sim-backend vllm) so the
+# per-(stakeholder, response) veto calls fan out concurrently, and trl's
+# reference log-prob precompute pass is batched (--precompute-ref-batch-size).
+#
 # COST NOTE: this is the SLOWEST variant — mixed sampling adds stakeholder
-# identify/voice calls AND self-preference adds C(k,2) greedy policy calls
-# per prompt. Requires $HF_TOKEN.
+# identify/voice calls AND self-preference adds up to 10 greedy policy
+# calls per prompt (--preference-max-pairs 10, spread evenly across the
+# non-vetoed responses by trainer._preference_pair_indices). Requires $HF_TOKEN.
 
 #SBATCH --job-name=dpo_oeq_n1000_mixed_selfpref
 #SBATCH --account=next
@@ -32,6 +37,10 @@ set -euo pipefail
 export HF_HOME=/next/u/stephhk/.cache/huggingface
 mkdir -p "$HF_HOME"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# Compute nodes have flaky outbound DNS and Qwen3-8B is fully pre-cached
+# under $HF_HOME, so force hub-cache-only resolution: both the HF policy
+# load and the vLLM sim server skip all network lookups.
+export HF_HUB_OFFLINE=1
 
 if [[ -z "${HF_TOKEN:-}" ]]; then
     echo "ERROR: HF_TOKEN is not set. Export it in your shell before sbatch." >&2
@@ -53,6 +62,9 @@ echo "[sbatch] output_dir=$OUT_DIR"
     --seed 0 \
     --device cuda:0 \
     --sim-device cuda:1 \
+    --sim-backend vllm \
+    --veto-concurrency 16 \
+    --precompute-ref-batch-size 8 \
     --num-iterations 3 \
     --train-n 1000 \
     --test-n 500 \
@@ -62,7 +74,7 @@ echo "[sbatch] output_dir=$OUT_DIR"
     --n-source-critical 2 \
     --self-preference \
     --preference-max-tokens 128 \
-    --preference-max-pairs 0 \
+    --preference-max-pairs 10 \
     --temperature 1.0 \
     --top-p 0.95 \
     --max-tokens 1024 \

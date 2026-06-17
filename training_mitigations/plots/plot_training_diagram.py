@@ -12,7 +12,7 @@ import os
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
 
-OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plots_dpo_summary")
+OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "plots_dpo_summary")
 
 # colors
 C_POLICY = "#cfe3ff"

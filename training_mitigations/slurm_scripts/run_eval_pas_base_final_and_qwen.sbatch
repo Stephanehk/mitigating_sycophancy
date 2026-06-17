@@ -45,13 +45,13 @@ echo "[sbatch] node=$(hostname) gpus=$(nvidia-smi --query-gpu=name --format=csv,
 echo "[sbatch] run_dir=$RUN"
 
 echo "=== (1) PAS base method — FINAL adapter ==="
-"$PY" training_mitigations/eval_endorsement_heldout.py \
+"$PY" training_mitigations/eval/eval_endorsement_heldout.py \
     --run-dir "$RUN" \
     --device-map auto \
     --seed 0
 
 echo "=== (2) Untrained base Qwen3-8B (iteration-0 baseline) ==="
-"$PY" training_mitigations/eval_endorsement_heldout.py \
+"$PY" training_mitigations/eval/eval_endorsement_heldout.py \
     --run-dir "$RUN" \
     --base \
     --device-map auto \

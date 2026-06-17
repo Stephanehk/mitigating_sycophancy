@@ -47,11 +47,12 @@ import sys
 import pandas as pd
 import torch
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+_HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _REPO_ROOT = os.path.dirname(_HERE)
 # mitigations/ for the harness loaders; training_mitigations/ for llama_local.
 sys.path.insert(0, os.path.join(_REPO_ROOT, "mitigations"))
 sys.path.insert(0, _HERE)
+sys.path.insert(0, os.path.join(_HERE, "core"))
 
 from explore_mitigations import OEQ_DATA_CSV, PAS_DATA_CSV, load_oeq, load_pas
 from llama_local import DEFAULT_HF_MODEL_ID, load_llama, build_chat_input
@@ -105,10 +106,13 @@ def infer_env_from_run_dir(run_dir):
     return hits[0].upper()
 
 
-def held_out_prompts(env, run_dir):
-    """Return [(id, post_text), ...] for the run's held-out test ids, in the
-    order they were written to test_ids.json. Asserts every id resolves."""
-    test_ids_path = os.path.join(run_dir, "test_ids.json")
+def held_out_prompts(env, run_dir, test_ids_path=None):
+    """Return [(id, post_text), ...] for the held-out ids, in the order they
+    were written to the ids json. By default uses <run_dir>/test_ids.json; pass
+    test_ids_path to evaluate an explicit id set (e.g. a fresh held-out sample
+    or a combined 1000-prompt set). Asserts every id resolves."""
+    if test_ids_path is None:
+        test_ids_path = os.path.join(run_dir, "test_ids.json")
     assert os.path.exists(test_ids_path), f"missing {test_ids_path}"
     with open(test_ids_path) as f:
         ids = json.load(f)
@@ -203,6 +207,25 @@ def main():
     parser.add_argument("--base", action="store_true",
                         help="evaluate the untrained base model (no adapter); "
                              "the iteration-0 baseline")
+    parser.add_argument("--be-critical", action="store_true",
+                        help="prompt-only baseline: append the trainer's "
+                             "CRITICAL_SUFFIX ('\\n\\nBe critical.') to each "
+                             "held-out post at GENERATION time only. The judge "
+                             "still scores the bare post as the scenario, so "
+                             "endorsement is measured against the same scenario "
+                             "as the other conditions. Tags outputs "
+                             "'<adapter_tag>-becritical' so they don't clobber "
+                             "the bare-post eval.")
+    parser.add_argument("--gen-suffix", default=None,
+                        help="generic prompt-only baseline: append "
+                             "'\\n\\n<text>' to each held-out post at "
+                             "GENERATION time only (same mechanics as "
+                             "--be-critical, arbitrary instruction). "
+                             "Requires --gen-tag.")
+    parser.add_argument("--gen-tag", default=None,
+                        help="filename tag for --gen-suffix (e.g. "
+                             "'dontbesyco' -> outputs tagged "
+                             "'<adapter_tag>-dontbesyco')")
     parser.add_argument("--model-id", default=DEFAULT_HF_MODEL_ID,
                         help=f"base HF model id (default: {DEFAULT_HF_MODEL_ID})")
     parser.add_argument("--cache-dir", default=os.environ.get("HF_HOME"),
@@ -214,6 +237,15 @@ def main():
                              "accelerate (e.g. 'auto') instead of a single "
                              "--device. Use for >1 small GPU (e.g. 2x16GB "
                              "a4000) when one card can't hold the 8B weights.")
+    parser.add_argument("--tag-extra", default="",
+                        help="extra token inserted into output filenames "
+                             "(e.g. 'set2') so a run on a different held-out id "
+                             "set doesn't overwrite the original eval outputs")
+    parser.add_argument("--test-ids-file", default=None,
+                        help="explicit JSON list of held-out ids to evaluate, "
+                             "overriding <run-dir>/test_ids.json (e.g. a fresh "
+                             "disjoint held-out sample or a combined set). The "
+                             "ids must resolve in the env CSV.")
     parser.add_argument("--n", type=int, default=None,
                         help="limit to the first N held-out prompts (default: all)")
     parser.add_argument("--num-shards", type=int, default=1,
@@ -233,6 +265,14 @@ def main():
     parser.add_argument("--seed", type=int, default=0,
                         help="torch manual seed for the single-sample decoding")
     # judge knobs (passed straight through to the reused scorer).
+    parser.add_argument("--no-judge", action="store_true",
+                        help="generation only: sample responses and write "
+                             "responses_<tag>.csv (id,sentence,response) for the "
+                             "downstream sycoharm judge, WITHOUT running the "
+                             "Azure gpt-4o endorse judge. Requires no Azure "
+                             "creds and skips the broad-endorsement-rate step. "
+                             "This is the preferred mode when feeding the "
+                             "sycoharm-judge pipeline.")
     parser.add_argument("--judge-deployment", default="gpt-4o",
                         help="Azure deployment name for the judge (default: "
                              "gpt-4o; served snapshot is recorded per row)")
@@ -252,11 +292,13 @@ def main():
     env = args.env or infer_env_from_run_dir(args.run_dir)
 
     # Build the judge client FIRST so missing Azure creds fail before GPU work.
-    jm = load_judge_module()
-    jm.client = jm.build_client(use_openrouter=False)
-    jm.DEPLOYMENT_NAME = args.judge_deployment
-    jm.TEMPERATURE = None            # preserve shipped provider-default temp
-    jm.MAX_TOKENS = args.judge_max_tokens
+    # Skipped entirely under --no-judge (generation-only): no Azure dependency.
+    if not args.no_judge:
+        jm = load_judge_module()
+        jm.client = jm.build_client(use_openrouter=False)
+        jm.DEPLOYMENT_NAME = args.judge_deployment
+        jm.TEMPERATURE = None            # preserve shipped provider-default temp
+        jm.MAX_TOKENS = args.judge_max_tokens
 
     # Tag for output filenames.
     if args.base:
@@ -266,8 +308,29 @@ def main():
         adapter_tag = ("final" if os.path.normpath(adapter_dir) ==
                        os.path.normpath(args.run_dir)
                        else os.path.basename(os.path.normpath(adapter_dir)))
+    # Prompt-only "be critical" baseline: append the trainer's exact
+    # CRITICAL_SUFFIX to the generation input (single source of truth, so the
+    # injected text can't drift from the mixed-sampling source). The suffix is
+    # added ONLY to what the model sees; the judged `sentence` stays the bare
+    # post (set below in the gen loop).
+    assert not (args.be_critical and args.gen_suffix), (
+        "--be-critical and --gen-suffix are mutually exclusive"
+    )
+    if args.be_critical:
+        from trainer import CRITICAL_SUFFIX
+        gen_suffix = CRITICAL_SUFFIX
+        adapter_tag = f"{adapter_tag}-becritical"
+    elif args.gen_suffix:
+        assert args.gen_tag, "--gen-suffix requires --gen-tag"
+        # Same "\n\n<instruction>" shape as trainer.CRITICAL_SUFFIX so the
+        # only difference across prompt-only baselines is the instruction.
+        gen_suffix = "\n\n" + args.gen_suffix
+        adapter_tag = f"{adapter_tag}-{args.gen_tag}"
+    else:
+        gen_suffix = ""
     decode_tag = "greedy" if args.greedy else f"temp{args.temperature}"
-    tag = f"{adapter_tag}_{decode_tag}_seed{args.seed}"
+    extra = f"_{args.tag_extra}" if args.tag_extra else ""
+    tag = f"{adapter_tag}{extra}_{decode_tag}_seed{args.seed}"
 
     out_dir = os.path.join(args.run_dir, "eval")
     os.makedirs(out_dir, exist_ok=True)
@@ -275,7 +338,7 @@ def main():
     # 1. Held-out prompts. Shard AFTER --n so (--n, --num-shards) compose; the
     # shard slice is taken on the same fixed test_ids order across all shards,
     # so the shards are disjoint and tile the evaluated set exactly.
-    pairs = held_out_prompts(env, args.run_dir)
+    pairs = held_out_prompts(env, args.run_dir, args.test_ids_file)
     if args.n is not None:
         pairs = pairs[:args.n]
     n_total = len(pairs)
@@ -304,19 +367,57 @@ def main():
     responses_path = os.path.join(out_dir, f"responses_{tag}.jsonl")
     with open(responses_path, "w") as rf:
         for k, (pid, post) in enumerate(pairs):
-            resp = generate_one(model, tokenizer, post, args.sample_max_tokens,
+            gen_prompt = post + gen_suffix
+            resp = generate_one(model, tokenizer, gen_prompt, args.sample_max_tokens,
                                  args.temperature, args.top_p, args.greedy)
+            # `sentence` is the bare post (what the judge scores); `gen_prompt`
+            # records what the model was actually shown (post + suffix).
             rows.append({"id": pid, "sentence": post, "response": resp})
-            rf.write(json.dumps({"id": pid, "prompt": post, "response": resp}) + "\n")
+            rf.write(json.dumps({"id": pid, "prompt": post, "gen_prompt": gen_prompt,
+                                 "response": resp}) + "\n")
             rf.flush()
             if (k + 1) % 50 == 0:
                 print(f"[gen] {k + 1}/{len(pairs)} responses sampled")
     print(f"[gen] wrote {responses_path}")
 
+    df = pd.DataFrame(rows)
+
+    # Generation-only mode: write the responses table (id, sentence, response)
+    # for the downstream sycoharm judge and stop -- no Azure endorse judge, no
+    # broad-endorsement rate. build_sycoharm_inputs reads this responses_<tag>
+    # CSV (preferring it over the endorse_<tag> CSV from a judged run).
+    if args.no_judge:
+        responses_csv = os.path.join(out_dir, f"responses_{tag}.csv")
+        df.to_csv(responses_csv, index=False)
+        summary = {
+            "env": env,
+            "run_dir": os.path.abspath(args.run_dir),
+            "adapter_tag": adapter_tag,
+            "be_critical": args.be_critical,
+            "gen_suffix": gen_suffix,
+            "adapter": None if args.base else os.path.abspath(adapter_dir),
+            "decode": decode_tag,
+            "seed": args.seed,
+            "num_shards": args.num_shards,
+            "shard_id": args.shard_id,
+            "n_prompts": len(pairs),
+            "judged": False,
+        }
+        summary_path = os.path.join(out_dir, f"summary_{tag}.json")
+        with open(summary_path, "w") as f:
+            json.dump(summary, f, indent=2)
+        print("\n" + "=" * 70)
+        print(f"GENERATION ONLY (no endorse judge)  [{env} / {adapter_tag} / "
+              f"{decode_tag}]  N={len(pairs)}")
+        print(f"  responses table -> {responses_csv}")
+        print(f"  responses jsonl -> {responses_path}")
+        print(f"  summary         -> {summary_path}")
+        print("=" * 70)
+        return
+
     # 4. Judge with the reused Azure scorer. advice_col='response' -> the judge
     # reads row['sentence'] (post) and row['response'] (sampled advice) and
     # writes endorse_response / fingerprint_response / model_response.
-    df = pd.DataFrame(rows)
     scored_path = os.path.join(out_dir, f"endorse_{tag}.csv")
     scored = jm.parallel_score(
         df,
@@ -339,6 +440,8 @@ def main():
         "env": env,
         "run_dir": os.path.abspath(args.run_dir),
         "adapter_tag": adapter_tag,
+        "be_critical": args.be_critical,
+        "gen_suffix": gen_suffix,
         "adapter": None if args.base else os.path.abspath(adapter_dir),
         "decode": decode_tag,
         "seed": args.seed,
