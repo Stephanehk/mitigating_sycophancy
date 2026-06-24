@@ -160,14 +160,93 @@ def test_build_iteration_reduce():
     assert recs[1]["vetoed"] == [] and recs[1]["num_pref_pairs"] == 2
     assert recs[2]["vetoed"] == ["a2", "b2", "c2"] and recs[2]["num_pref_pairs"] == 0
     assert recs[0]["sources"] == ["model", "model", "critical"]
+    # `pref_pairs` is persisted alongside `num_pref_pairs` so a preempt-resume of
+    # a --self-preference run can rebuild the dataset without re-querying the
+    # policy; its length must match the count.
+    assert all(len(r["pref_pairs"]) == r["num_pref_pairs"] for r in recs)
     assert all(set(r) == {"iter", "prompt_idx", "prompt", "responses",
-                          "sources", "vetoed", "num_pref_pairs"} for r in recs), \
-        "jsonl schema must be unchanged"
+                          "sources", "vetoed", "num_pref_pairs", "pref_pairs"}
+               for r in recs), "jsonl schema must be unchanged"
     print("ok: _build_iteration reduce (pairs order, diagnostics, jsonl schema)")
+
+
+class _RaisingSim:
+    """Stand-in for NeutralityVetoJudge in the steer-only (neutral-mixed) path:
+    it has NO stakeholder world-model, so `_stakeholder_data_for` must never be
+    called during candidate sampling. Calling it fails the test loudly."""
+
+    def prime_stakeholder_cache(self, prompts, concurrency):
+        pass
+
+    def _stakeholder_data_for(self, prompt):
+        raise AssertionError(
+            "steer-only neutral-mixed sampling must not read stakeholder data")
+
+    def veto_responses_batch(self, items, concurrency):
+        return [[] for _ in items]
+
+
+def test_neutral_mixed_sampling_steer_only():
+    # CPU-only: neutralize the per-chunk GPU mem-probe reset (no-op diagnostic).
+    import torch
+    torch.cuda.device_count = lambda: 0
+    from trainer import NEUTRAL_SUFFIX
+
+    calls = []
+    tr = Trainer(
+        sim_stake=_RaisingSim(), model=None, tokenizer=None,
+        n_samples=4, temperature=1.0,
+        mixed_sampling=True, n_source_model=2, n_source_critical=2,
+        steer_suffix=NEUTRAL_SUFFIX, steer_label="neutral", steer_only=True,
+        chunk_size=8, stage_concurrency=4,
+    )
+
+    # Stub the generation primitive: record (prompt, n) and echo n responses.
+    def fake_generate_n(prompt, n):
+        calls.append((prompt, n))
+        return [f"r::{prompt}::{i}" for i in range(n)]
+    tr._generate_n = fake_generate_n
+
+    post = "POST"
+    out = tr._sample_chunk([post])
+    assert len(out) == 1, out
+    responses, sources = out[0]
+
+    # 2 from the bare post + 2 from post+NEUTRAL_SUFFIX, total N=4, in order.
+    assert len(responses) == 4 and len(sources) == 4, (responses, sources)
+    assert sources == ["model", "model", "neutral", "neutral"], sources
+
+    # The steer source appends NEUTRAL_SUFFIX at generation time; the model
+    # source uses the bare post; nothing else (e.g. CRITICAL_SUFFIX) leaks in.
+    gen_prompts = {p for p, _ in calls}
+    assert gen_prompts == {post, post + NEUTRAL_SUFFIX}, gen_prompts
+    assert dict(calls)[post] == 2 and dict(calls)[post + NEUTRAL_SUFFIX] == 2, calls
+    print("ok: neutral-mixed steer-only (split, labels, suffix, no stakeholder read)")
+
+
+def test_steer_only_requires_full_split():
+    # steer_only has no stakeholder source, so the two source counts MUST cover
+    # all N — a leftover (stakeholder) budget is a misconfiguration.
+    import torch
+    torch.cuda.device_count = lambda: 0
+    try:
+        Trainer(
+            sim_stake=_RaisingSim(), model=None, tokenizer=None,
+            n_samples=10, temperature=1.0,
+            mixed_sampling=True, n_source_model=2, n_source_critical=2,
+            steer_only=True,
+        )
+    except AssertionError as e:
+        assert "must equal n_samples" in str(e), e
+        print("ok: steer_only rejects a non-full source split")
+    else:
+        raise AssertionError("expected AssertionError for steer_only with leftover budget")
 
 
 if __name__ == "__main__":
     test_concurrent_map_order_and_failfast()
     test_veto_responses_batch_matches_sequential()
     test_build_iteration_reduce()
+    test_neutral_mixed_sampling_steer_only()
+    test_steer_only_requires_full_split()
     print("\nALL BATCHED-PIPELINE TESTS PASSED")

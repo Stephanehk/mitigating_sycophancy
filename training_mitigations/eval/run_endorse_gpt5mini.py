@@ -230,6 +230,7 @@ OUTPUT FORMAT (output the number directly using one token):
 Question: {question}
 Response: {advice}"""
 
+
 PROMPTS = {'v1': ENDORSE_TEMPLATE_V1, 'v2': ENDORSE_TEMPLATE_V2,
            'v3': ENDORSE_TEMPLATE_V3, 'v4': ENDORSE_TEMPLATE_V4,
            'v5': ENDORSE_TEMPLATE_V5}

@@ -73,17 +73,22 @@ import our_mitigation
 import our_mitigation_v2
 import weak_pipeline
 
-from explore_mitigations import (
-    OEQ_DATA_CSV, PAS_DATA_CSV,
-    DEFAULT_MAX_TOKENS, DEFAULT_SEED,
-    load_oeq, load_pas,
-    sample_uniform,
-)
+from explore_mitigations import DEFAULT_MAX_TOKENS, DEFAULT_SEED
+
+# Shared dataset / split helpers (also used by train_grpo_lora.py) so a DPO run
+# and a GRPO run on the same env/seed/split train and eval on identical prompts.
+from train_data import (resolve_csv as _resolve_csv,
+                        load_env_data as _load_data,
+                        split_train_test as _split_train_test,
+                        format_prompt as _format_prompt,
+                        write_ids as _write_ids,
+                        detect_resume_point as _detect_resume_point)
 
 from llama_local import DEFAULT_HF_MODEL_ID, load_llama, make_call_llm
 from mem_probe import start_mem_sampler
-from simulated_stakeholders import SimulatedStakeholders, VETO_PROMPTS
-from trainer import Trainer
+from simulated_stakeholders import (SimulatedStakeholders, VETO_PROMPTS,
+                                    ENDORSE_CLASSIFY_PROMPTS)
+from trainer import Trainer, CRITICAL_SUFFIX, NEUTRAL_SUFFIX
 from vllm_sim import (launch_vllm_server, make_vllm_call_llm, wait_for_vllm_server,
                       make_vllm_policy_sampler, load_lora_adapter, unload_lora_adapter)
 
@@ -113,66 +118,6 @@ def _tolerant_parse_stakeholders(text, min_count=None, max_count=None):
     if len(items) > _LOCAL_MAX_STAKEHOLDERS:
         items = items[:_LOCAL_MAX_STAKEHOLDERS]
     return items
-
-
-def _resolve_csv(env_name):
-    """Return the abs path to the env's CSV, anchored to the repo root so
-    the script runs identically from any cwd.
-    """
-    rel = {
-        "OEQ":  OEQ_DATA_CSV,
-        "PAS":  PAS_DATA_CSV,
-    }[env_name]
-    path = rel if os.path.isabs(rel) else os.path.join(_REPO_ROOT, rel)
-    assert os.path.exists(path), f"missing {env_name} csv: {path}"
-    return path
-
-
-def _load_data(env_name, csv_path):
-    """Dispatch to the per-env loader. Each returns a DataFrame with at
-    least `id` and `post_text`.
-    """
-    if env_name == "OEQ":
-        return load_oeq(csv_path)
-    if env_name == "PAS":
-        return load_pas(csv_path)
-    raise AssertionError(f"unknown env_name: {env_name!r}")
-
-
-def _split_train_test(env_name, data, train_n, test_n, seed):
-    """Pick `test_n` test rows and a disjoint `train_n` train rows from
-    `data`.
-
-    OEQ / PAS use `sample_uniform`. Disjointness is enforced by dropping
-    the test ids from the pool before sampling train. The train seed is
-    `seed + 1000` so the two samplers don't collide.
-
-    Returns (train_df, test_df).
-    """
-    test_df = sample_uniform(data, test_n, seed)
-    pool = data[~data["id"].isin(set(test_df["id"]))].reset_index(drop=True)
-    train_df = sample_uniform(pool, train_n, seed + 1000)
-    assert set(test_df["id"]).isdisjoint(set(train_df["id"])), (
-        "train/test id overlap — split logic is broken"
-    )
-    return train_df, test_df
-
-
-def _format_prompt(env_name, post_text):
-    """Return the user message the model under training will see at both
-    sampling time and DPO time.
-    """
-    if env_name in ("OEQ", "PAS"):
-        return post_text
-    raise AssertionError(f"unknown env_name: {env_name!r}")
-
-
-def _write_ids(path, df):
-    """Dump the `id` column of `df` to `path` as a JSON list. Used for
-    the test_ids.json / train_ids.json split records.
-    """
-    with open(path, "w") as f:
-        json.dump([str(x) for x in df["id"].tolist()], f, indent=2)
 
 
 def main():
@@ -245,7 +190,65 @@ def main():
         "--veto-prompt", default="baseline", choices=tuple(VETO_PROMPTS),
         help="which stakeholder veto prompt to use (default: baseline). "
              "'P4' = proposal 1 (reframe to 'would you be okay with') + "
-             "proposal 2 (expanded examples). See simulated_stakeholders.py.",
+             "proposal 2 (expanded examples). 'P5' = action-endorsement framing "
+             "(mirrors the v5 endorse judge): veto only if the response affirms "
+             "the narrator's ACTION and you think it should not be endorsed. "
+             "See simulated_stakeholders.py. Ignored when --judge is not "
+             "'stakeholder'.",
+    )
+    parser.add_argument(
+        "--judge", default="stakeholder",
+        choices=("stakeholder", "neutrality-v5"),
+        help="which veto judge produces the (chosen, rejected) split (default: "
+             "stakeholder). 'stakeholder' = the SimulatedStakeholders veto "
+             "(--veto-prompt). 'neutrality-v5' = the NEUTRALITY BASELINE: the v5 "
+             "gpt-5-mini endorse judge vetoes every response it does NOT label 3 "
+             "(neutral), so chosen=neutral, rejected=challenge/affirm. The "
+             "neutrality judge needs OPENROUTER_API_KEY, has no stakeholder "
+             "pipeline (so --mixed-sampling is unsupported), and does not require "
+             "a local sim model — the sim vLLM server is only launched when "
+             "--policy-on-vllm is set.",
+    )
+    parser.add_argument(
+        "--judge-model", default="openai/gpt-5-mini",
+        help="judge model id for --judge neutrality-v5 (default: "
+             "openai/gpt-5-mini, the v5 eval judge).",
+    )
+    parser.add_argument(
+        "--judge-reasoning", default="minimal",
+        help="OpenRouter reasoning effort for the neutrality judge (default: "
+             "minimal); 'none' to omit.",
+    )
+    parser.add_argument(
+        "--judge-max-tokens", type=int, default=4000,
+        help="judge output token budget incl. reasoning for the neutrality "
+             "judge (default: 4000, matching the v5 eval runner).",
+    )
+    parser.add_argument(
+        "--judge-temp", type=float, default=0.0,
+        help="neutrality judge sampling temperature (default: 0.0 for "
+             "deterministic labels; negative omits temperature).",
+    )
+    parser.add_argument(
+        "--judge-concurrency", type=int, default=16,
+        help="max in-flight OpenRouter judge calls for --judge neutrality-v5 "
+             "(default: 16). Bounds the judge's fan-out independently of "
+             "--stage-concurrency (which is tuned for the local vLLM server).",
+    )
+    parser.add_argument(
+        "--judge-price-in", type=float, default=0.25,
+        help="neutrality judge input price $/1M tokens (default: 0.25, "
+             "gpt-5-mini via OpenRouter). Used only for the spend cap.",
+    )
+    parser.add_argument(
+        "--judge-price-out", type=float, default=2.00,
+        help="neutrality judge output price $/1M tokens (default: 2.00).",
+    )
+    parser.add_argument(
+        "--judge-max-cost", type=float, default=None,
+        help="hard cap (USD) on cumulative v5-judge spend across the whole run "
+             "(default: none). On breach the run aborts (fail-fast); the last "
+             "completed iteration's adapter snapshot remains loadable.",
     )
     parser.add_argument(
         "--policy-on-vllm", action="store_true",
@@ -266,6 +269,18 @@ def main():
         help="0-based outer iteration to start at when resuming (e.g. 1 means "
              "iteration 1 is already done; begin at the 2nd iteration). "
              "Default 0 (fresh run).",
+    )
+    parser.add_argument(
+        "--allow-preempt", action="store_true",
+        help="make the run idempotently restartable for pause/resume under "
+             "SLURM preemption. On startup, auto-detect the resume point from "
+             "--output-dir: the highest FINISHED iteration (adapter_iter_<k> "
+             "with a .complete sentinel) sets --start-iteration and "
+             "--resume-adapter, and a partial responses_iter_<k+1>.jsonl is "
+             "reloaded so that interrupted iteration's already-sampled prompts "
+             "are not re-sampled. Resubmit the SAME command after a kill to "
+             "continue; a cold start (empty output_dir) runs normally. Mutually "
+             "exclusive with manual --resume-adapter / --start-iteration.",
     )
     parser.add_argument(
         "--num-iterations", type=int, default=3,
@@ -311,6 +326,18 @@ def main():
              "(default: 2). The stakeholder budget is n_samples minus these two.",
     )
     parser.add_argument(
+        "--neutral-mixed-sampling", action="store_true",
+        help="neutral-mixed (steer-only) sampling for the --judge neutrality-v5 "
+             "baseline: split the N candidates between the bare post "
+             "(--n-source-model) and the post + 'Be neutral...' (the rest), "
+             "with NO stakeholder source. Seeds judge-passing NEUTRAL 'chosen' "
+             "responses on the many prompts where the bare policy rarely emits "
+             "one. Defaults to a half/half split unless --n-source-model + "
+             "--n-source-critical already sum to N. The DPO prompt column stays "
+             "the bare post. Requires --judge neutrality-v5; mutually exclusive "
+             "with --mixed-sampling.",
+    )
+    parser.add_argument(
         "--self-preference", action="store_true",
         help="variation 2: for every unordered pair of NON-vetoed responses, "
              "ask the policy (the model under training) to pick the better "
@@ -345,6 +372,16 @@ def main():
     parser.add_argument(
         "--beta", type=float, default=0.1,
         help="DPO beta (default: 0.1)",
+    )
+    parser.add_argument(
+        "--rpo-alpha", type=float, default=None,
+        help="RPO / 'distill' variant. If set (> 0), add an SFT/NLL term on the "
+             "CHOSEN (non-vetoed) responses to the DPO loss: total = DPO + "
+             "rpo_alpha * mean-token CE(chosen). Anchors log p(chosen) UP in "
+             "absolute terms instead of only the chosen-rejected margin. "
+             "Implemented via trl's multi-loss loss_type=['sigmoid','sft'], "
+             "loss_weights=[1.0, rpo_alpha]. Default: None (plain DPO, no SFT "
+             "term). 1.0 is the canonical RPO value.",
     )
     parser.add_argument(
         "--learning-rate", type=float, default=5e-5,
@@ -396,18 +433,78 @@ def main():
         "the same vLLM engine that serves the sim)"
     )
 
+    # --allow-preempt: auto-detect where to continue from --output-dir so the
+    # SAME command can be resubmitted after a SLURM preemption / kill. Derives
+    # --start-iteration / --resume-adapter from the durable adapter_iter_<k>
+    # snapshots, and reloads a partial responses_iter file for the interrupted
+    # iteration (resume_partial). Mutually exclusive with the manual flags.
+    resume_partial = False
+    if args.allow_preempt:
+        assert args.resume_adapter is None and args.start_iteration == 0, (
+            "--allow-preempt auto-detects the resume point; do not combine it "
+            "with manual --resume-adapter / --start-iteration"
+        )
+        start_iteration, resume_adapter, resume_partial, is_cold = (
+            _detect_resume_point(args.output_dir, args.num_iterations))
+        args.start_iteration = start_iteration
+        args.resume_adapter = resume_adapter
+        print(f"[preempt] resume detect: start_iteration={start_iteration} "
+              f"resume_adapter={resume_adapter} resume_partial={resume_partial} "
+              f"cold_start={is_cold}")
+
+    # Neutrality baseline (--judge neutrality-v5): the veto signal is the v5
+    # gpt-5-mini endorse judge (OpenRouter), not the local SimulatedStakeholders
+    # pipeline. It has no stakeholder world-model, so the mixed sampler — which
+    # voices candidates as identified stakeholders — has nothing to draw from.
+    judge_is_neutrality = args.judge == "neutrality-v5"
+    if judge_is_neutrality:
+        assert not args.mixed_sampling, (
+            "--mixed-sampling (stakeholder-voiced) is unsupported with --judge "
+            "neutrality-v5 (the neutrality judge has no stakeholders to voice "
+            "candidates from); use --neutral-mixed-sampling (steer-only, no "
+            "stakeholder source) instead, or sample all N from the bare post."
+        )
+    # --neutral-mixed-sampling: steer-only mixed sampling for the neutrality
+    # baseline. Requires the neutrality judge (no stakeholder source), and is
+    # mutually exclusive with the stakeholder-voiced --mixed-sampling. Default
+    # the source split to half/half of N unless the user already gave a full
+    # (no-stakeholder) split.
+    if args.neutral_mixed_sampling:
+        assert judge_is_neutrality, (
+            "--neutral-mixed-sampling requires --judge neutrality-v5"
+        )
+        assert not args.mixed_sampling, (
+            "--neutral-mixed-sampling and --mixed-sampling are mutually exclusive"
+        )
+        if args.n_source_model + args.n_source_critical != args.n_samples:
+            args.n_source_model = args.n_samples // 2
+            args.n_source_critical = args.n_samples - args.n_source_model
+
+    # The sim vLLM server serves the frozen stakeholder judge model AND (when
+    # --policy-on-vllm) hosts the policy LoRA for sampling. The neutrality judge
+    # needs no local sim model, so launch the server only when the stakeholder
+    # judge needs it or the policy is sampled on it.
+    need_sim_server = args.sim_backend == "vllm" and (
+        not judge_is_neutrality or args.policy_on_vllm)
+
     # 1. Dataset + train/test split.
     csv_path = _resolve_csv(args.env)
     print(f"[data] env={args.env}  csv={csv_path}")
     data = _load_data(args.env, csv_path)
     print(f"[data] pool size: {len(data)} rows")
     train_ids_path = os.path.join(args.output_dir, "train_ids.json")
-    if args.resume_adapter is not None:
+    # Reuse the saved split when resuming: manual --resume-adapter, or
+    # --allow-preempt finding a prior run's train_ids.json (which holds even when
+    # no iteration has FINISHED yet — a partial iteration-0 responses file indexes
+    # into this exact split, so resampling would misalign prompt_idx).
+    reuse_split = (args.resume_adapter is not None) or (
+        args.allow_preempt and os.path.exists(train_ids_path))
+    if reuse_split:
         # Resume: reuse the EXACT training split the original run saved, so the
         # continued iterations train on the same prompts (not a fresh sample).
         assert os.path.exists(train_ids_path), (
-            f"--resume-adapter set but {train_ids_path} is missing; cannot reuse "
-            f"the original split"
+            f"resuming but {train_ids_path} is missing; cannot reuse the "
+            f"original split"
         )
         with open(train_ids_path) as f:
             saved_ids = json.load(f)
@@ -441,7 +538,7 @@ def main():
     # minute startup overlaps with loading the policy weights; we only
     # block on its health check afterwards.
     sim_proc = None
-    if args.sim_backend == "vllm":
+    if need_sim_server:
         assert args.sim_device != args.device, (
             "--sim-backend vllm gives the whole sim GPU to the server "
             "subprocess; --sim-device must differ from --device"
@@ -466,17 +563,23 @@ def main():
         cache_dir=args.cache_dir,
     )
 
-    # 3. call_llm for the stakeholder + veto pipeline. Greedy on both
-    # backends (temperature=0 for vLLM, do_sample=False for HF) because
-    # reproducibility of the veto signal across train iterations is more
-    # useful than diversity here; only the candidate-response sampler
-    # inside Trainer needs stochasticity (and it has its own
-    # do_sample=True path).
-    if args.sim_backend == "vllm":
+    # 3. call_llm for the stakeholder + veto pipeline (stakeholder judge only)
+    # and the policy sampler. Greedy on both backends (temperature=0 for vLLM,
+    # do_sample=False for HF) because reproducibility of the veto signal across
+    # train iterations is more useful than diversity here; only the candidate-
+    # response sampler inside Trainer needs stochasticity (and it has its own
+    # do_sample=True path). For the neutrality judge `sim_call_llm` stays None —
+    # the veto judge is the OpenRouter v5 judge built in step 4.
+    sim_call_llm = None
+    veto_concurrency = 1
+    policy_sampler = None
+    sync_policy_to_vllm = None
+    if need_sim_server:
         wait_for_vllm_server(sim_proc, sim_base_url, log_path=os.path.join(args.output_dir, "vllm_server.log"))
         print(f"[load] sim judge: vLLM server healthy at {sim_base_url}")
-        sim_call_llm = make_vllm_call_llm(sim_base_url, args.model_id)
-        veto_concurrency = args.veto_concurrency
+        if not judge_is_neutrality:
+            sim_call_llm = make_vllm_call_llm(sim_base_url, args.model_id)
+            veto_concurrency = args.veto_concurrency
         if args.policy_on_vllm:
             # Same engine serves the policy: model="policy" -> base + current
             # LoRA (hot-loaded each iteration); the sim keeps using model=base.
@@ -487,10 +590,9 @@ def main():
                 load_lora_adapter(sim_base_url, "policy", os.path.abspath(adapter_dir))
 
             print("[setup] policy sampling on shared vLLM engine (base + 'policy' LoRA)")
-        else:
-            policy_sampler = None
-            sync_policy_to_vllm = None
-    else:
+    elif not judge_is_neutrality:
+        # Stakeholder judge with the HF sim backend: load a frozen in-process
+        # copy of the sim model on args.sim_device.
         print(f"[load] sim_base {args.model_id} -> {args.sim_device}  (frozen)")
         sim_model, sim_tokenizer = load_llama(
             model_id=args.model_id,
@@ -508,10 +610,8 @@ def main():
         # A single in-process HF model serves requests one at a time;
         # concurrent calls would interleave without batching.
         veto_concurrency = 1
-        # HF sim backend has no vLLM engine to sample the policy on; use the
-        # in-process HF generation path. (--policy-on-vllm is asserted off here.)
-        policy_sampler = None
-        sync_policy_to_vllm = None
+    # else: neutrality judge with no sim server — policy samples via the HF
+    # generation path (policy_sampler=None) and the v5 judge runs over OpenRouter.
 
     # Memory diagnostics: a background thread logs host RSS + per-GPU
     # allocator counters to mem.csv every 2s, line-buffered so the curve
@@ -524,38 +624,67 @@ def main():
     start_mem_sampler(mem_csv)
     print(f"[mem] sampling host+GPU memory -> {mem_csv}")
 
-    # Rewire the harness's module-level `call_llm` bindings to the
-    # frozen sim_base. Three modules hold independent imports of
-    # `call_llm` (`our_mitigation`, `our_mitigation_v2`,
-    # `weak_pipeline`); the SimulatedStakeholders constructor below
-    # also does this, but doing it here too is harmless and makes the
-    # script readable on its own. CRITICAL: the binding points at
-    # sim_base, NOT the policy — the sim must never see the updated
-    # policy or the veto signal would drift as training progresses.
-    our_mitigation.call_llm = sim_call_llm
-    our_mitigation_v2.call_llm = sim_call_llm
-    weak_pipeline.call_llm = sim_call_llm
+    # Rewire the harness's module-level `call_llm` bindings to the frozen
+    # sim_base (stakeholder judge only). Three modules hold independent imports
+    # of `call_llm` (`our_mitigation`, `our_mitigation_v2`, `weak_pipeline`);
+    # the SimulatedStakeholders constructor below also does this, but doing it
+    # here too is harmless and makes the script readable on its own. CRITICAL:
+    # the binding points at sim_base, NOT the policy — the sim must never see
+    # the updated policy or the veto signal would drift as training progresses.
+    # The neutrality judge does not use this pipeline, so it skips the rewiring.
+    if not judge_is_neutrality:
+        our_mitigation.call_llm = sim_call_llm
+        our_mitigation_v2.call_llm = sim_call_llm
+        weak_pipeline.call_llm = sim_call_llm
 
-    # Tolerant stakeholder parser — patch all three modules that hold
-    # an independent binding of `parse_stakeholders`.
-    our_mitigation.parse_stakeholders = _tolerant_parse_stakeholders
-    our_mitigation_v2.parse_stakeholders = _tolerant_parse_stakeholders
-    weak_pipeline.parse_stakeholders = _tolerant_parse_stakeholders
+        # Tolerant stakeholder parser — patch all three modules that hold
+        # an independent binding of `parse_stakeholders`.
+        our_mitigation.parse_stakeholders = _tolerant_parse_stakeholders
+        our_mitigation_v2.parse_stakeholders = _tolerant_parse_stakeholders
+        weak_pipeline.parse_stakeholders = _tolerant_parse_stakeholders
 
-    # 4. Veto judge — wired to sim_base. Default sim_stake routing:
-    # identify + filter + concerns + veto all go through sim_call_llm
-    # (the frozen sim). We don't pass concerns_call_llm / veto_call_llm
-    # — the single-backend default does what we want.
-    sim = SimulatedStakeholders(
-        call_llm=sim_call_llm,
-        model_id=args.model_id,
-        client=None,
-        stakeholder_max_tokens=args.max_tokens,
-        use_weak_model=True,
-        veto_concurrency=veto_concurrency,
-        veto_prompt=VETO_PROMPTS[args.veto_prompt],
-    )
-    print(f"[setup] veto prompt: {args.veto_prompt}")
+    # 4. Veto judge. `sim` is whatever object the Trainer uses for the veto
+    # signal; it only needs prime_stakeholder_cache / veto_responses /
+    # veto_responses_batch, which both judges below implement.
+    if judge_is_neutrality:
+        # Neutrality baseline: the v5 gpt-5-mini endorse judge vetoes every
+        # response it does NOT label 3 (neutral). chosen=neutral, rejected=
+        # challenge/affirm. Runs over OpenRouter (needs OPENROUTER_API_KEY).
+        from neutrality_judge import NeutralityVetoJudge, make_openrouter_client
+        judge_temperature = None if args.judge_temp < 0 else args.judge_temp
+        judge_reasoning = None if args.judge_reasoning == "none" else args.judge_reasoning
+        sim = NeutralityVetoJudge(
+            client=make_openrouter_client(),
+            model=args.judge_model,
+            reasoning=judge_reasoning,
+            max_tokens=args.judge_max_tokens,
+            temperature=judge_temperature,
+            concurrency=args.judge_concurrency,
+            price_in=args.judge_price_in,
+            price_out=args.judge_price_out,
+            max_cost=args.judge_max_cost,
+        )
+        print(f"[setup] judge: neutrality-v5 ({args.judge_model}, "
+              f"reasoning={args.judge_reasoning})  chosen=v5-label-3, "
+              f"rejected=otherwise")
+    else:
+        # Default sim_stake routing: identify + filter + concerns + veto all go
+        # through sim_call_llm (the frozen sim). We don't pass concerns_call_llm
+        # / veto_call_llm — the single-backend default does what we want.
+        sim = SimulatedStakeholders(
+            call_llm=sim_call_llm,
+            model_id=args.model_id,
+            client=None,
+            stakeholder_max_tokens=args.max_tokens,
+            use_weak_model=True,
+            veto_concurrency=veto_concurrency,
+            veto_prompt=VETO_PROMPTS[args.veto_prompt],
+            # Two-stage veto modes (e.g. P5) supply a Stage-1 endorsement
+            # classifier; single-stage modes (baseline, P4) get None here.
+            endorse_classify_prompt=ENDORSE_CLASSIFY_PROMPTS.get(args.veto_prompt),
+        )
+        print(f"[setup] veto prompt: {args.veto_prompt}"
+              f"{' (two-stage)' if args.veto_prompt in ENDORSE_CLASSIFY_PROMPTS else ''}")
 
     # 5. Trainer + train. Trainer.model is the policy (trainable);
     # Trainer's `_sample_responses` calls policy.generate() directly,
@@ -568,9 +697,13 @@ def main():
         max_new_tokens=args.sample_max_tokens,
         temperature=args.temperature,
         top_p=args.top_p,
-        mixed_sampling=args.mixed_sampling,
+        mixed_sampling=args.mixed_sampling or args.neutral_mixed_sampling,
         n_source_model=args.n_source_model,
         n_source_critical=args.n_source_critical,
+        steer_suffix=(NEUTRAL_SUFFIX if args.neutral_mixed_sampling
+                      else CRITICAL_SUFFIX),
+        steer_label=("neutral" if args.neutral_mixed_sampling else "critical"),
+        steer_only=args.neutral_mixed_sampling,
         self_preference=args.self_preference,
         preference_max_tokens=args.preference_max_tokens,
         preference_max_pairs=args.preference_max_pairs,
@@ -579,13 +712,22 @@ def main():
         chunk_size=args.chunk_size,
         stage_concurrency=args.stage_concurrency,
     )
-    print(
-        f"[train] mixed_sampling={args.mixed_sampling} "
-        f"(model={args.n_source_model} critical={args.n_source_critical} "
-        f"stakeholder={args.n_samples - args.n_source_model - args.n_source_critical})  "
-        f"self_preference={args.self_preference} "
-        f"(max_pairs={args.preference_max_pairs or 'unlimited'})"
-    )
+    if args.neutral_mixed_sampling:
+        print(
+            f"[train] neutral_mixed_sampling=True "
+            f"(model={args.n_source_model} neutral={args.n_source_critical} "
+            f"stakeholder=0)  steer={NEUTRAL_SUFFIX!r}  "
+            f"self_preference={args.self_preference} "
+            f"(max_pairs={args.preference_max_pairs or 'unlimited'})"
+        )
+    else:
+        print(
+            f"[train] mixed_sampling={args.mixed_sampling} "
+            f"(model={args.n_source_model} critical={args.n_source_critical} "
+            f"stakeholder={args.n_samples - args.n_source_model - args.n_source_critical})  "
+            f"self_preference={args.self_preference} "
+            f"(max_pairs={args.preference_max_pairs or 'unlimited'})"
+        )
 
     print(f"[train] starting iterative DPO+LoRA  iters={args.num_iterations}  output_dir={args.output_dir}")
     dpo_trainer = trainer.train(
@@ -593,6 +735,7 @@ def main():
         output_dir=args.output_dir,
         num_iterations=args.num_iterations,
         beta=args.beta,
+        rpo_alpha=args.rpo_alpha,
         learning_rate=args.learning_rate,
         num_train_epochs=args.num_train_epochs,
         per_device_train_batch_size=args.per_device_batch_size,
@@ -604,6 +747,7 @@ def main():
         lora_dropout=args.lora_dropout,
         start_iteration=args.start_iteration,
         resume_adapter=args.resume_adapter,
+        resume_partial=resume_partial,
     )
 
     print(f"[done] adapter saved to {args.output_dir}")

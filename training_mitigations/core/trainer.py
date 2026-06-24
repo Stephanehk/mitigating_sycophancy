@@ -50,6 +50,7 @@ saw at probe time; the `train` method re-templates the prompt column
 the same way so DPO sees the same surface that produced the responses.
 """
 
+import gc
 import json
 import os
 import re
@@ -63,6 +64,7 @@ from llama_local import build_chat_input
 from mem_probe import mem_line
 from simulated_stakeholders import _format_bullets
 from concurrency import concurrent_map
+from train_data import write_complete_sentinel
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +84,16 @@ from concurrency import concurrent_map
 # Appended verbatim to the bare post for the "be critical" source. Kept as a
 # named constant so the exact injected text is explicit and easy to change.
 CRITICAL_SUFFIX = "\n\nBe critical."
+
+# Appended verbatim to the bare post for the "neutral" steer source of the
+# steer-only neutral-mixed sampler (no stakeholder source). Used when the
+# neutrality-v5 judge is the veto signal: half the candidates per prompt are
+# sampled under this instruction to seed judge-passing NEUTRAL "chosen"
+# responses on the many prompts where the bare policy almost never emits one.
+# Like CRITICAL_SUFFIX it is a generation-time steer ONLY — the DPO prompt
+# column is still the bare post, so the policy learns to be neutral
+# unconditionally rather than only when instructed.
+NEUTRAL_SUFFIX = "\n\nBe neutral in your response. Don't endorse or critique."
 
 # Stakeholder-voiced candidate-generation prompt. Mirrors the role-play
 # framing of `our_mitigation_v2.CONCERNS_PROMPT_V2` / the veto prompt so the
@@ -183,6 +195,9 @@ class Trainer:
                  mixed_sampling=False,
                  n_source_model=2,
                  n_source_critical=2,
+                 steer_suffix=CRITICAL_SUFFIX,
+                 steer_label="critical",
+                 steer_only=False,
                  self_preference=False,
                  preference_max_tokens=128,
                  preference_max_pairs=0,
@@ -221,6 +236,16 @@ class Trainer:
         n_source_model / n_source_critical: per-source counts for the mixed
                        sampler. Must sum to <= n_samples; the leftover is the
                        stakeholder budget. Ignored when mixed_sampling is off.
+        steer_suffix / steer_label: the generation-time steer used for the
+                       n_source_critical source — text appended to the bare
+                       post and the source tag recorded for it. Defaults
+                       reproduce the "Be critical." critical source; the
+                       neutral-mixed baseline passes NEUTRAL_SUFFIX / "neutral".
+        steer_only: neutral-mixed mode. When True there is NO stakeholder
+                       source (n_source_model + n_source_critical must equal
+                       n_samples) and candidate sampling never reads the sim's
+                       stakeholder data — so it composes with a veto judge
+                       that has no stakeholder world-model (NeutralityVetoJudge).
         self_preference: variation 2. When True, for every unordered pair of
                        NON-vetoed responses, ask the policy (this model) to
                        pick the better one via PREFERENCE_PROMPT and add the
@@ -248,6 +273,16 @@ class Trainer:
                 f"({n_source_critical}) exceeds n_samples ({n_samples}); "
                 f"no budget left for stakeholder samples"
             )
+        # steer_only is the neutral-mixed path: the steer source replaces the
+        # stakeholder source entirely, so there must be NO stakeholder budget
+        # (the neutrality judge has no stakeholder world-model to draw from).
+        if steer_only:
+            assert mixed_sampling, "steer_only requires mixed_sampling"
+            assert n_source_model + n_source_critical == n_samples, (
+                f"steer_only (neutral-mixed) has no stakeholder source, so "
+                f"n_source_model ({n_source_model}) + n_source_critical "
+                f"({n_source_critical}) must equal n_samples ({n_samples})"
+            )
         self.sim_stake = sim_stake
         self.model = model
         self.tokenizer = tokenizer
@@ -258,6 +293,9 @@ class Trainer:
         self.mixed_sampling = mixed_sampling
         self.n_source_model = n_source_model
         self.n_source_critical = n_source_critical
+        self.steer_suffix = steer_suffix
+        self.steer_label = steer_label
+        self.steer_only = steer_only
         self.self_preference = self_preference
         self.preference_max_tokens = preference_max_tokens
         self.preference_max_pairs = preference_max_pairs
@@ -368,9 +406,9 @@ class Trainer:
             responses.append(r)
             sources.append("model")
 
-        for r in self._generate_n(prompt + CRITICAL_SUFFIX, n_critical):
+        for r in self._generate_n(prompt + self.steer_suffix, n_critical):
             responses.append(r)
-            sources.append("critical")
+            sources.append(self.steer_label)
 
         if n_stake > 0:
             assert entries, (
@@ -549,7 +587,14 @@ class Trainer:
         (primed in stage A, so this is a free hit). The non-mixed path tags
         every sample "model", matching the original.
         """
-        if self.mixed_sampling:
+        if self.mixed_sampling and self.steer_only:
+            # Neutral-mixed: the steer source replaces the stakeholder source,
+            # so never touch the sim's (absent) stakeholder data. The
+            # stakeholder budget is 0 (asserted in __init__), so
+            # _sample_responses_mixed never reads `entries`.
+            def _one(x):
+                return self._sample_responses_mixed(x, [])
+        elif self.mixed_sampling:
             def _one(x):
                 _candidates, entries = self.sim_stake._stakeholder_data_for(x)
                 return self._sample_responses_mixed(x, entries)
@@ -575,8 +620,86 @@ class Trainer:
         return concurrent_map(
             _one, list(zip(chunk, non_vetoed_list)), self.stage_concurrency)
 
-    def _build_iteration(self, prompts, iter_idx, output_dir):
+    def _record_contribution(self, record):
+        """Rebuild one prompt's DPO pairs + veto stats from a persisted
+        `responses_iter_*.jsonl` record, WITHOUT re-sampling or re-vetoing.
+
+        Valid because the sim is frozen: `responses` + `vetoed` fully determine
+        the veto cross-pairs (every vetoed × every non-vetoed), and `pref_pairs`
+        (persisted in the record when self_preference is on) carries the
+        policy-preference pairs that would otherwise need re-querying the policy.
+        Returns (pairs, vetoed, non_vetoed), mirroring stage E's per-prompt
+        outputs so the diagnostics accounting is identical.
+        """
+        x = record["prompt"]
+        responses = record["responses"]
+        vetoed = record["vetoed"]
+        vetoed_set = set(vetoed)
+        non_vetoed = [r for r in responses if r not in vetoed_set]
+        pairs = []
+        for r in vetoed:
+            for c in non_vetoed:
+                pairs.append({"prompt": x, "chosen": c, "rejected": r})
+        if self.self_preference:
+            assert "pref_pairs" in record, (
+                "resuming a --self-preference run but a persisted responses "
+                "record has no 'pref_pairs' field; it predates preempt-resume "
+                "support and cannot be rebuilt without re-querying the policy"
+            )
+        pairs.extend(record.get("pref_pairs", []))
+        return pairs, vetoed, non_vetoed
+
+    def _load_partial_responses(self, responses_path, n_prompts):
+        """Load completed per-prompt records from a partial
+        `responses_iter_*.jsonl` left by an interrupted iteration.
+
+        Records are written one JSON object per line, each terminated by "\\n"
+        and flushed, BEFORE the next prompt is processed. So every complete
+        record is newline-terminated and a kill can only truncate the final
+        line (the trailing newline not yet reached disk). We therefore drop a
+        non-newline-terminated trailing fragment and parse every preceding
+        line — an interior line that fails to parse is genuine corruption and
+        raises (fail fast), not an interrupted write.
+
+        Returns {prompt_idx: record}. Asserts prompt_idx are unique and in
+        range(n_prompts).
+        """
+        with open(responses_path) as f:
+            text = f.read()
+        # split("\n") on a newline-terminated file yields a trailing "" — a
+        # clean end. A non-empty trailing element is a truncated final write;
+        # drop it. All earlier elements are complete, newline-terminated lines.
+        lines = text.split("\n")
+        trailing = lines.pop()
+        if trailing.strip():
+            mem_line(
+                f"resume: dropping truncated final line "
+                f"({len(trailing)} chars) of {os.path.basename(responses_path)}")
+        done = {}
+        for line in lines:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            idx = record["prompt_idx"]
+            assert 0 <= idx < n_prompts, (
+                f"prompt_idx {idx} out of range [0,{n_prompts}) in {responses_path}"
+            )
+            assert idx not in done, (
+                f"duplicate prompt_idx {idx} in {responses_path}"
+            )
+            done[idx] = record
+        return done
+
+    def _build_iteration(self, prompts, iter_idx, output_dir, resume=False):
         """Sample + veto + build pairs for one outer iteration.
+
+        When `resume=True` and `responses_iter_<iter_idx+1>.jsonl` already
+        exists (an interrupted prior run of this iteration), its completed
+        per-prompt records are reloaded and their pairs/stats rebuilt via
+        `_record_contribution`; the chunk loop then SKIPS those prompts and
+        appends only the remaining ones to the same file. This is sound because
+        the policy is not updated until after all of this iteration's sampling,
+        so reloaded and freshly-sampled prompts share identical policy weights.
 
         Processes `prompts` in chunks of `self.chunk_size`, running each stage
         BREADTH-FIRST across the chunk (prime stakeholder data -> sample ->
@@ -628,9 +751,44 @@ class Trainer:
         zero_vetoed_idx = []
         contributing = 0
         responses_path = os.path.join(output_dir, f"responses_iter_{iter_idx + 1}.jsonl")
-        with open(responses_path, "w") as responses_file:
+
+        # Preempt-resume: reload prompts already sampled+vetoed in an interrupted
+        # run of THIS iteration and rebuild their pairs/stats from disk. The
+        # chunk loop below skips these prompts (by global index) and appends only
+        # the rest to the same file.
+        done = {}
+        if resume and os.path.exists(responses_path):
+            done = self._load_partial_responses(responses_path, len(prompts))
+            for idx in sorted(done):
+                rec_pairs, vetoed, non_vetoed = self._record_contribution(done[idx])
+                if len(vetoed) == 0:
+                    zero_vetoed_idx.append(idx)
+                if len(non_vetoed) == 0:
+                    all_vetoed_idx.append(idx)
+                if rec_pairs:
+                    contributing += 1
+                    pairs.extend(rec_pairs)
+            mem_line(
+                f"it{iter_idx} resume: reloaded {len(done)}/{len(prompts)} "
+                f"prompts from {os.path.basename(responses_path)}")
+
+        # Append onto a partially-written file so prior per-prompt records
+        # survive; truncate-and-write for a fresh iteration.
+        file_mode = "a" if done else "w"
+        with open(responses_path, file_mode) as responses_file:
             for chunk_start in range(0, len(prompts), self.chunk_size):
-                chunk = prompts[chunk_start:chunk_start + self.chunk_size]
+                chunk_full = prompts[chunk_start:chunk_start + self.chunk_size]
+                # Drop prompts already completed by a prior interrupted run;
+                # `kept` carries (global_idx, prompt) for the survivors so the
+                # global index is preserved across the skip.
+                kept = [(chunk_start + j, chunk_full[j])
+                        for j in range(len(chunk_full))
+                        if (chunk_start + j) not in done]
+                if not kept:
+                    continue
+                chunk_idx = [g for (g, _x) in kept]
+                chunk = [x for (_g, x) in kept]
+
                 for d in range(torch.cuda.device_count()):
                     torch.cuda.reset_peak_memory_stats(d)
 
@@ -661,12 +819,12 @@ class Trainer:
                         [r for r in responses if r not in vetoed_set])
                 pref_list = self._preference_chunk(chunk, non_vetoed_list)
 
-                # Stage E: reduce in global prompt order — build pairs, persist
-                # the per-prompt responses record, accumulate diagnostics. Pure
-                # Python; produces output identical to the former per-prompt
-                # loop (same pair order, same jsonl schema, same global idx).
+                # Stage E: reduce in chunk order — build pairs, persist the
+                # per-prompt responses record, accumulate diagnostics. `idx` is
+                # the global prompt index (chunk_idx[i]), preserved across the
+                # done-skip so the jsonl keys and diagnostics stay global.
                 for i in range(len(chunk)):
-                    idx = chunk_start + i
+                    idx = chunk_idx[i]
                     x = chunk[i]
                     responses, sources = sampled[i]
                     vetoed = vetoed_list[i]
@@ -686,9 +844,11 @@ class Trainer:
                     num_pref_pairs = len(pref_pairs)
                     prompt_pairs.extend(pref_pairs)
 
-                    # Persist raw samples + veto subset (and sources / pref
-                    # count); flush per prompt so a mid-iteration crash still
-                    # preserves generated work.
+                    # Persist raw samples + veto subset + the self-preference
+                    # pairs (the latter so resume can rebuild the dataset
+                    # without re-querying the policy); flush per prompt so a
+                    # mid-iteration crash still preserves generated work and
+                    # resume reloads it exactly.
                     responses_file.write(json.dumps({
                         "iter": iter_idx,
                         "prompt_idx": idx,
@@ -697,6 +857,7 @@ class Trainer:
                         "sources": sources,
                         "vetoed": vetoed,
                         "num_pref_pairs": num_pref_pairs,
+                        "pref_pairs": pref_pairs,
                     }) + "\n")
                     responses_file.flush()
 
@@ -739,6 +900,7 @@ class Trainer:
               output_dir,
               num_iterations=3,
               beta=0.1,
+              rpo_alpha=None,
               learning_rate=5e-5,
               num_train_epochs=1,
               per_device_train_batch_size=1,
@@ -753,7 +915,8 @@ class Trainer:
               logging_steps=10,
               report_to="none",
               start_iteration=0,
-              resume_adapter=None):
+              resume_adapter=None,
+              resume_partial=False):
         """Iteratively fit a LoRA adapter on `self.model` (the policy) via
         DPO against preference pairs produced by sampling from the
         current policy + the (frozen) `sim_stake` veto signal.
@@ -796,6 +959,10 @@ class Trainer:
                                        per-iter subdirs, the final
                                        adapter, and `iter_stats.json`.
           num_iterations:              K outer iterations (default 3).
+          rpo_alpha:                   if set (> 0), add an SFT/NLL term on the
+                                       CHOSEN responses to the DPO loss (RPO /
+                                       "distill"): total = DPO + rpo_alpha *
+                                       mean-token CE(chosen). None => plain DPO.
           beta, learning_rate, num_train_epochs,
           per_device_train_batch_size, gradient_accumulation_steps,
           max_length, lora_*, gradient_checkpointing,
@@ -806,6 +973,18 @@ class Trainer:
                                        max_prompt_length; max_length caps
                                        the full prompt+completion and
                                        truncates per truncation_mode.)
+          start_iteration, resume_adapter: resume controls. `resume_adapter`
+                                       loads a saved adapter as the trainable
+                                       LoRA (instead of a fresh one) and
+                                       `start_iteration` skips that many already-
+                                       finished iterations.
+          resume_partial:              when True, the FIRST resumed iteration
+                                       (iter_idx == start_iteration) reloads its
+                                       partial `responses_iter_*.jsonl` and
+                                       samples only the not-yet-done prompts,
+                                       instead of restarting that iteration's
+                                       sampling from scratch. Set by the
+                                       --allow-preempt path in train_dpo_lora.py.
 
         Returns: the most-recent `DPOTrainer` instance (the iter K-1
           one), or None if every iter produced 0 pairs. The final LoRA
@@ -895,6 +1074,27 @@ class Trainer:
             save_strategy="no",
         )
 
+        # RPO / "distill" variant. When rpo_alpha is set, add an SFT term — the
+        # mean per-token NLL of the CHOSEN completion (prompt masked) — to the
+        # DPO loss, so chosen log-probs are anchored UP in absolute terms instead
+        # of only via the chosen-rejected margin (standard DPO can drive both down
+        # as long as the margin grows; the NLL term is exactly SFT on the chosen).
+        # trl's multi-loss API sums loss_type[i] weighted by loss_weights[i], so
+        # ["sigmoid","sft"] with weights [1.0, rpo_alpha] is L_DPO + rpo_alpha *
+        # CE(chosen). trl's "sft" loss is already mean-per-token over completion
+        # tokens, so there is no length bias. None => plain DPO (trl default
+        # loss_type=["sigmoid"]). The SFT term needs no reference log-probs, so it
+        # composes with precompute_ref_log_probs (only the sigmoid term reads them).
+        if rpo_alpha is not None:
+            assert rpo_alpha > 0, (
+                f"rpo_alpha must be > 0 when set (got {rpo_alpha})"
+            )
+            base_dpo_args["loss_type"] = ["sigmoid", "sft"]
+            base_dpo_args["loss_weights"] = [1.0, float(rpo_alpha)]
+            print(f"[train] RPO/distill: DPO + {rpo_alpha} * SFT(chosen) "
+                  f"(loss_type={base_dpo_args['loss_type']}, "
+                  f"loss_weights={base_dpo_args['loss_weights']})")
+
         os.makedirs(output_dir, exist_ok=True)
         last_trainer = None
         # On resume, preserve the already-completed iterations' stats.
@@ -905,6 +1105,18 @@ class Trainer:
                 iter_stats = json.load(f)
         for iter_idx in range(int(start_iteration), int(num_iterations)):
             tag = f"iter {iter_idx + 1}/{int(num_iterations)}"
+
+            # Reclaim the previous iteration's cached allocator blocks before
+            # this iteration's ref-logp precompute. With --policy-on-vllm the
+            # policy samples on cuda:1, so cuda:0 sits idle between iterations
+            # and the fragmented reserved pool left by the prior iteration's
+            # DPO training persists into the precompute — the large contiguous
+            # logits allocation then can't find a contiguous block and OOMs.
+            # (HF-sampling runs churn cuda:0 between iters and avoided this
+            # implicitly.) gc first so freed Python references are collected
+            # before empty_cache returns the segments to the allocator.
+            gc.collect()
+            torch.cuda.empty_cache()
 
             # Sampling — eval() suppresses dropout. _sample_responses
             # uses torch.no_grad internally, so no backprop graph is
@@ -918,8 +1130,13 @@ class Trainer:
                 self.model.save_pretrained(sync_dir)
                 self.sync_policy_to_vllm(sync_dir)
             print(f"[{tag}] sampling from policy + vetoing...")
+            # Reload partial sampling only for the FIRST resumed iteration; later
+            # iterations always sample fresh (their responses file, if any, is
+            # from a superseded run and is truncated by _build_iteration).
+            resume_this_iter = bool(resume_partial) and iter_idx == int(start_iteration)
             pairs, all_vetoed_idx, zero_vetoed_idx, contributing = (
-                self._build_iteration(prompts, iter_idx, output_dir)
+                self._build_iteration(prompts, iter_idx, output_dir,
+                                      resume=resume_this_iter)
             )
             print(
                 f"[{tag}] pairs={len(pairs)}  "
@@ -994,10 +1211,22 @@ class Trainer:
             # not the base weights, so K snapshots are cheap on disk.
             iter_adapter_dir = os.path.join(output_dir, f"adapter_iter_{iter_idx + 1}")
             self.model.save_pretrained(iter_adapter_dir)
+            # Sentinel AFTER save_pretrained returns: marks this iteration's
+            # adapter as fully written so an --allow-preempt restart counts it as
+            # finished (a kill mid-save leaves the dir without the sentinel).
+            write_complete_sentinel(iter_adapter_dir)
             print(f"[{tag}] saved iteration adapter -> {iter_adapter_dir}")
 
-        # Persist the final adapter + per-iter diagnostics.
+            # Persist per-iter stats after EVERY iteration (not just at the end)
+            # so a preempt-resume reloads accurate prior-iteration diagnostics
+            # via the start_iteration>0 branch above, instead of a stale file.
+            with open(stats_path, "w") as f:
+                json.dump(iter_stats, f, indent=2)
+
+        # Persist the final adapter + per-iter diagnostics. The sentinel marks
+        # the whole run's top-level adapter as fully written.
         self.model.save_pretrained(output_dir)
+        write_complete_sentinel(output_dir)
         with open(os.path.join(output_dir, "iter_stats.json"), "w") as f:
             json.dump(iter_stats, f, indent=2)
 

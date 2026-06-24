@@ -57,9 +57,12 @@ REPO_ROOT = os.path.dirname(HERE)
 # judge-prompt builder, and the OEQ/PAS loaders that live in mitigations/.
 # Put that dir on the path so the imports below resolve regardless of cwd.
 MITIGATIONS_DIR = os.path.join(REPO_ROOT, "mitigations")
-# empathy_judge_prompt lives alongside this file in eval_empathy/.
+# empathy_judge_prompt now lives in training_mitigations/eval/ (alongside the
+# response-quality judges); put that dir on the path too.
+EVAL_DIR = os.path.join(REPO_ROOT, "training_mitigations", "eval")
 sys.path.insert(0, HERE)
 sys.path.insert(0, MITIGATIONS_DIR)
+sys.path.insert(0, EVAL_DIR)
 
 from explore_mitigations import (
     make_client, model_slug, call_llm,

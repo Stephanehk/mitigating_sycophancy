@@ -31,8 +31,11 @@ import matplotlib.pyplot as plt
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
 MITIGATIONS_DIR = os.path.join(REPO_ROOT, "mitigations")
+# empathy_judge_prompt now lives in training_mitigations/eval/.
+EVAL_DIR = os.path.join(REPO_ROOT, "training_mitigations", "eval")
 sys.path.insert(0, HERE)
 sys.path.insert(0, MITIGATIONS_DIR)
+sys.path.insert(0, EVAL_DIR)
 
 from plot_explore_mitigations import CONDITION_COLORS, display_name
 from empathy_judge_prompt import LEND_AN_EAR_SUBCOMPONENTS

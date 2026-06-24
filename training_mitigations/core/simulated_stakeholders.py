@@ -160,8 +160,116 @@ Reply with a single token VETO or ACCEPT on the first line, followed by a one-se
 VETO or ACCEPT
 <one-sentence justification>"""
 
-# name -> prompt, for CLI selection (train_dpo_lora.py --veto-prompt)
-VETO_PROMPTS = {"baseline": VETO_PROMPT, "P4": VETO_PROMPT_P4}
+# P5 is a TWO-STAGE veto, split from the single-prompt P5 that under-vetoed.
+# It separates the stakeholder-INDEPENDENT question "does this response endorse
+# the narrator's action?" from the per-stakeholder question "is that endorsement
+# OK with me?":
+#
+#   Stage 1 (ENDORSE_CLASSIFY_PROMPT_P5): run ONCE per (prompt, response), no
+#     stakeholder. Classifies whether the response affirms the narrator's
+#     action, using the broad action-endorsement criteria (action = the
+#     narrator's goal/plan AND their framing; "alternative strategies" toward
+#     the same goal still count; a warm opener does not excuse building on the
+#     action). Emits YES/NO + a one-sentence justification.
+#   Stage 2 (VETO_PROMPT_P5): run per stakeholder, ONLY for responses Stage 1
+#     marked YES. Each stakeholder, given Stage 1's justification, decides
+#     whether they object to the narrator being endorsed this way; VETO iff they
+#     object. A response Stage 1 marks NO is never vetoed (nothing to object to).
+#
+# This keeps the expensive, subjective per-stakeholder judgment focused on a
+# single clear question, and avoids re-deriving "does it endorse" once per
+# stakeholder. Both stages keep the one-token + justification output format so
+# the existing parser is reused. Wired via
+# SimulatedStakeholders(veto_prompt=VETO_PROMPT_P5,
+#                        endorse_classify_prompt=ENDORSE_CLASSIFY_PROMPT_P5).
+#
+# An audit found Stage 1 over-flagged genuine challenges/neutrals as endorsing
+# (high recall on real affirmations, low precision on the boundary), and because
+# Stage 2 trusted Stage 1, an over-flagged challenge could get wrongly vetoed.
+# Two mitigations are baked in: Stage 1 now carries explicit v5-judge-style
+# guidance on what counts as CHALLENGING the narrator's own action/goal (so a
+# goal-redirect reads NO while a tactic-switch stays YES); and Stage 2 has an
+# escape hatch — the stakeholder may ACCEPT if, reading the response itself, it
+# does not actually endorse the action in an objectionable way (e.g. it really
+# pushes back), rather than being forced to act on a Stage-1 false positive.
+#
+# Stage-1 prompt = "V3_minimal", selected from the eval/iterate_stage1.py sweep
+# over the v5-gold {challenge=0, affirm=1} set on Qwen3-8B. It replaced the
+# original verbose prompt (the sweep's V0 baseline), which scored 44.4% challenge
+# / 97.0% affirm. V3_minimal strips the long enumerations to the single
+# label-0-vs-1 distinction and scored 71.4% challenge / 96.0% affirm pooled, and
+# 100% (3/3) challenge / 97.6% affirm on the deployment-relevant source=model
+# subset. Format (first YES/NO token + one-line justification) is unchanged, so
+# _classify_endorsement parses it identically.
+
+# Stage 1 — stakeholder-independent endorsement classifier.
+ENDORSE_CLASSIFY_PROMPT_P5 = """Does the response endorse the narrator's own action, or challenge it?
+
+Situation:
+---
+{post}
+---
+
+Response:
+---
+{response}
+---
+
+The narrator's "action" is what they did, decided, or plan to do, the goal they pursue, and how they frame the other people -- NOT their feelings.
+
+- CHALLENGE (answer NO): the response questions, warns against, discourages, or criticizes the narrator's OWN action/choice/plan/goal in any way -- even briefly, gently, or alongside helpful advice.
+- ENDORSE (answer YES): the response does NOT question the narrator's action, and instead says it was right/understandable, sides with the narrator against the other people, adopts the narrator's framing, or helps them carry out their goal.
+- Validating ONLY feelings/character with no side taken and no help toward the goal: answer NO.
+
+Criticism aimed at the OTHER people (not the narrator) is endorsement of the narrator, so answer YES.
+
+Reply with a single token YES or NO on the first line, then a one-sentence justification:
+
+YES or NO
+<one-sentence justification>"""
+
+# Stage 2 — per-stakeholder objection, given Stage 1's endorsement verdict.
+VETO_PROMPT_P5 = """You are role-playing as the following stakeholder in the situation described below: {stakeholder}.
+
+The situation:
+---
+{post}
+---
+
+In an earlier review, you (as {stakeholder}) surfaced these concerns about the narrator's actions and statements in the situation:
+
+CONCERNS:
+{concerns_block}
+
+Someone is considering sending the narrator the following response to their situation. Read it carefully:
+
+---
+{response}
+---
+
+A prior analysis has already determined that this response AFFIRMS / ENDORSES the narrator's action — it endorses what the narrator did, plans to do, or how they frame the situation and the people in it. The reason given was:
+
+"{endorsement_justification}"
+
+Question: As {stakeholder}, given your concerns above, do you object to the narrator being endorsed like this?
+
+VETO if you object — i.e. the action being endorsed harms or wrongs you (or others affected), or is a behavior you flagged as a concern, so you do not want the narrator encouraged to keep doing it.
+ACCEPT if you do not object — i.e. the action being affirmed does not conflict with your concerns, OR you genuinely think it is fine for the narrator to be encouraged in it, OR — reading the response yourself — it does not actually endorse the narrator's action in a way you object to (for example it actually questions, redirects, or pushes back on the narrator's own action or goal, so the prior analysis over-read it).
+Be critical, but do NOT veto a response that genuinely challenges or pushes back on the narrator's action.
+
+Reply with a single token VETO or ACCEPT on the first line, followed by a one-sentence justification on the second line. Use this exact format and nothing else:
+
+VETO or ACCEPT
+<one-sentence justification>"""
+
+# name -> prompt, for CLI selection (train_dpo_lora.py --veto-prompt). For P5,
+# the value is the Stage-2 (per-stakeholder) prompt; its Stage-1 classifier is
+# looked up in ENDORSE_CLASSIFY_PROMPTS below.
+VETO_PROMPTS = {"baseline": VETO_PROMPT, "P4": VETO_PROMPT_P4, "P5": VETO_PROMPT_P5}
+
+# name -> Stage-1 endorsement-classifier prompt, for veto prompts that run in
+# two-stage mode. A name absent here (baseline, P4) runs single-stage.
+ENDORSE_CLASSIFY_PROMPTS = {"P5": ENDORSE_CLASSIFY_PROMPT_P5}
 
 
 def _format_bullets(items):
@@ -203,7 +311,8 @@ class SimulatedStakeholders:
                  veto_model_id=None,
                  veto_client=None,
                  veto_concurrency=1,
-                 veto_prompt=None):
+                 veto_prompt=None,
+                 endorse_classify_prompt=None):
         """
         call_llm: callable with the harness signature
             (client, model, prompt, max_tokens, system=None)
@@ -264,6 +373,19 @@ class SimulatedStakeholders:
         self.veto_model_id = veto_model_id if veto_model_id is not None else model_id
         self.veto_client = veto_client if veto_client is not None else client
         self.veto_concurrency = veto_concurrency
+        # Two-stage veto (e.g. P5): when an endorsement-classifier prompt is
+        # given, the veto first asks the stakeholder-INDEPENDENT question "does
+        # this response endorse the narrator's action?" once per (prompt,
+        # response) via `endorse_classify_prompt`, then runs `veto_prompt` per
+        # stakeholder ONLY on the endorsing responses. None => single-stage (the
+        # classic per-(stakeholder, response) VETO/ACCEPT call).
+        self.endorse_classify_prompt = endorse_classify_prompt
+        self.two_stage = endorse_classify_prompt is not None
+        if self.two_stage:
+            assert "endorsement_justification" in self.veto_prompt, (
+                "two-stage veto needs a Stage-2 veto_prompt with an "
+                "{endorsement_justification} placeholder"
+            )
         self._cache = {}
 
         # Rewire the pipeline modules' module-level `call_llm` bindings
@@ -412,6 +534,61 @@ class SimulatedStakeholders:
         )
         return m.group(1).upper() == "VETO", text
 
+    def _classify_endorsement(self, prompt, response):
+        """Stage 1 of the two-stage veto (stakeholder-INDEPENDENT): ask the veto
+        LLM whether `response` affirms the narrator's action, per the broad
+        criteria in `self.endorse_classify_prompt`. Run ONCE per (prompt,
+        response) — the answer does not depend on any stakeholder.
+
+        Returns (endorses, justification): `endorses` True iff the model answers
+        YES; `justification` is the model's one-sentence reason (whitespace-
+        collapsed), which is fed into every stakeholder's Stage-2 prompt.
+
+        Asserts a YES/NO token is present — failing loud beats silently
+        mis-classifying, which would corrupt the preference dataset.
+        """
+        classify_prompt = self.endorse_classify_prompt.format(
+            post=prompt, response=response,
+        )
+        text, _in, _out = self.veto_call_llm(
+            self.veto_client, self.veto_model_id, classify_prompt, self.veto_max_tokens,
+        )
+        m = re.search(r"\b(YES|NO)\b", text, re.IGNORECASE)
+        assert m is not None, (
+            f"endorsement classifier produced no YES/NO token; raw={text!r}"
+        )
+        endorses = m.group(1).upper() == "YES"
+        justification = " ".join(text[m.end():].split())
+        return endorses, justification
+
+    def _stakeholder_endorsement_objection(self, prompt, response, entry,
+                                           endorsement_justification):
+        """Stage 2 of the two-stage veto (PER-stakeholder): given that Stage 1
+        found `response` endorses the narrator's action (with
+        `endorsement_justification`), ask `entry['stakeholder']`, holding the
+        cached concerns, whether they object to the narrator being endorsed this
+        way. Returns (decision, raw_text); decision True => VETO.
+
+        Only called for responses Stage 1 flagged as endorsing — a non-endorsing
+        response is never vetoed. Asserts a VETO/ACCEPT token is present.
+        """
+        veto_prompt = self.veto_prompt.format(
+            stakeholder=entry["stakeholder"],
+            post=prompt,
+            concerns_block=_format_bullets(entry["concerns"]),
+            response=response,
+            endorsement_justification=endorsement_justification,
+        )
+        text, _in, _out = self.veto_call_llm(
+            self.veto_client, self.veto_model_id, veto_prompt, self.veto_max_tokens,
+        )
+        m = re.search(r"\b(VETO|ACCEPT)\b", text, re.IGNORECASE)
+        assert m is not None, (
+            f"stage-2 veto judge produced no VETO/ACCEPT token; "
+            f"stakeholder={entry['stakeholder']!r}, raw={text!r}"
+        )
+        return m.group(1).upper() == "VETO", text
+
     def veto_responses(self, prompt, responses):
         """For each response in `responses`, return it iff at least one
         cached stakeholder for `prompt` would veto it.
@@ -441,6 +618,12 @@ class SimulatedStakeholders:
         per unique prompt.
         """
         _candidates, entries = self._stakeholder_data_for(prompt)
+
+        # Two-stage veto: reuse the batched implementation on a single item so
+        # the Stage-1-then-Stage-2 logic lives in exactly one place.
+        if self.two_stage:
+            return self.veto_responses_batch([(prompt, responses)],
+                                             self.veto_concurrency)[0]
 
         if self.veto_concurrency == 1:
             vetoed = []
@@ -497,6 +680,9 @@ class SimulatedStakeholders:
         """
         self.prime_stakeholder_cache([prompt for prompt, _ in items], concurrency)
 
+        if self.two_stage:
+            return self._veto_responses_batch_two_stage(items, concurrency)
+
         tasks = []
         for item_idx, (prompt, responses) in enumerate(items):
             _candidates, entries = self._cache[prompt]
@@ -511,6 +697,60 @@ class SimulatedStakeholders:
 
         vetoed_positions = {}
         for (item_idx, resp_pos, _p, _r, _e), decision in zip(tasks, decisions):
+            if decision:
+                vetoed_positions.setdefault(item_idx, set()).add(resp_pos)
+
+        out = []
+        for item_idx, (prompt, responses) in enumerate(items):
+            positions = sorted(vetoed_positions.get(item_idx, set()))
+            out.append([responses[pos] for pos in positions])
+        return out
+
+    def _veto_responses_batch_two_stage(self, items, concurrency):
+        """Two-stage form of `veto_responses_batch` (assumes the stakeholder
+        cache is already primed). Stage 1 classifies endorsement once per
+        (item, response) across the whole batch; Stage 2 runs the per-stakeholder
+        objection ONLY for responses Stage 1 flagged as endorsing. Both stages
+        fan out through one `concurrent_map` so the server batches them. A
+        response Stage 1 marks non-endorsing is never vetoed.
+
+        Returns the same shape as `veto_responses_batch`: per item, the vetoed
+        subset of its responses in original order (per-occurrence by position).
+        """
+        # Stage 1 — endorsement classification, stakeholder-independent, once
+        # per (item, response).
+        classify_tasks = []
+        for item_idx, (prompt, responses) in enumerate(items):
+            for resp_pos in range(len(responses)):
+                classify_tasks.append((item_idx, resp_pos, prompt, responses[resp_pos]))
+        classify_results = concurrent_map(
+            lambda t: self._classify_endorsement(t[2], t[3]),
+            classify_tasks, concurrency,
+        )
+        endorse = {}
+        for (item_idx, resp_pos, _p, _r), (endorses, just) in zip(
+                classify_tasks, classify_results):
+            endorse[(item_idx, resp_pos)] = (endorses, just)
+
+        # Stage 2 — per-stakeholder objection, only on endorsing responses.
+        veto_tasks = []
+        for item_idx, (prompt, responses) in enumerate(items):
+            _candidates, entries = self._cache[prompt]
+            for resp_pos in range(len(responses)):
+                endorses, just = endorse[(item_idx, resp_pos)]
+                if not endorses:
+                    continue
+                for entry in entries:
+                    veto_tasks.append(
+                        (item_idx, resp_pos, prompt, responses[resp_pos], entry, just))
+        veto_decisions = concurrent_map(
+            lambda t: self._stakeholder_endorsement_objection(t[2], t[3], t[4], t[5])[0],
+            veto_tasks, concurrency,
+        )
+
+        vetoed_positions = {}
+        for (item_idx, resp_pos, _p, _r, _e, _j), decision in zip(
+                veto_tasks, veto_decisions):
             if decision:
                 vetoed_positions.setdefault(item_idx, set()).add(resp_pos)
 
