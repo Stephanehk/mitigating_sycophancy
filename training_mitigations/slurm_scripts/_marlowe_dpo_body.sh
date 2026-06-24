@@ -68,17 +68,22 @@ else
   echo "[marlowe] at MAX_ATTEMPTS=$MAX_ATTEMPTS; no successor queued." >&2
 fi
 
-# SLURM sends USR1 (via the wrapper's --signal=B:USR1@1800) ~30 min before the
-# preemption / wall kill. Stop the trainer cleanly; per-prompt flushing keeps
-# progress to the last completed prompt on disk, and the queued successor
-# resumes it. Leave .complete absent so the successor knows to resume.
+# Two ways a window ends early on the preempt partition:
+#   - WALL expiry: the wrapper's --signal=B:USR1@300 delivers USR1 ~5 min before
+#     the 4h limit.
+#   - PREEMPTION: SLURM delivers SIGTERM, then SIGKILL after GraceTime (~15 min).
+# Trap both and stop the trainer cleanly. Progress is durable regardless of a
+# clean stop: per-prompt sampling flushes to responses_iter_*.jsonl, and the DPO
+# train phase checkpoints every --dpo-save-steps; the queued successor resumes
+# from the latest of those. Leave .complete absent so the successor knows to
+# resume.
 on_signal() {
-  echo "[marlowe] USR1 grace signal — stopping trainer for checkpoint."
+  echo "[marlowe] grace signal (USR1/TERM) — stopping trainer for checkpoint."
   kill -TERM "${PY_PID:-}" 2>/dev/null || true
   wait "${PY_PID:-}" 2>/dev/null || true
   exit 0
 }
-trap on_signal USR1
+trap on_signal USR1 TERM
 
 # Optional RPO / "distill" term. A wrapper sets RPO_ALPHA before sourcing this
 # body to add an SFT(chosen) term to the DPO loss (--rpo-alpha); unset => plain
@@ -102,7 +107,8 @@ fi
     --sim-device cuda:1 \
     --sim-backend vllm \
     --veto-concurrency 16 \
-    --precompute-ref-batch-size 2 \
+    --precompute-ref-batch-size 8 \
+    --dpo-save-steps 25 \
     --num-iterations 3 \
     --train-n 1000 \
     --test-n 500 \

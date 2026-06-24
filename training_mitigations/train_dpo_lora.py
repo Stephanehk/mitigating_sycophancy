@@ -384,6 +384,15 @@ def main():
              "term). 1.0 is the canonical RPO value.",
     )
     parser.add_argument(
+        "--dpo-save-steps", type=int, default=0,
+        help="if > 0, checkpoint the DPO train phase every this many optimizer "
+             "steps and resume it from the latest checkpoint after a kill. "
+             "Combined with the per-prompt sampling checkpoints, this makes the "
+             "whole iteration resumable, so a short (e.g. preempt 4h) window is "
+             "enough to make progress. 0 (default) keeps the train step atomic "
+             "(fine for long windows). 25 is a reasonable value.",
+    )
+    parser.add_argument(
         "--learning-rate", type=float, default=5e-5,
         help="DPO learning rate (default: 5e-5)",
     )
@@ -736,6 +745,7 @@ def main():
         num_iterations=args.num_iterations,
         beta=args.beta,
         rpo_alpha=args.rpo_alpha,
+        dpo_save_steps=args.dpo_save_steps,
         learning_rate=args.learning_rate,
         num_train_epochs=args.num_train_epochs,
         per_device_train_batch_size=args.per_device_batch_size,

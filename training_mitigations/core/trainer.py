@@ -51,9 +51,11 @@ the same way so DPO sees the same surface that produced the responses.
 """
 
 import gc
+import glob
 import json
 import os
 import re
+import shutil
 import sys
 
 import torch
@@ -143,6 +145,34 @@ Reply with a single token A or B on the first line, followed by a one-sentence j
 
 A or B
 <one-sentence justification>"""
+
+
+def _checkpoint_step(path):
+    """Parse the integer step from an HF 'checkpoint-<n>' dir path, or None if
+    `path` doesn't match that pattern. Trailing slashes are tolerated."""
+    if not path:
+        return None
+    m = re.search(r"checkpoint-(\d+)$", path.rstrip("/"))
+    return int(m.group(1)) if m else None
+
+
+def _latest_valid_checkpoint(iter_out):
+    """Return the path to the highest-step `checkpoint-<n>` dir under `iter_out`
+    that contains a `trainer_state.json`, or None if there is none.
+
+    HF Trainer writes `trainer_state.json` LAST when saving a checkpoint, so its
+    presence marks the save as complete. A kill mid-write (e.g. a preempt SIGKILL
+    during a checkpoint) leaves the in-progress dir without it; skipping such a
+    dir lets a resume fall back to the prior good checkpoint instead of failing
+    to load a truncated one. Pure filesystem inspection — no model load.
+    """
+    best, best_step = None, -1
+    for c in glob.glob(os.path.join(iter_out, "checkpoint-*")):
+        step = _checkpoint_step(c)
+        if (step is not None and step > best_step
+                and os.path.exists(os.path.join(c, "trainer_state.json"))):
+            best, best_step = c, step
+    return best
 
 
 def _preference_pair_indices(k, max_pairs):
@@ -901,6 +931,7 @@ class Trainer:
               num_iterations=3,
               beta=0.1,
               rpo_alpha=None,
+              dpo_save_steps=0,
               learning_rate=5e-5,
               num_train_epochs=1,
               per_device_train_batch_size=1,
@@ -963,6 +994,11 @@ class Trainer:
                                        CHOSEN responses to the DPO loss (RPO /
                                        "distill"): total = DPO + rpo_alpha *
                                        mean-token CE(chosen). None => plain DPO.
+          dpo_save_steps:              if > 0, checkpoint the DPO train phase every
+                                       this many optimizer steps and resume it from
+                                       the latest checkpoint after a kill, so the
+                                       train step survives a short (preempt) window.
+                                       0 (default) keeps the train step atomic.
           beta, learning_rate, num_train_epochs,
           per_device_train_batch_size, gradient_accumulation_steps,
           max_length, lora_*, gradient_checkpointing,
@@ -1095,6 +1131,23 @@ class Trainer:
                   f"(loss_type={base_dpo_args['loss_type']}, "
                   f"loss_weights={base_dpo_args['loss_weights']})")
 
+        # Step-level DPO checkpointing. With dpo_save_steps > 0, HF Trainer writes
+        # a checkpoint-<step>/ dir into the iteration's output dir every that-many
+        # optimizer steps; `_resume_dpo_checkpoint` below then continues a killed
+        # train phase from the latest one instead of restarting the epoch. This is
+        # what makes a short (preempt 4h) window enough: sampling already
+        # checkpoints per prompt, and now the DPO train step does too, so every
+        # phase of an iteration resumes. dpo_save_steps == 0 keeps the original
+        # behavior (save_strategy="no", train step atomic — fine for long
+        # windows). save_total_limit=2 keeps a fallback if the most recent
+        # checkpoint was truncated by a kill mid-write.
+        if int(dpo_save_steps) > 0:
+            base_dpo_args["save_strategy"] = "steps"
+            base_dpo_args["save_steps"] = int(dpo_save_steps)
+            base_dpo_args["save_total_limit"] = 2
+            print(f"[train] DPO step checkpointing every {int(dpo_save_steps)} "
+                  f"steps (resumable train phase)")
+
         os.makedirs(output_dir, exist_ok=True)
         last_trainer = None
         # On resume, preserve the already-completed iterations' stats.
@@ -1196,7 +1249,30 @@ class Trainer:
                 # Trainer._wrap_model; transformers itself forces n_gpu=1 to do
                 # exactly this). cuda:1's sim is the caller's model, untouched.
                 last_trainer.args._n_gpu = 1
-                last_trainer.train()
+                # Resume this iteration's DPO step from a mid-epoch checkpoint if
+                # a prior window was killed during it. Only the FIRST resumed
+                # iteration may legitimately carry an in-progress checkpoint (its
+                # dataset is rebuilt identically from the reloaded responses); a
+                # checkpoint under any other iteration is stale (a superseded
+                # run's, built against a different-policy dataset). A checkpoint
+                # truncated by a kill mid-write is skipped for the prior good one
+                # (_latest_valid_checkpoint).
+                resume_ckpt = None
+                if int(dpo_save_steps) > 0 and iter_idx == int(start_iteration):
+                    resume_ckpt = _latest_valid_checkpoint(iter_out)
+                # Drop every checkpoint we are NOT resuming from: all of them when
+                # starting fresh (resume_ckpt is None -> keep_step -1), or any
+                # NEWER-but-corrupt dir when resuming from an older valid one, so
+                # HF's checkpoint rotation continues from a clean state.
+                keep_step = (_checkpoint_step(resume_ckpt)
+                             if resume_ckpt is not None else -1)
+                for c in glob.glob(os.path.join(iter_out, "checkpoint-*")):
+                    step = _checkpoint_step(c)
+                    if step is not None and step > keep_step:
+                        shutil.rmtree(c, ignore_errors=True)
+                if resume_ckpt:
+                    print(f"[{tag}] resuming DPO step from {resume_ckpt}")
+                last_trainer.train(resume_from_checkpoint=resume_ckpt)
                 mem_line(f"it{iter_idx} DPO: after train()")
             else:
                 print(f"[{tag}] no pairs to train on; skipping DPO step")
@@ -1216,6 +1292,15 @@ class Trainer:
             # finished (a kill mid-save leaves the dir without the sentinel).
             write_complete_sentinel(iter_adapter_dir)
             print(f"[{tag}] saved iteration adapter -> {iter_adapter_dir}")
+
+            # The adapter_iter_<k> snapshot now durably captures this iteration's
+            # trained state, so its mid-train checkpoints are superseded. Remove
+            # them so they don't accumulate on disk and can't be mistaken for an
+            # in-progress train step when a later window resumes.
+            for c in glob.glob(os.path.join(output_dir,
+                                            f"iter_{iter_idx + 1}",
+                                            "checkpoint-*")):
+                shutil.rmtree(c, ignore_errors=True)
 
             # Persist per-iter stats after EVERY iteration (not just at the end)
             # so a preempt-resume reloads accurate prior-iteration diagnostics
