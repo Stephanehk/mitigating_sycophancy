@@ -54,7 +54,6 @@ fastapi-cloud-cli==0.17.1
 fastar==0.11.0
 fastsafetensors==0.3.1
 fastuuid==0.14.0
--e git+https://github.com/rishibommasani/EconEvalsONET.git@b2661814e6495fa32952572e405424efbaf5972d#egg=figures_2&subdirectory=figures_2
 filelock==3.29.0
 flashinfer-cubin==0.6.8.post1
 flashinfer-python==0.6.8.post1
