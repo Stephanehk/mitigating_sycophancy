@@ -4,17 +4,16 @@
 #   export HF_TOKEN=...        # Qwen3-8B is gated
 #   sbatch /projects/m000254/sycophancy/training_mitigations/slurm_scripts/marlowe_hero_run_train_pas_n1000_mixed_P5_nocrit_distill.sbatch
 #
-# Same training config as the preempt variant (P5 veto, mixed 4 model / 0
-# critical / 6 stakeholder, RPO_ALPHA=1.0 SFT-on-chosen term) but targets the
-# `hero` partition (MaxTime=30 days, NOT preemptible). The whole 3-iteration run
-# fits in one --time=1-00:00:00 window, so there is no 4h-window / unfinished-
-# iteration risk that the preempt variant has.
+# Training config: P5 veto, mixed sampling 4 model / 0 critical / 6 stakeholder,
+# RPO_ALPHA=1.0 SFT-on-chosen term (total = DPO + 1.0 * mean-token CE(chosen)),
+# on the `hero` partition (MaxTime=30 days, NOT preemptible). The whole
+# 3-iteration run fits in one --time=1-00:00:00 window.
 #
-# Reuses _marlowe_dpo_body.sh, so it still passes --allow-preempt (a harmless
-# cold start on first run) and queues an afterany successor as a safety net; the
-# successor is cancelled when the run writes .complete, which it will well within
-# 24h. OUT_NAME matches the preempt variant, so this can also RESUME a run that
-# was started under preempt.
+# Reuses _marlowe_dpo_body.sh: the --allow-preempt resume + the afterany
+# successor act as a CRASH-RESILIENCE safety net here (not preemption) — if the
+# node fails mid-run, the successor auto-resumes from the last finished iteration
+# / flushed prompt. The successor is cancelled when the run writes .complete,
+# which it will well within 24h.
 #SBATCH --job-name=dpo_pas_n1000_mixed_P5_nocrit_distill_hero
 #SBATCH --account=marlowe-m000254
 #SBATCH --partition=hero
