@@ -12,9 +12,12 @@
 # mean-token CE(chosen)), anchoring chosen log-probs up instead of only the
 # chosen-rejected margin. 1.0 is the canonical RPO value.
 #
-# Basic Access => `preempt` partition: 12h cap, preemptible with a ~30-min grace
-# signal. This is a SELF-RESUBMITTING 12h chain; each (re)start auto-resumes via
-# --allow-preempt. All site paths live in _marlowe_dpo_body.sh.
+# `preempt` partition on Marlowe: MaxTime=04:00:00 (4h), GraceTime=900 (15min),
+# preemptible. SELF-RESUBMITTING 4h chain; each (re)start auto-resumes via
+# --allow-preempt. NOTE: a full DPO iteration may not fit in 4h, and the train
+# step is not mid-checkpointed — prefer the `hero` partition variant
+# (marlowe_hero_run_train_pas_n1000_mixed_P5_nocrit_distill.sbatch) if you have
+# access. All site paths live in _marlowe_dpo_body.sh.
 #SBATCH --job-name=dpo_pas_n1000_mixed_P5_nocrit_distill
 #SBATCH --account=marlowe-m000254
 #SBATCH --partition=preempt
@@ -23,8 +26,8 @@
 #SBATCH --gpus=2
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=200G
-#SBATCH --time=11:55:00
-#SBATCH --signal=B:USR1@1800
+#SBATCH --time=04:00:00
+#SBATCH --signal=B:USR1@300
 #SBATCH --open-mode=append
 #SBATCH --output=/projects/m000254/logs/dpo_pas_n1000_mixed_P5_nocrit_distill_%j.out
 #SBATCH --error=/projects/m000254/logs/dpo_pas_n1000_mixed_P5_nocrit_distill_%j.err
