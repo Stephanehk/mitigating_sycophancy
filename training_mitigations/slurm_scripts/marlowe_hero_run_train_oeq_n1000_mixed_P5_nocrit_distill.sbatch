@@ -24,6 +24,7 @@
 #SBATCH --mem=200G
 #SBATCH --time=1-00:00:00
 #SBATCH --signal=B:USR1@300
+#SBATCH --no-requeue
 #SBATCH --open-mode=append
 #SBATCH --output=/projects/m000254/logs/dpo_oeq_n1000_mixed_P5_nocrit_distill_hero_%j.out
 #SBATCH --error=/projects/m000254/logs/dpo_oeq_n1000_mixed_P5_nocrit_distill_hero_%j.err

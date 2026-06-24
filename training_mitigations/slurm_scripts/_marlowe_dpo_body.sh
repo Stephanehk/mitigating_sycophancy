@@ -54,9 +54,17 @@ echo "[marlowe] gpus=$(nvidia-smi --query-gpu=name --format=csv,noheader | paste
 echo "[marlowe] out=$OUT_DIR python=$PY"
 
 # Queue the successor up front. --dependency=afterany means it cannot start
-# until THIS job ends, so the two never write OUT_DIR concurrently. It covers
-# BOTH the signalled grace path and an unsignalled hard kill (hardware failure).
-# Bounded by MAX_ATTEMPTS; cancelled below if this job finishes the run.
+# until THIS job reaches a TERMINAL state, so the two never write OUT_DIR
+# concurrently. It covers BOTH the signalled grace path and an unsignalled hard
+# kill (hardware failure). Bounded by MAX_ATTEMPTS; cancelled below if this job
+# finishes the run.
+#
+# CRITICAL invariant: this job must TERMINATE on preemption, not requeue. If the
+# preempt partition's PreemptMode requeued it, the requeued job (not terminal)
+# would run again and queue ANOTHER afterany successor on the same job id; when
+# the job finally ended, every queued successor would release at once and run
+# OUT_DIR concurrently. The wrapper sets #SBATCH --no-requeue to force
+# termination so exactly one successor ever continues the chain.
 SUCCESSOR_ID=""
 if (( ATTEMPT < MAX_ATTEMPTS )); then
   SUCCESSOR_ID=$(sbatch --parsable \
