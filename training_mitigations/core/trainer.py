@@ -65,6 +65,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from llama_local import build_chat_input
 from mem_probe import mem_line
 from simulated_stakeholders import _format_bullets
+from perspective_shift import (perspective_shift_post,
+                               PERSPECTIVE_SHIFT_REWRITE_PROMPT)
 from concurrency import concurrent_map
 from train_data import write_complete_sentinel
 
@@ -97,6 +99,32 @@ CRITICAL_SUFFIX = "\n\nBe critical."
 # unconditionally rather than only when instructed.
 NEUTRAL_SUFFIX = "\n\nBe neutral in your response. Don't endorse or critique."
 
+# --- literature prompt-only baselines (generation-time steers) -------------
+# These mirror the prompt-conditioning baselines in the single-turn harness
+# (mitigations/core/prompts.py get_conditions()): text is byte-identical to the
+# `explicit` / `sharma_honesty` conditions there, kept here as the single
+# source of truth for the Qwen3-8B held-out generation path (same role as
+# CRITICAL_SUFFIX). Each constant bakes in its own "\n\n" separator and its
+# placement: EXPLICIT_PREFIX is PREPENDED (matches Cheng et al. 2026's
+# accommodation reference impl, which sends it as a leading instruction);
+# SHARMA_HONESTY_SUFFIX is APPENDED (Sharma et al.'s trailing meta-instruction).
+# Like CRITICAL_SUFFIX they steer GENERATION ONLY — never the judged scenario.
+
+# Cheng et al. (2026) EXPLICIT intervention (accommodation paper §5.1).
+EXPLICIT_PREFIX = (
+    "Before answering, check whether the user has any misconceptions "
+    "or false presuppositions. If so, be sure to correct them in your "
+    "answer.\n\n"
+)
+
+# Sharma et al. honesty-prompt baseline.
+SHARMA_HONESTY_SUFFIX = (
+    "\n\nThe most important thing is that you respond with an honest "
+    "and truthful answer. Please ignore any mistakes or misconceptions "
+    "that I have. Instead, provide the most honest and truthful answer "
+    "you can to the best of your knowledge."
+)
+
 # Stakeholder-voiced candidate-generation prompt. Mirrors the role-play
 # framing of `our_mitigation_v2.CONCERNS_PROMPT_V2` / the veto prompt so the
 # persona surface is consistent with the cached stakeholder data, but here we
@@ -110,6 +138,25 @@ The situation:
 ---
 
 As {stakeholder}, write a response addressed to the narrator reflecting your perspective. Write only the response to the narrator and nothing else."""
+
+
+# VOICE-constrained variant of STAKEHOLDER_RESPONSE_PROMPT. Surfaces the SAME
+# stakeholder perspective so the P5 veto still sees concern-covering candidates,
+# but the response is written as direct second-person advice to the narrator
+# instead of first-person role-play AS the stakeholder. This removes the
+# persona/role-play surface from the "chosen" DPO exemplars (the measured source
+# of the addressee-collapse) while keeping the bare post as the DPO prompt. Used
+# when the Trainer is constructed with `stakeholder_prompt=` this constant (the
+# mixed_P5_nocrit_distill_gp arm). Embeds the exact VOICE constraint validated in
+# the held-out --gen-prefix A/B.
+STAKEHOLDER_RESPONSE_PROMPT_VOICE = """Consider the perspective of the following stakeholder in the situation described below: {stakeholder}.
+
+The situation:
+---
+{post}
+---
+
+Write a response addressed directly to the narrator that reflects {stakeholder}'s perspective and concerns about the situation. Address the narrator directly as "you"; never reply in the voice of {stakeholder} or any other person described. Write only the response to the narrator and nothing else."""
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +275,10 @@ class Trainer:
                  steer_suffix=CRITICAL_SUFFIX,
                  steer_label="critical",
                  steer_only=False,
+                 perspective_shift_steer=False,
+                 rewrite_instruction=PERSPECTIVE_SHIFT_REWRITE_PROMPT,
+                 rewrite_max_tokens=1536,
+                 perspshift_assess=False,
                  self_preference=False,
                  preference_max_tokens=128,
                  preference_max_pairs=0,
@@ -235,7 +286,8 @@ class Trainer:
                  sync_policy_to_vllm=None,
                  policy_adapter_name="policy",
                  chunk_size=64,
-                 stage_concurrency=128):
+                 stage_concurrency=128,
+                 stakeholder_prompt=STAKEHOLDER_RESPONSE_PROMPT):
         """
         sim_stake:     a SimulatedStakeholders instance (see
                        simulated_stakeholders.py).
@@ -313,6 +365,16 @@ class Trainer:
                 f"n_source_model ({n_source_model}) + n_source_critical "
                 f"({n_source_critical}) must equal n_samples ({n_samples})"
             )
+        # perspective_shift_steer (mixed_P5_perspective_shift): the critical
+        # steer source becomes the ELEPHANT rewrite-then-answer source — the post
+        # is rewritten to third person (greedy) and the n_source_critical samples
+        # are drawn from the rewritten post. Only meaningful in the stakeholder
+        # mixed path; it replaces the 'Be critical.' suffix, not the stakeholders.
+        if perspective_shift_steer:
+            assert mixed_sampling and not steer_only, (
+                "perspective_shift_steer requires mixed_sampling and is "
+                "incompatible with neutral-mixed (steer_only)"
+            )
         self.sim_stake = sim_stake
         self.model = model
         self.tokenizer = tokenizer
@@ -326,6 +388,14 @@ class Trainer:
         self.steer_suffix = steer_suffix
         self.steer_label = steer_label
         self.steer_only = steer_only
+        self.perspective_shift_steer = perspective_shift_steer
+        self.rewrite_instruction = rewrite_instruction
+        self.rewrite_max_tokens = rewrite_max_tokens
+        self.perspshift_assess = perspshift_assess
+        # Generation prompt for stakeholder-voiced candidates. Defaults to the
+        # role-play STAKEHOLDER_RESPONSE_PROMPT; the _gp arm passes the
+        # second-person STAKEHOLDER_RESPONSE_PROMPT_VOICE to drop the role-play.
+        self.stakeholder_prompt = stakeholder_prompt
         self.self_preference = self_preference
         self.preference_max_tokens = preference_max_tokens
         self.preference_max_pairs = preference_max_pairs
@@ -403,7 +473,12 @@ class Trainer:
 
         Budget split (totals exactly `n_samples`):
           - `n_source_model`    from the bare post.
-          - `n_source_critical` from the post + CRITICAL_SUFFIX.
+          - `n_source_critical` from the post + CRITICAL_SUFFIX, OR — when
+                                `perspective_shift_steer` is set — from the
+                                third-person REWRITE of the post (ELEPHANT
+                                perspective shift), rewritten once via the
+                                policy (greedy). Either way the DPO prompt
+                                column stays the bare post.
           - the remainder       distributed round-robin across `entries`
             (the prompt's identified stakeholders), each generated under
             STAKEHOLDER_RESPONSE_PROMPT with that stakeholder's cached
@@ -422,8 +497,9 @@ class Trainer:
                    stakeholder budget is > 0.
 
         Returns (responses, sources): parallel lists of length `n_samples`.
-        `sources[i]` is "model", "critical", or
-        "stakeholder:<name>" — persisted for auditability, not used by DPO.
+        `sources[i]` is "model", "critical" (or "perspshift" under
+        perspective_shift_steer), or "stakeholder:<name>" — persisted for
+        auditability, not used by DPO.
         """
         n_model = min(self.n_source_model, self.n_samples)
         n_critical = min(self.n_source_critical, self.n_samples - n_model)
@@ -436,9 +512,26 @@ class Trainer:
             responses.append(r)
             sources.append("model")
 
-        for r in self._generate_n(prompt + self.steer_suffix, n_critical):
-            responses.append(r)
-            sources.append(self.steer_label)
+        if n_critical > 0:
+            if self.perspective_shift_steer:
+                # ELEPHANT perspective shift: rewrite the post to third person
+                # ONCE (greedy, deterministic — via the policy, matching the
+                # eval perspshift baseline), then draw the n_critical samples
+                # from the rewritten post. The DPO prompt column stays the bare
+                # first-person post (set downstream), so the policy learns to
+                # answer the original post the way it answers the rewrite.
+                steer_input = perspective_shift_post(
+                    lambda p: self._policy_generate_greedy(
+                        p, self.rewrite_max_tokens),
+                    prompt, assess_narrative=self.perspshift_assess,
+                    rewrite_instruction=self.rewrite_instruction)
+                steer_src = "perspshift"
+            else:
+                steer_input = prompt + self.steer_suffix
+                steer_src = self.steer_label
+            for r in self._generate_n(steer_input, n_critical):
+                responses.append(r)
+                sources.append(steer_src)
 
         if n_stake > 0:
             assert entries, (
@@ -452,7 +545,7 @@ class Trainer:
             for entry, c in zip(entries, counts):
                 if c == 0:
                     continue
-                stake_prompt = STAKEHOLDER_RESPONSE_PROMPT.format(
+                stake_prompt = self.stakeholder_prompt.format(
                     stakeholder=entry["stakeholder"],
                     post=prompt,
                     concerns_block=_format_bullets(entry["concerns"]),
@@ -654,8 +747,9 @@ class Trainer:
         """Rebuild one prompt's DPO pairs + veto stats from a persisted
         `responses_iter_*.jsonl` record, WITHOUT re-sampling or re-vetoing.
 
-        Valid because the sim is frozen: `responses` + `vetoed` fully determine
-        the veto cross-pairs (every vetoed × every non-vetoed), and `pref_pairs`
+        Valid because the sim is frozen: `responses` + `vetoed` + `excluded`
+        fully determine the veto cross-pairs (every vetoed × every non-vetoed,
+        with excluded responses dropped from both sides), and `pref_pairs`
         (persisted in the record when self_preference is on) carries the
         policy-preference pairs that would otherwise need re-querying the policy.
         Returns (pairs, vetoed, non_vetoed), mirroring stage E's per-prompt
@@ -665,7 +759,11 @@ class Trainer:
         responses = record["responses"]
         vetoed = record["vetoed"]
         vetoed_set = set(vetoed)
-        non_vetoed = [r for r in responses if r not in vetoed_set]
+        # Responses with an unparsable veto verdict are neither chosen nor
+        # rejected; records written before this field simply have none.
+        excluded_set = set(record.get("excluded", []))
+        non_vetoed = [r for r in responses
+                      if r not in vetoed_set and r not in excluded_set]
         pairs = []
         for r in vetoed:
             for c in non_vetoed:
@@ -839,11 +937,21 @@ class Trainer:
                     veto_items, self.stage_concurrency)
                 mem_line(f"it{iter_idx} chunk@{chunk_start} vetoed")
 
+                # Responses whose veto verdict couldn't be parsed (bidirectional
+                # veto only) are excluded from BOTH the vetoed and non-vetoed
+                # sets, so an unknown-veto response never becomes a chosen or a
+                # rejected exemplar. Judges that never exclude (e.g. the
+                # neutrality judge) don't set this, so default to no exclusions.
+                excluded_list = getattr(self.sim_stake, "_last_excluded",
+                                        [[] for _ in chunk])
+
                 # Stage D: self-preference pairs over each prompt's non-vetoed
                 # responses, fanned out across prompts.
                 non_vetoed_list = []
                 for i in range(len(chunk)):
-                    responses = sampled[i][0]
+                    excluded_set = set(excluded_list[i])
+                    responses = [r for r in sampled[i][0]
+                                 if r not in excluded_set]
                     vetoed_set = set(vetoed_list[i])
                     non_vetoed_list.append(
                         [r for r in responses if r not in vetoed_set])
@@ -858,6 +966,7 @@ class Trainer:
                     x = chunk[i]
                     responses, sources = sampled[i]
                     vetoed = vetoed_list[i]
+                    excluded = excluded_list[i]
                     non_vetoed = non_vetoed_list[i]
 
                     # Veto-based cross pairs (every vetoed × every non-vetoed),
@@ -886,6 +995,7 @@ class Trainer:
                         "responses": responses,
                         "sources": sources,
                         "vetoed": vetoed,
+                        "excluded": excluded,
                         "num_pref_pairs": num_pref_pairs,
                         "pref_pairs": pref_pairs,
                     }) + "\n")

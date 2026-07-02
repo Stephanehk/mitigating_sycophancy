@@ -49,6 +49,7 @@ def load_llama(
     device="cuda",
     cache_dir=None,
     device_map=None,
+    max_memory=None,
 ):
     """Load `model_id` and its tokenizer onto `device`.
 
@@ -70,6 +71,10 @@ def load_llama(
     `dtype` defaults to bfloat16 on CUDA, float32 on CPU.
     `cache_dir` is passed through to HF; if None the env var $HF_HOME / the
     default ~/.cache/huggingface is used.
+    `max_memory` (dict like {0: "40GiB", 1: "0GiB", ...}) is forwarded to
+    from_pretrained alongside `device_map`; it caps per-device placement so
+    you can restrict an "auto"/"balanced" shard to a chosen subset of GPUs
+    (set the excluded ones to "0GiB"). Ignored when device_map is None.
     """
     if device.startswith("cuda") or device_map is not None:
         assert torch.cuda.is_available(), (
@@ -86,6 +91,7 @@ def load_llama(
         torch_dtype=dtype,
         cache_dir=cache_dir,
         device_map=device_map,
+        max_memory=max_memory if device_map is not None else None,
     )
     # When device_map is set, accelerate has already placed the shards;
     # calling .to(device) would try to move the whole model onto one GPU and

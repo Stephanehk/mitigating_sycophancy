@@ -165,8 +165,11 @@ def test_build_iteration_reduce():
     # policy; its length must match the count.
     assert all(len(r["pref_pairs"]) == r["num_pref_pairs"] for r in recs)
     assert all(set(r) == {"iter", "prompt_idx", "prompt", "responses",
-                          "sources", "vetoed", "num_pref_pairs", "pref_pairs"}
+                          "sources", "vetoed", "excluded", "num_pref_pairs",
+                          "pref_pairs"}
                for r in recs), "jsonl schema must be unchanged"
+    # No exclusions from a judge that doesn't set `_last_excluded`.
+    assert all(r["excluded"] == [] for r in recs), "no exclusions expected"
     print("ok: _build_iteration reduce (pairs order, diagnostics, jsonl schema)")
 
 
@@ -243,10 +246,113 @@ def test_steer_only_requires_full_split():
         raise AssertionError("expected AssertionError for steer_only with leftover budget")
 
 
+def test_bidirectional_veto_excludes_unparsable():
+    """An unparsable bidirectional veto vote (None) excludes the response ONLY
+    when no voter cleanly vetoed it; a clean VETO from any voter is decisive and
+    the response stays vetoed regardless of another voter's parse failure."""
+    from simulated_stakeholders import SimulatedStakeholders
+    sim = SimulatedStakeholders(
+        call_llm=lambda *a, **k: ("", 0, 0),
+        model_id="stub",
+        use_weak_model=True,
+        veto_concurrency=4,
+    )
+    # Drive the bidirectional aggregation directly (bypassing the constructor's
+    # two-stage prompt asserts): one identified stakeholder S1 plus the user
+    # voice (entry=None) vote on every response.
+    sim.two_stage = True
+    sim.bidirectional = True
+    sim.include_user_stakeholder = True
+    prompt = "P"
+    sim._cache[prompt] = (["S1"], [{"stakeholder": "S1", "concerns": []}])
+
+    # Stage 1 marks every response as endorsing (value is unused by the stub
+    # veto below, but the batch path calls it).
+    sim._classify_endorsement = lambda p, r: (True, "j")
+
+    def fake_bidir(p, response, entry, endorses, just):
+        voter = "user" if entry is None else entry["stakeholder"]
+        if response == "clean_accept":
+            return (False, "")                     # both voters ACCEPT
+        if response == "user_unparsable":
+            return (None, "") if voter == "user" else (False, "")
+        if response == "veto_plus_unparsable":
+            # S1 cleanly VETOes; user vote is unparsable -> still vetoed.
+            return (None, "") if voter == "user" else (True, "")
+        raise AssertionError(response)
+    sim._bidirectional_veto = fake_bidir
+
+    responses = ["clean_accept", "user_unparsable", "veto_plus_unparsable"]
+    out = sim._veto_responses_batch_bidirectional([(prompt, responses)], concurrency=8)
+
+    assert out == [["veto_plus_unparsable"]], out
+    assert sim._last_excluded == [["user_unparsable"]], sim._last_excluded
+    print("ok: bidirectional veto excludes unparsable (clean veto wins)")
+
+
+class _FakeSimExcl:
+    """Stand-in that reports both vetoed and excluded responses, mirroring the
+    SimulatedStakeholders bidirectional contract (`_last_excluded` side channel)."""
+
+    def __init__(self, veto_map, excl_map):
+        self.veto_map = veto_map
+        self.excl_map = excl_map
+
+    def prime_stakeholder_cache(self, prompts, concurrency):
+        pass
+
+    def veto_responses_batch(self, items, concurrency):
+        self._last_excluded = [self.excl_map[p] for p, _ in items]
+        return [self.veto_map[p] for p, _ in items]
+
+
+def test_build_iteration_excludes_from_pairs():
+    """An excluded response is dropped from BOTH chosen and rejected: it is not
+    a veto pair's chosen/rejected side, is recorded in the jsonl `excluded`
+    field, and a resume rebuild (`_record_contribution`) reproduces the same
+    non-vetoed set."""
+    import torch
+    torch.cuda.device_count = lambda: 0
+
+    prompts = ["P0"]
+    responses = {"P0": ["a0", "b0", "c0"]}
+    veto_map = {"P0": ["b0"]}          # b0 rejected
+    excl_map = {"P0": ["c0"]}          # c0 excluded -> neither chosen nor rejected
+    pref_map = {"P0": []}
+
+    tr = Trainer(
+        sim_stake=_FakeSimExcl(veto_map, excl_map), model=None, tokenizer=None,
+        n_samples=3, temperature=1.0, self_preference=True,
+        chunk_size=8, stage_concurrency=4,
+    )
+    tr._sample_chunk = lambda chunk: [
+        (responses[x], ["model", "model", "critical"]) for x in chunk]
+    tr._preference_chunk = lambda chunk, non_vetoed_list: [pref_map[x] for x in chunk]
+
+    outdir = tempfile.mkdtemp()
+    pairs, all_vetoed_idx, zero_vetoed_idx, contributing = \
+        tr._build_iteration(prompts, 0, outdir)
+
+    # Only a0 survives as non-vetoed (c0 excluded, b0 vetoed) -> one veto pair.
+    assert pairs == [{"prompt": "P0", "chosen": "a0", "rejected": "b0"}], pairs
+
+    rec = json.loads(open(os.path.join(outdir, "responses_iter_1.jsonl")).read().strip())
+    assert rec["vetoed"] == ["b0"] and rec["excluded"] == ["c0"], rec
+    assert rec["responses"] == ["a0", "b0", "c0"], "raw responses persisted in full"
+
+    # Resume rebuild from the record must reproduce the same pairs / non-vetoed.
+    rebuilt_pairs, rebuilt_vetoed, rebuilt_non_vetoed = tr._record_contribution(rec)
+    assert rebuilt_pairs == pairs, rebuilt_pairs
+    assert rebuilt_non_vetoed == ["a0"], rebuilt_non_vetoed
+    print("ok: _build_iteration excludes response from pairs + resume rebuild")
+
+
 if __name__ == "__main__":
     test_concurrent_map_order_and_failfast()
     test_veto_responses_batch_matches_sequential()
+    test_bidirectional_veto_excludes_unparsable()
     test_build_iteration_reduce()
+    test_build_iteration_excludes_from_pairs()
     test_neutral_mixed_sampling_steer_only()
     test_steer_only_requires_full_split()
     print("\nALL BATCHED-PIPELINE TESTS PASSED")

@@ -1,15 +1,17 @@
 """Fine-tune a local HuggingFace model via DPO + LoRA against preference
 pairs derived from the `SimulatedStakeholders` veto signal, on a single
-dataset env (OEQ or PAS).
+dataset env (OEQ, PAS, AITA, or AITA-NTA-FLIP).
 
 This is the shared training entry point. The
 `run_train_<env>.sbatch` wrappers invoke it with env-specific defaults.
 
 What it does:
   1. Load the dataset for `--env` from disk.
-  2. Hold out `--test-n` prompts as the eval split (using the harness's
-     `sample_uniform` with `--seed`). Their ids are written to
-     `<output_dir>/test_ids.json` so a downstream eval script can
+  2. Hold out `--test-n` prompts as the eval split. OEQ/PAS/AITA-NTA-FLIP use
+     the harness's `sample_uniform`; AITA uses a balanced 50/50 YTA/NTA split.
+     For AITA-NTA-FLIP, `--test-n`/`--train-n` count (original, flipped) PAIRS.
+     Their ids are written to `<output_dir>/test_ids.json` so a downstream
+     eval script can
      reproduce the same split.
   3. From the disjoint complement, sample `--train-n` prompts as the DPO
      training prompts. Train ids → `<output_dir>/train_ids.json`.
@@ -48,7 +50,10 @@ What it does:
 Per-env user prompt format used for sampling AND for the DPO prompt
 column (so DPO sees the same surface the responses were sampled
 against): bare post_text for OEQ and PAS (matches the harness's
-`PROMPT_TEMPLATE_OEQ = "{post}"`).
+`PROMPT_TEMPLATE_OEQ = "{post}"`); for AITA / AITA-NTA-FLIP the post
+plus `train_data.AITA_LABEL_SUFFIX`, asking for a trailing YTA/NTA
+verdict the eval parses (no LLM classifier). AITA-NTA-FLIP expands
+each pair into two independent train prompts (original + flipped).
 
 The script does not call any external API. Both model copies run
 locally on the configured GPUs.
@@ -59,6 +64,8 @@ import json
 import os
 import re
 import sys
+
+import torch
 
 # Make `mitigations/` (the harness) and the local `training_mitigations/`
 # importable so `our_mitigation*`, `core.*`, `weak_pipeline`,
@@ -80,7 +87,8 @@ from explore_mitigations import DEFAULT_MAX_TOKENS, DEFAULT_SEED
 from train_data import (resolve_csv as _resolve_csv,
                         load_env_data as _load_data,
                         split_train_test as _split_train_test,
-                        format_prompt as _format_prompt,
+                        build_train_prompts as _build_train_prompts,
+                        subset_in_id_order as _subset_in_id_order,
                         write_ids as _write_ids,
                         detect_resume_point as _detect_resume_point)
 
@@ -88,7 +96,9 @@ from llama_local import DEFAULT_HF_MODEL_ID, load_llama, make_call_llm
 from mem_probe import start_mem_sampler
 from simulated_stakeholders import (SimulatedStakeholders, VETO_PROMPTS,
                                     ENDORSE_CLASSIFY_PROMPTS)
-from trainer import Trainer, CRITICAL_SUFFIX, NEUTRAL_SUFFIX
+from trainer import (Trainer, CRITICAL_SUFFIX, NEUTRAL_SUFFIX,
+                     STAKEHOLDER_RESPONSE_PROMPT,
+                     STAKEHOLDER_RESPONSE_PROMPT_VOICE)
 from vllm_sim import (launch_vllm_server, make_vllm_call_llm, wait_for_vllm_server,
                       make_vllm_policy_sampler, load_lora_adapter, unload_lora_adapter)
 
@@ -126,8 +136,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--env", required=True, choices=("OEQ", "PAS"),
-        help="dataset env to train on",
+        "--env", required=True,
+        choices=("OEQ", "PAS", "AITA", "AITA-NTA-FLIP"),
+        help="dataset env to train on. AITA splits balanced 50/50 on "
+             "is_asshole; AITA-NTA-FLIP counts (original,flipped) PAIRS for "
+             "--train-n/--test-n and expands each pair to two train prompts.",
     )
     parser.add_argument(
         "--output-dir", required=True,
@@ -143,7 +156,27 @@ def main():
     )
     parser.add_argument(
         "--device", default="cuda:0",
-        help="torch device for the trainable policy model (default: cuda:0)",
+        help="torch device for the trainable policy model (default: cuda:0). "
+             "Ignored for placement when --policy-device-map is set (the model "
+             "is then sharded across the listed GPUs); still used as the "
+             "input/main device, which must be the lowest shard index.",
+    )
+    parser.add_argument(
+        "--policy-device-map", default=None,
+        help="comma-separated CUDA indices to pipeline-shard the trainable "
+             "policy across (e.g. '0,2'). When set, the policy weights are "
+             "split across these GPUs via a balanced device_map (the ~7GB "
+             "full-vocab logits/CE spike then sits on only one card), which "
+             "lets long-sequence OEQ distill runs keep --max-length 3072 on "
+             "48GB A6000s instead of OOMing a single card. The --sim-device "
+             "GPU (vLLM server) must NOT be in this list. Default: None "
+             "(single-device training on --device).",
+    )
+    parser.add_argument(
+        "--policy-shard-mem", default="40GiB",
+        help="per-GPU memory cap for each card in --policy-device-map "
+             "(default: 40GiB). Excluded GPUs are pinned to 0GiB so the "
+             "balanced map only uses the listed cards.",
     )
     parser.add_argument(
         "--sim-device", default="cuda:1",
@@ -193,8 +226,22 @@ def main():
              "proposal 2 (expanded examples). 'P5' = action-endorsement framing "
              "(mirrors the v5 endorse judge): veto only if the response affirms "
              "the narrator's ACTION and you think it should not be endorsed. "
+             "'P6' = BIDIRECTIONAL (stance-mismatch): each voter states its own "
+             "preferred stance and vetoes the response on disagreement (endorse-"
+             "when-they'd-challenge OR challenge-when-they'd-endorse), so it can "
+             "demote over-critical responses too, not just affirming ones. "
              "See simulated_stakeholders.py. Ignored when --judge is not "
              "'stakeholder'.",
+    )
+    parser.add_argument(
+        "--user-stakeholder", action="store_true",
+        help="add a 4th 'user'/narrator voice to the veto panel (P6 only). It "
+             "votes on the veto via VETO_PROMPT_USER but is NOT sampled for "
+             "candidate responses (not added to the generation entries). Intended "
+             "to lift the panel's endorsement toward the target by demoting "
+             "over-critical responses. NOTE: as a stance veto this is a blunt "
+             "pro-endorsement lever (demotes challenges wholesale); watch for "
+             "re-introduced sycophancy.",
     )
     parser.add_argument(
         "--judge", default="stakeholder",
@@ -326,6 +373,40 @@ def main():
              "(default: 2). The stakeholder budget is n_samples minus these two.",
     )
     parser.add_argument(
+        "--stakeholder-voice", action="store_true",
+        help="mixed sampling: generate stakeholder candidates with the "
+             "second-person VOICE-constrained prompt "
+             "(STAKEHOLDER_RESPONSE_PROMPT_VOICE) instead of the first-person "
+             "role-play prompt — surfaces the same stakeholder perspective as "
+             "direct advice to the narrator, dropping the role-play surface from "
+             "the chosen DPO exemplars (the mixed_P5_nocrit_distill_gp arm). The "
+             "DPO prompt column stays the bare post.",
+    )
+    parser.add_argument(
+        "--perspective-shift-sampling", action="store_true",
+        help="mixed sampling: replace the 'Be critical.' critical source with "
+             "the ELEPHANT (Cheng et al. 2025, App G.2) perspective-shift "
+             "rewrite-then-answer source. The post is rewritten first- to "
+             "third-person (greedy, via the policy) and the --n-source-critical "
+             "samples are drawn from the REWRITTEN post; the DPO prompt column "
+             "stays the bare first-person post. Requires --mixed-sampling; "
+             "mutually exclusive with --neutral-mixed-sampling. This is the "
+             "mixed_P5_perspective_shift arm.",
+    )
+    parser.add_argument(
+        "--rewrite-max-tokens", type=int, default=1536,
+        help="--perspective-shift-sampling: max new tokens for the greedy "
+             "first->third-person rewrite (default: 1536, matching the eval "
+             "perspshift baseline; long narratives need room or the rewrite "
+             "truncates).",
+    )
+    parser.add_argument(
+        "--perspshift-assess", action="store_true",
+        help="--perspective-shift-sampling: append the paper's OEQ addendum "
+             "'Assess this narrative.' after the third-person rewrite (the "
+             "paper adds it for OEQ). Off by default.",
+    )
+    parser.add_argument(
         "--neutral-mixed-sampling", action="store_true",
         help="neutral-mixed (steer-only) sampling for the --judge neutrality-v5 "
              "baseline: split the N candidates between the bare post "
@@ -442,6 +523,11 @@ def main():
         "the same vLLM engine that serves the sim)"
     )
 
+    assert not (args.user_stakeholder and args.veto_prompt != "P6"), (
+        "--user-stakeholder (4th narrator veto voice) is only wired for the "
+        f"bidirectional P6 veto; got --veto-prompt {args.veto_prompt}"
+    )
+
     # --allow-preempt: auto-detect where to continue from --output-dir so the
     # SAME command can be resubmitted after a SLURM preemption / kill. Derives
     # --start-iteration / --resume-adapter from the durable adapter_iter_<k>
@@ -489,6 +575,23 @@ def main():
             args.n_source_model = args.n_samples // 2
             args.n_source_critical = args.n_samples - args.n_source_model
 
+    # --perspective-shift-sampling: the critical steer source becomes the
+    # ELEPHANT rewrite-then-answer source. It replaces the 'Be critical.' suffix,
+    # so it needs the stakeholder mixed path and a non-zero critical budget (that
+    # budget is now the perspective-shift source count).
+    if args.perspective_shift_sampling:
+        assert args.mixed_sampling, (
+            "--perspective-shift-sampling requires --mixed-sampling"
+        )
+        assert not args.neutral_mixed_sampling, (
+            "--perspective-shift-sampling and --neutral-mixed-sampling are "
+            "mutually exclusive"
+        )
+        assert args.n_source_critical > 0, (
+            "--perspective-shift-sampling needs --n-source-critical > 0 (that is "
+            "the perspective-shift source count); got 0"
+        )
+
     # The sim vLLM server serves the frozen stakeholder judge model AND (when
     # --policy-on-vllm) hosts the policy LoRA for sampling. The neutrality judge
     # needs no local sim model, so launch the server only when the stakeholder
@@ -517,11 +620,10 @@ def main():
         )
         with open(train_ids_path) as f:
             saved_ids = json.load(f)
-        by_id = {str(i): t for i, t in zip(data["id"].tolist(), data["post_text"].tolist())}
-        missing = [i for i in saved_ids if i not in by_id]
-        assert not missing, f"{len(missing)} saved train ids not in data (e.g. {missing[:3]})"
-        train_prompts = [_format_prompt(args.env, by_id[i]) for i in saved_ids]
-        print(f"[data] RESUME: reusing {len(train_prompts)} train prompts from {train_ids_path}")
+        train_df = _subset_in_id_order(data, saved_ids)
+        train_prompts = _build_train_prompts(args.env, train_df)
+        print(f"[data] RESUME: reusing {len(train_prompts)} train prompts "
+              f"from {len(saved_ids)} saved ids in {train_ids_path}")
     else:
         train_df, test_df = _split_train_test(
             args.env, data, args.train_n, args.test_n, args.seed,
@@ -532,7 +634,7 @@ def main():
         _write_ids(train_ids_path, train_df)
         print(f"[data] wrote {test_ids_path}")
         print(f"[data] wrote {train_ids_path}")
-        train_prompts = [_format_prompt(args.env, t) for t in train_df["post_text"].tolist()]
+        train_prompts = _build_train_prompts(args.env, train_df)
 
     # 2. Two model instances:
     #    - policy: trainable HF model, on args.device. Sampled from each
@@ -565,12 +667,46 @@ def main():
             max_lora_rank=args.lora_r,
         )
 
-    print(f"[load] policy   {args.model_id} -> {args.device}  cache_dir={args.cache_dir}")
-    model, tokenizer = load_llama(
-        model_id=args.model_id,
-        device=args.device,
-        cache_dir=args.cache_dir,
-    )
+    if args.policy_device_map:
+        # Pipeline-shard the trainable policy across the listed GPUs. We build
+        # an explicit max_memory so the balanced map uses ONLY those cards:
+        # every visible GPU not in the list (incl. the --sim-device vLLM card)
+        # is pinned to 0GiB. This caps each shard's transformer-layer load so
+        # the one card that ends up holding the lm_head has room for the ~7GB
+        # full-vocab logits/CE spike on top of its weight shard — letting OEQ
+        # distill keep --max-length 3072 instead of OOMing a single 48GB card.
+        shard_gpus = [int(x) for x in args.policy_device_map.split(",")]
+        sim_gpu = int(args.sim_device.split(":")[-1])
+        assert sim_gpu not in shard_gpus, (
+            f"--sim-device {args.sim_device} (vLLM server) must not be in "
+            f"--policy-device-map {args.policy_device_map}"
+        )
+        assert int(args.device.split(":")[-1]) == min(shard_gpus), (
+            f"--device {args.device} must be the lowest shard index "
+            f"(inputs/labels land there); got shards {shard_gpus}"
+        )
+        n_visible = torch.cuda.device_count()
+        max_memory = {
+            i: (args.policy_shard_mem if i in shard_gpus else "0GiB")
+            for i in range(n_visible)
+        }
+        print(f"[load] policy   {args.model_id} -> SHARDED across cuda{shard_gpus} "
+              f"(max_memory={args.policy_shard_mem}/gpu)  cache_dir={args.cache_dir}")
+        model, tokenizer = load_llama(
+            model_id=args.model_id,
+            device=args.device,
+            cache_dir=args.cache_dir,
+            device_map="balanced",
+            max_memory=max_memory,
+        )
+        print(f"[load] policy hf_device_map: {model.hf_device_map}")
+    else:
+        print(f"[load] policy   {args.model_id} -> {args.device}  cache_dir={args.cache_dir}")
+        model, tokenizer = load_llama(
+            model_id=args.model_id,
+            device=args.device,
+            cache_dir=args.cache_dir,
+        )
 
     # 3. call_llm for the stakeholder + veto pipeline (stakeholder judge only)
     # and the policy sampler. Greedy on both backends (temperature=0 for vLLM,
@@ -688,12 +824,18 @@ def main():
             use_weak_model=True,
             veto_concurrency=veto_concurrency,
             veto_prompt=VETO_PROMPTS[args.veto_prompt],
-            # Two-stage veto modes (e.g. P5) supply a Stage-1 endorsement
+            # Two-stage veto modes (P5, P6) supply a Stage-1 endorsement
             # classifier; single-stage modes (baseline, P4) get None here.
             endorse_classify_prompt=ENDORSE_CLASSIFY_PROMPTS.get(args.veto_prompt),
+            # P6 = bidirectional stance-mismatch veto; --user-stakeholder adds the
+            # 4th narrator voice (veto-only, never sampled for candidates).
+            bidirectional=(args.veto_prompt == "P6"),
+            include_user_stakeholder=args.user_stakeholder,
         )
         print(f"[setup] veto prompt: {args.veto_prompt}"
-              f"{' (two-stage)' if args.veto_prompt in ENDORSE_CLASSIFY_PROMPTS else ''}")
+              f"{' (two-stage)' if args.veto_prompt in ENDORSE_CLASSIFY_PROMPTS else ''}"
+              f"{' +bidirectional' if args.veto_prompt == 'P6' else ''}"
+              f"{' +user-stakeholder' if args.user_stakeholder else ''}")
 
     # 5. Trainer + train. Trainer.model is the policy (trainable);
     # Trainer's `_sample_responses` calls policy.generate() directly,
@@ -713,6 +855,12 @@ def main():
                       else CRITICAL_SUFFIX),
         steer_label=("neutral" if args.neutral_mixed_sampling else "critical"),
         steer_only=args.neutral_mixed_sampling,
+        perspective_shift_steer=args.perspective_shift_sampling,
+        rewrite_max_tokens=args.rewrite_max_tokens,
+        perspshift_assess=args.perspshift_assess,
+        stakeholder_prompt=(STAKEHOLDER_RESPONSE_PROMPT_VOICE
+                            if args.stakeholder_voice
+                            else STAKEHOLDER_RESPONSE_PROMPT),
         self_preference=args.self_preference,
         preference_max_tokens=args.preference_max_tokens,
         preference_max_pairs=args.preference_max_pairs,
@@ -730,10 +878,13 @@ def main():
             f"(max_pairs={args.preference_max_pairs or 'unlimited'})"
         )
     else:
+        steer_kind = ("perspshift" if args.perspective_shift_sampling
+                      else "critical")
         print(
             f"[train] mixed_sampling={args.mixed_sampling} "
-            f"(model={args.n_source_model} critical={args.n_source_critical} "
+            f"(model={args.n_source_model} {steer_kind}={args.n_source_critical} "
             f"stakeholder={args.n_samples - args.n_source_model - args.n_source_critical})  "
+            f"stakeholder_voice={args.stakeholder_voice} "
             f"self_preference={args.self_preference} "
             f"(max_pairs={args.preference_max_pairs or 'unlimited'})"
         )

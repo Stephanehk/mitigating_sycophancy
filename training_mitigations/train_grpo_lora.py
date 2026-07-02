@@ -56,7 +56,7 @@ sys.path.insert(0, os.path.join(_HERE, "core"))
 from explore_mitigations import DEFAULT_SEED
 
 from train_data import (resolve_csv, load_env_data, split_train_test,
-                        format_prompt, write_ids)
+                        build_train_prompts, write_ids)
 from neutrality_judge import make_neutrality_reward, make_openrouter_client
 from llama_local import DEFAULT_HF_MODEL_ID, load_llama
 
@@ -79,7 +79,8 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--env", required=True, choices=("OEQ", "PAS"),
+    parser.add_argument("--env", required=True,
+                        choices=("OEQ", "PAS", "AITA", "AITA-NTA-FLIP"),
                         help="dataset env to train on")
     parser.add_argument("--output-dir", required=True,
                         help="directory the LoRA adapter + split-id files go to")
@@ -190,7 +191,7 @@ def main():
     print(f"[data] held out test_n={len(test_df)}  train_n={len(train_df)}  seed={args.seed}")
     write_ids(os.path.join(args.output_dir, "test_ids.json"), test_df)
     write_ids(os.path.join(args.output_dir, "train_ids.json"), train_df)
-    train_prompts = [format_prompt(args.env, t) for t in train_df["post_text"].tolist()]
+    train_prompts = build_train_prompts(args.env, train_df)
     train_dataset = _build_dataset(train_prompts)
     print(f"[data] built GRPO dataset: {len(train_dataset)} prompts")
 

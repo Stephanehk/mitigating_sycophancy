@@ -56,6 +56,7 @@ sys.path.insert(0, os.path.join(_HERE, "core"))
 
 from explore_mitigations import OEQ_DATA_CSV, PAS_DATA_CSV, load_oeq, load_pas
 from llama_local import DEFAULT_HF_MODEL_ID, load_llama, build_chat_input
+from perspective_shift import perspective_shift_post
 
 import importlib.util
 
@@ -216,6 +217,19 @@ def main():
                              "as the other conditions. Tags outputs "
                              "'<adapter_tag>-becritical' so they don't clobber "
                              "the bare-post eval.")
+    parser.add_argument("--explicit", action="store_true",
+                        help="prompt-only baseline (Cheng et al. 2026, EXPLICIT "
+                             "accommodation): PREPEND the trainer's "
+                             "EXPLICIT_PREFIX (misconception-correction "
+                             "instruction) to each held-out post at GENERATION "
+                             "time only. The judge still scores the bare post. "
+                             "Tags outputs '<adapter_tag>-explicit'.")
+    parser.add_argument("--sharma-honesty", dest="sharma_honesty",
+                        action="store_true",
+                        help="prompt-only baseline (Sharma et al.): APPEND the "
+                             "trainer's SHARMA_HONESTY_SUFFIX (honest-answer "
+                             "instruction) to each held-out post at GENERATION "
+                             "time only. Tags outputs '<adapter_tag>-sharma'.")
     parser.add_argument("--gen-suffix", default=None,
                         help="generic prompt-only baseline: append "
                              "'\\n\\n<text>' to each held-out post at "
@@ -226,6 +240,31 @@ def main():
                         help="filename tag for --gen-suffix (e.g. "
                              "'dontbesyco' -> outputs tagged "
                              "'<adapter_tag>-dontbesyco')")
+    parser.add_argument("--perspective-shift", action="store_true",
+                        help="ELEPHANT (Cheng et al. 2025, App G.2) perspective-"
+                             "shift baseline: REWRITE each held-out post from "
+                             "first- to third-person (greedy) and generate the "
+                             "advice on the rewrite; the JUDGED `sentence` stays "
+                             "the original post so endorsement is measured "
+                             "against the same scenario. Tags '<adapter_tag>-"
+                             "perspshift'. Mutually exclusive with the other "
+                             "prompt-only steers.")
+    parser.add_argument("--assess-narrative", action="store_true",
+                        help="with --perspective-shift, append the paper's OEQ "
+                             "addendum 'Assess this narrative.' after the third-"
+                             "person rewrite (the paper adds it for OEQ, where "
+                             "long narratives keep drawing 'you'-addressed "
+                             "answers). Tags '<adapter_tag>-perspshiftassess'.")
+    parser.add_argument("--rewrite-max-tokens", type=int, default=1536,
+                        help="max new tokens for the third-person rewrite call "
+                             "(greedy); long OEQ narratives need room or the "
+                             "rewrite truncates (default: 1536).")
+    parser.add_argument("--gen-prefix", default=None,
+                        help="generic prompt-only steer: PREPEND '<text>\\n\\n' "
+                             "to each held-out post at GENERATION time only "
+                             "(same mechanics as --explicit, arbitrary "
+                             "instruction). The judge still scores the bare "
+                             "post. Requires --gen-tag.")
     parser.add_argument("--model-id", default=DEFAULT_HF_MODEL_ID,
                         help=f"base HF model id (default: {DEFAULT_HF_MODEL_ID})")
     parser.add_argument("--cache-dir", default=os.environ.get("HF_HOME"),
@@ -313,21 +352,50 @@ def main():
     # injected text can't drift from the mixed-sampling source). The suffix is
     # added ONLY to what the model sees; the judged `sentence` stays the bare
     # post (set below in the gen loop).
-    assert not (args.be_critical and args.gen_suffix), (
-        "--be-critical and --gen-suffix are mutually exclusive"
+    # At most one prompt-only steer. They differ only in the injected text and
+    # whether it is prepended (gen_prefix) or appended (gen_suffix); the judged
+    # `sentence` is always the bare post. Each named flag pulls its exact text
+    # from the trainer module (single source of truth) and bakes in its own
+    # "\n\n" separator, so the gen loop just does gen_prefix + post + gen_suffix.
+    n_steers = sum(bool(x) for x in (args.be_critical, args.explicit,
+                                     args.sharma_honesty, args.gen_suffix,
+                                     args.gen_prefix, args.perspective_shift))
+    assert n_steers <= 1, (
+        "--be-critical / --explicit / --sharma-honesty / --gen-suffix / "
+        "--gen-prefix / --perspective-shift are mutually exclusive (pick at "
+        "most one prompt-only steer)"
     )
-    if args.be_critical:
+    assert not (args.assess_narrative and not args.perspective_shift), (
+        "--assess-narrative only applies with --perspective-shift"
+    )
+    gen_prefix = ""
+    gen_suffix = ""
+    if args.perspective_shift:
+        adapter_tag = f"{adapter_tag}-perspshift" + ("assess" if args.assess_narrative else "")
+    elif args.be_critical:
         from trainer import CRITICAL_SUFFIX
         gen_suffix = CRITICAL_SUFFIX
         adapter_tag = f"{adapter_tag}-becritical"
+    elif args.explicit:
+        from trainer import EXPLICIT_PREFIX
+        gen_prefix = EXPLICIT_PREFIX
+        adapter_tag = f"{adapter_tag}-explicit"
+    elif args.sharma_honesty:
+        from trainer import SHARMA_HONESTY_SUFFIX
+        gen_suffix = SHARMA_HONESTY_SUFFIX
+        adapter_tag = f"{adapter_tag}-sharma"
     elif args.gen_suffix:
         assert args.gen_tag, "--gen-suffix requires --gen-tag"
         # Same "\n\n<instruction>" shape as trainer.CRITICAL_SUFFIX so the
         # only difference across prompt-only baselines is the instruction.
         gen_suffix = "\n\n" + args.gen_suffix
         adapter_tag = f"{adapter_tag}-{args.gen_tag}"
-    else:
-        gen_suffix = ""
+    elif args.gen_prefix:
+        assert args.gen_tag, "--gen-prefix requires --gen-tag"
+        # Mirror of --explicit (EXPLICIT_PREFIX) shape: '<instruction>\n\n' is
+        # prepended; the judged `sentence` stays the bare post.
+        gen_prefix = args.gen_prefix + "\n\n"
+        adapter_tag = f"{adapter_tag}-{args.gen_tag}"
     decode_tag = "greedy" if args.greedy else f"temp{args.temperature}"
     extra = f"_{args.tag_extra}" if args.tag_extra else ""
     tag = f"{adapter_tag}{extra}_{decode_tag}_seed{args.seed}"
@@ -361,20 +429,35 @@ def main():
         print(f"[load] attaching adapter {adapter_dir}")
         model = attach_adapter(model, adapter_dir)
 
+    def _rewrite(post):
+        """Greedy first->third-person rewrite of `post` (perspective shift).
+        Greedy so the rewrite is deterministic and not a sampling-noise source,
+        independent of how the advice itself is decoded."""
+        return perspective_shift_post(
+            lambda p: generate_one(model, tokenizer, p, args.rewrite_max_tokens,
+                                   args.temperature, args.top_p, greedy=True),
+            post, assess_narrative=args.assess_narrative)
+
     # 3. Sample one response per held-out prompt.
     torch.manual_seed(args.seed)
     rows = []
     responses_path = os.path.join(out_dir, f"responses_{tag}.jsonl")
     with open(responses_path, "w") as rf:
         for k, (pid, post) in enumerate(pairs):
-            gen_prompt = post + gen_suffix
+            # Under --perspective-shift the model answers the THIRD-person
+            # rewrite; the judged `sentence` stays the original post so
+            # endorsement is measured against the same scenario as every other
+            # condition. `body` is what the prefix/suffix wrap and the model sees.
+            rewritten = _rewrite(post) if args.perspective_shift else None
+            body = rewritten if rewritten is not None else post
+            gen_prompt = gen_prefix + body + gen_suffix
             resp = generate_one(model, tokenizer, gen_prompt, args.sample_max_tokens,
                                  args.temperature, args.top_p, args.greedy)
-            # `sentence` is the bare post (what the judge scores); `gen_prompt`
-            # records what the model was actually shown (post + suffix).
+            # `sentence` is the bare ORIGINAL post (what the judge scores);
+            # `gen_prompt` records what the model was actually shown.
             rows.append({"id": pid, "sentence": post, "response": resp})
             rf.write(json.dumps({"id": pid, "prompt": post, "gen_prompt": gen_prompt,
-                                 "response": resp}) + "\n")
+                                 "rewritten": rewritten, "response": resp}) + "\n")
             rf.flush()
             if (k + 1) % 50 == 0:
                 print(f"[gen] {k + 1}/{len(pairs)} responses sampled")
@@ -394,7 +477,12 @@ def main():
             "run_dir": os.path.abspath(args.run_dir),
             "adapter_tag": adapter_tag,
             "be_critical": args.be_critical,
+            "explicit": args.explicit,
+            "sharma_honesty": args.sharma_honesty,
+            "gen_prefix": gen_prefix,
             "gen_suffix": gen_suffix,
+            "perspective_shift": args.perspective_shift,
+            "assess_narrative": args.assess_narrative,
             "adapter": None if args.base else os.path.abspath(adapter_dir),
             "decode": decode_tag,
             "seed": args.seed,
@@ -441,7 +529,12 @@ def main():
         "run_dir": os.path.abspath(args.run_dir),
         "adapter_tag": adapter_tag,
         "be_critical": args.be_critical,
+        "explicit": args.explicit,
+        "sharma_honesty": args.sharma_honesty,
+        "gen_prefix": gen_prefix,
         "gen_suffix": gen_suffix,
+        "perspective_shift": args.perspective_shift,
+        "assess_narrative": args.assess_narrative,
         "adapter": None if args.base else os.path.abspath(adapter_dir),
         "decode": decode_tag,
         "seed": args.seed,

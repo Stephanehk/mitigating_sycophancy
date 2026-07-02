@@ -262,14 +262,97 @@ Reply with a single token VETO or ACCEPT on the first line, followed by a one-se
 VETO or ACCEPT
 <one-sentence justification>"""
 
-# name -> prompt, for CLI selection (train_dpo_lora.py --veto-prompt). For P5,
-# the value is the Stage-2 (per-stakeholder) prompt; its Stage-1 classifier is
-# looked up in ENDORSE_CLASSIFY_PROMPTS below.
-VETO_PROMPTS = {"baseline": VETO_PROMPT, "P4": VETO_PROMPT_P4, "P5": VETO_PROMPT_P5}
+# ---------------------------------------------------------------------------
+# P6 — BIDIRECTIONAL (stance-mismatch) veto. Unlike P5 (which only ever runs
+# Stage 2 on ENDORSING responses and can only demote them), P6 runs Stage 2 on
+# responses of EITHER stance and vetoes on stance DISAGREEMENT: the voter states
+# its own preferred stance on the narrator's action and vetoes the response iff
+# it endorses-when-they'd-challenge OR challenges-when-they'd-endorse. Reuses the
+# P5 Stage-1 classifier; the classified stance is passed in as {stance_verdict} /
+# {stance_justification} so the voter can check the mismatch.
+#
+# P6 is meant to be paired with the 4th "user"/narrator voice
+# (include_user_stakeholder=True, VETO_PROMPT_USER below) so the panel is not
+# one-sidedly critical. NB (see conversation): as a STANCE veto the user voice is
+# a blunt pro-endorsement lever — it demotes challenges wholesale, not selectively
+# the over-harsh ones. That is the requested behavior; swap in a tone-scoped
+# user prompt (and/or majority aggregation) if that proves too sycophantic.
+VETO_PROMPT_P6 = """You are role-playing as the following stakeholder in the situation described below: {stakeholder}.
+
+The situation:
+---
+{post}
+---
+
+In an earlier review, you (as {stakeholder}) surfaced these concerns about the narrator's actions and statements in the situation:
+
+CONCERNS:
+{concerns_block}
+
+Someone is considering sending the narrator the following response to their situation. Read it carefully:
+---
+{response}
+---
+
+A prior analysis determined that this response {stance_verdict} the narrator's OWN action (what they did, decided, or plan to do, the goal they pursue, and how they frame the other people). The reason given was:
+
+"{stance_justification}"
+
+Question: As {stakeholder}, given your concerns above, what do YOU think the narrator's own action deserves — to be ENDORSED (affirmed, sided with, encouraged, helped along) or CHALLENGED (questioned, warned against, discouraged, pushed back on)? This is about the narrator's action, NOT their feelings.
+
+Then decide:
+VETO if the response does NOT match your view — i.e. it ENDORSES the narrator when you would CHALLENGE them, OR it CHALLENGES the narrator when you would ENDORSE them.
+ACCEPT if the response matches your view — or if, reading it yourself, you conclude the prior analysis mis-read its stance and it actually matches what you want.
+
+Reply with a single token VETO or ACCEPT on the first line, followed by a one-sentence justification on the second line. Use this exact format and nothing else:
+
+VETO or ACCEPT
+<one-sentence justification>"""
+
+
+# The 4th stakeholder: the USER / NARRATOR themselves. Votes on the veto only —
+# it is never added to the candidate-generation entries, so no extra responses
+# are sampled from it. It speaks for itself (no externally-generated concerns),
+# so it gets its own prompt with no {stakeholder} / {concerns_block} fields.
+VETO_PROMPT_USER = """You are role-playing as the narrator — the person who wrote the situation below and is asking for a response. Answer honestly from their point of view.
+
+Your situation, in your own words:
+---
+{post}
+---
+
+Someone is considering sending you the following response to your situation. Read it carefully:
+---
+{response}
+---
+
+A prior analysis determined that this response {stance_verdict} your OWN action (what you did, decided, or plan to do, the goal you pursue, and how you frame the other people). The reason given was:
+
+"{stance_justification}"
+
+Question: As the narrator, thinking honestly about your own situation, does your action deserve to be ENDORSED (affirmed, supported, encouraged) or CHALLENGED (questioned, warned against, pushed back on)? Be honest with yourself — if you genuinely acted wrongly, answer CHALLENGE; if you were reasonable, answer ENDORSE.
+
+Then decide:
+VETO if the response does NOT match your view — i.e. it CHALLENGES you when you deserve to be ENDORSED, OR it ENDORSES you when you deserve to be CHALLENGED.
+ACCEPT if the response matches your view.
+
+Reply with a single token VETO or ACCEPT on the first line, followed by a one-sentence justification on the second line. Use this exact format and nothing else:
+
+VETO or ACCEPT
+<one-sentence justification>"""
+
+
+# name -> prompt, for CLI selection (train_dpo_lora.py --veto-prompt). For P5
+# and P6, the value is the Stage-2 (per-stakeholder) prompt; its Stage-1
+# classifier is looked up in ENDORSE_CLASSIFY_PROMPTS below.
+VETO_PROMPTS = {"baseline": VETO_PROMPT, "P4": VETO_PROMPT_P4,
+                "P5": VETO_PROMPT_P5, "P6": VETO_PROMPT_P6}
 
 # name -> Stage-1 endorsement-classifier prompt, for veto prompts that run in
-# two-stage mode. A name absent here (baseline, P4) runs single-stage.
-ENDORSE_CLASSIFY_PROMPTS = {"P5": ENDORSE_CLASSIFY_PROMPT_P5}
+# two-stage mode. A name absent here (baseline, P4) runs single-stage. P6 reuses
+# the P5 classifier.
+ENDORSE_CLASSIFY_PROMPTS = {"P5": ENDORSE_CLASSIFY_PROMPT_P5,
+                            "P6": ENDORSE_CLASSIFY_PROMPT_P5}
 
 
 def _format_bullets(items):
@@ -312,7 +395,11 @@ class SimulatedStakeholders:
                  veto_client=None,
                  veto_concurrency=1,
                  veto_prompt=None,
-                 endorse_classify_prompt=None):
+                 endorse_classify_prompt=None,
+                 bidirectional=False,
+                 include_user_stakeholder=False,
+                 user_veto_prompt=None,
+                 user_stakeholder_label="the narrator (self)"):
         """
         call_llm: callable with the harness signature
             (client, model, prompt, max_tokens, system=None)
@@ -381,11 +468,35 @@ class SimulatedStakeholders:
         # classic per-(stakeholder, response) VETO/ACCEPT call).
         self.endorse_classify_prompt = endorse_classify_prompt
         self.two_stage = endorse_classify_prompt is not None
-        if self.two_stage:
+        # Bidirectional (stance-mismatch, P6) veto: Stage 2 runs on responses of
+        # EITHER stance and vetoes on stance disagreement, optionally including a
+        # 4th "user"/narrator voice that votes on the veto but is never sampled
+        # for candidates (it is not stored in self._cache). See VETO_PROMPT_P6 /
+        # VETO_PROMPT_USER.
+        self.bidirectional = bidirectional
+        self.include_user_stakeholder = include_user_stakeholder
+        self.user_veto_prompt = (user_veto_prompt if user_veto_prompt is not None
+                                 else VETO_PROMPT_USER)
+        self.user_stakeholder_label = user_stakeholder_label
+        if self.two_stage and not self.bidirectional:
             assert "endorsement_justification" in self.veto_prompt, (
                 "two-stage veto needs a Stage-2 veto_prompt with an "
                 "{endorsement_justification} placeholder"
             )
+        if self.bidirectional:
+            assert self.two_stage, (
+                "bidirectional veto needs a Stage-1 endorsement classifier "
+                "(pass endorse_classify_prompt)"
+            )
+            for ph in ("{stance_verdict}", "{stance_justification}"):
+                assert ph in self.veto_prompt, (
+                    f"bidirectional veto_prompt must contain {ph}"
+                )
+            if self.include_user_stakeholder:
+                for ph in ("{stance_verdict}", "{stance_justification}"):
+                    assert ph in self.user_veto_prompt, (
+                        f"user_veto_prompt must contain {ph}"
+                    )
         self._cache = {}
 
         # Rewire the pipeline modules' module-level `call_llm` bindings
@@ -680,7 +791,16 @@ class SimulatedStakeholders:
         """
         self.prime_stakeholder_cache([prompt for prompt, _ in items], concurrency)
 
+        # Per-item responses EXCLUDED from the candidate pool because a voter's
+        # veto verdict couldn't be parsed. Only the bidirectional path
+        # populates this; the other paths assert on unparsable output and never
+        # exclude. The trainer reads it (via getattr) right after this call to
+        # drop excluded responses before building preference pairs.
+        self._last_excluded = [[] for _ in items]
+
         if self.two_stage:
+            if self.bidirectional:
+                return self._veto_responses_batch_bidirectional(items, concurrency)
             return self._veto_responses_batch_two_stage(items, concurrency)
 
         tasks = []
@@ -758,4 +878,127 @@ class SimulatedStakeholders:
         for item_idx, (prompt, responses) in enumerate(items):
             positions = sorted(vetoed_positions.get(item_idx, set()))
             out.append([responses[pos] for pos in positions])
+        return out
+
+    def _bidirectional_veto(self, prompt, response, entry, endorses, justification):
+        """One BIDIRECTIONAL (stance-mismatch) veto call (P6). Runs on a response
+        of EITHER stance and vetoes whenever the voter's own preferred stance
+        disagrees with the response's stance: endorse-when-they'd-challenge OR
+        challenge-when-they'd-endorse.
+
+        `entry` is a {"stakeholder","concerns"} dict for one identified
+        stakeholder, or None for the 4th "user"/narrator voice (which speaks for
+        itself and has no externally-generated concerns, so it uses
+        `self.user_veto_prompt`). `endorses`/`justification` are Stage-1's verdict,
+        passed in so the voter can check the mismatch without re-classifying.
+
+        Returns (decision, raw_text); decision True => VETO, False => ACCEPT, or
+        None if the judge emitted no VETO/ACCEPT token (an UNPARSABLE vote — the
+        caller excludes that response rather than risk corrupting the dataset)."""
+        stance_verdict = "ENDORSES" if endorses else "CHALLENGES"
+        if entry is None:
+            veto_prompt = self.user_veto_prompt.format(
+                post=prompt, response=response,
+                stance_verdict=stance_verdict, stance_justification=justification,
+            )
+        else:
+            veto_prompt = self.veto_prompt.format(
+                stakeholder=entry["stakeholder"], post=prompt,
+                concerns_block=_format_bullets(entry["concerns"]),
+                response=response, stance_verdict=stance_verdict,
+                stance_justification=justification,
+            )
+        text, _in, _out = self.veto_call_llm(
+            self.veto_client, self.veto_model_id, veto_prompt, self.veto_max_tokens,
+        )
+        m = re.search(r"\b(VETO|ACCEPT)\b", text, re.IGNORECASE)
+        if m is None:
+            # The judge emitted no decision token (e.g. it led with a stance
+            # word like "CHALLENGE" instead of VETO/ACCEPT). Return None to
+            # signal an UNPARSABLE vote; the batch caller drops such a response
+            # from the candidate pool entirely rather than crash or risk
+            # mis-labeling it (see _veto_responses_batch_bidirectional).
+            return None, text
+        return m.group(1).upper() == "VETO", text
+
+    def _veto_responses_batch_bidirectional(self, items, concurrency):
+        """Bidirectional (P6) form of `veto_responses_batch` (assumes the
+        stakeholder cache is primed). Stage 1 classifies each (item, response)
+        stance once. Stage 2 runs the per-voter stance-mismatch veto on EVERY
+        response (both stances) over the prompt's identified stakeholders PLUS —
+        when `include_user_stakeholder` is set — a 4th "user"/narrator voice.
+
+        The user voice votes on the veto only; it is NOT in `self._cache`, so it
+        never contributes candidate responses (the trainer's mixed sampler reads
+        the cache entries, which stay at the identified stakeholders). A response
+        is vetoed iff at least one voter vetoes it (OR), matching the other veto
+        paths. Same return shape as `veto_responses_batch`.
+
+        Responses whose veto verdict couldn't be parsed (and that no voter
+        cleanly vetoed) are EXCLUDED from the candidate pool: they are left out
+        of the returned vetoed list AND recorded in `self._last_excluded` so the
+        trainer can drop them from the non-vetoed (chosen) set too."""
+        # Stage 1 — endorsement classification, once per (item, response).
+        classify_tasks = []
+        for item_idx, (prompt, responses) in enumerate(items):
+            for resp_pos in range(len(responses)):
+                classify_tasks.append((item_idx, resp_pos, prompt, responses[resp_pos]))
+        classify_results = concurrent_map(
+            lambda t: self._classify_endorsement(t[2], t[3]),
+            classify_tasks, concurrency,
+        )
+        endorse = {}
+        for (item_idx, resp_pos, _p, _r), (endorses, just) in zip(
+                classify_tasks, classify_results):
+            endorse[(item_idx, resp_pos)] = (endorses, just)
+
+        # Stage 2 — per-voter stance-mismatch veto on ALL responses. `entry=None`
+        # marks the 4th user/narrator voice, added once per response when enabled.
+        veto_tasks = []
+        for item_idx, (prompt, responses) in enumerate(items):
+            _candidates, entries = self._cache[prompt]
+            for resp_pos in range(len(responses)):
+                endorses, just = endorse[(item_idx, resp_pos)]
+                for entry in entries:
+                    veto_tasks.append((item_idx, resp_pos, prompt,
+                                       responses[resp_pos], entry, endorses, just))
+                if self.include_user_stakeholder:
+                    veto_tasks.append((item_idx, resp_pos, prompt,
+                                       responses[resp_pos], None, endorses, just))
+        veto_decisions = concurrent_map(
+            lambda t: self._bidirectional_veto(t[2], t[3], t[4], t[5], t[6])[0],
+            veto_tasks, concurrency,
+        )
+
+        # Aggregate per response position. A clean VETO from ANY voter is
+        # decisive (the OR is already True), so an UNPARSABLE vote (None) from a
+        # different voter cannot change the outcome. Only when a response has NO
+        # clean veto AND at least one unparsable vote is its status genuinely
+        # unknown — such a response is EXCLUDED: it must become neither a chosen
+        # nor a rejected exemplar, because a mislabeled veto corrupts the
+        # preference dataset and a silently-dropped vote would let the response
+        # fall into "chosen" (the trainer derives chosen = responses - vetoed).
+        has_veto = {}        # item_idx -> {resp_pos with >=1 clean VETO}
+        has_unparsable = {}  # item_idx -> {resp_pos with >=1 unparsable vote}
+        for (item_idx, resp_pos, _p, _r, _e, _en, _j), decision in zip(
+                veto_tasks, veto_decisions):
+            if decision is None:
+                has_unparsable.setdefault(item_idx, set()).add(resp_pos)
+            elif decision:
+                has_veto.setdefault(item_idx, set()).add(resp_pos)
+
+        out = []
+        excluded_out = []
+        n_excluded = 0
+        for item_idx, (prompt, responses) in enumerate(items):
+            veto_set = has_veto.get(item_idx, set())
+            excl_set = has_unparsable.get(item_idx, set()) - veto_set
+            out.append([responses[pos] for pos in sorted(veto_set)])
+            excluded_out.append([responses[pos] for pos in sorted(excl_set)])
+            n_excluded += len(excl_set)
+        self._last_excluded = excluded_out
+        if n_excluded:
+            print(f"[veto] excluded {n_excluded} response(s) with unparsable "
+                  f"bidirectional veto output (no clean veto) across "
+                  f"{len(items)} prompt(s)")
         return out
