@@ -52,6 +52,7 @@ the same way so DPO sees the same surface that produced the responses.
 
 import gc
 import glob
+import contextlib
 import json
 import os
 import re
@@ -287,7 +288,10 @@ class Trainer:
                  policy_adapter_name="policy",
                  chunk_size=64,
                  stage_concurrency=128,
-                 stakeholder_prompt=STAKEHOLDER_RESPONSE_PROMPT):
+                 stakeholder_prompt=STAKEHOLDER_RESPONSE_PROMPT,
+                 frozen_stakeholder=False,
+                 distill_self_only=False,
+                 distill_max_per_prompt=4):
         """
         sim_stake:     a SimulatedStakeholders instance (see
                        simulated_stakeholders.py).
@@ -396,6 +400,32 @@ class Trainer:
         # role-play STAKEHOLDER_RESPONSE_PROMPT; the _gp arm passes the
         # second-person STAKEHOLDER_RESPONSE_PROMPT_VOICE to drop the role-play.
         self.stakeholder_prompt = stakeholder_prompt
+        # frozen_stakeholder: generate the stakeholder candidates from the frozen
+        # base model (fixed teacher) instead of the evolving policy. Only affects
+        # the stakeholder source of the mixed sampler, so it requires a
+        # stakeholder budget (mixed_sampling with a non-steer_only mix).
+        if frozen_stakeholder:
+            assert mixed_sampling and not steer_only, (
+                "frozen_stakeholder only affects the stakeholder source; it "
+                "requires mixed_sampling and a stakeholder budget (not steer_only)"
+            )
+        self.frozen_stakeholder = frozen_stakeholder
+        # distill_self_only: narrow the RPO/distill SFT term to the responses
+        # sampled on-policy from the model itself (source == "model") and
+        # non-vetoed, at most distill_max_per_prompt distinct per prompt. Only
+        # affects the SFT/distill term (see core/self_distill_trainer.py); the
+        # DPO cross-pairs are unchanged. Requires mixed_sampling (so a "model"
+        # source exists) and rpo_alpha at train() time (so an SFT term exists).
+        if distill_self_only:
+            assert mixed_sampling and n_source_model > 0, (
+                "distill_self_only distills the on-policy 'model' source, so it "
+                "requires mixed_sampling with n_source_model > 0"
+            )
+            assert distill_max_per_prompt >= 1, (
+                "distill_max_per_prompt must be >= 1"
+            )
+        self.distill_self_only = distill_self_only
+        self.distill_max_per_prompt = distill_max_per_prompt
         self.self_preference = self_preference
         self.preference_max_tokens = preference_max_tokens
         self.preference_max_pairs = preference_max_pairs
@@ -417,10 +447,16 @@ class Trainer:
         self.chunk_size = chunk_size
         self.stage_concurrency = stage_concurrency
 
-    def _generate_n(self, user_prompt, n):
-        """Draw `n` stochastic responses from the policy for an arbitrary
-        `user_prompt` (already the full user-message text; the chat
-        template is applied here). Returns a list of `n` strings.
+    def _generate_n(self, user_prompt, n, use_base=False):
+        """Draw `n` stochastic responses for an arbitrary `user_prompt` (already
+        the full user-message text; the chat template is applied here). Returns
+        a list of `n` strings.
+
+        By default samples from the CURRENT policy (base + the hot-synced LoRA).
+        When `use_base=True`, samples from the FROZEN BASE model instead (no
+        policy adapter) — this is the frozen-stakeholder teacher: on the vLLM
+        path a request with adapter=None hits the base `model_id` served on the
+        same engine; on the HF path the PEFT adapter is disabled for the call.
 
         Uses `num_return_sequences=n` so HF batches the n forward passes
         — much cheaper than n sequential `generate` calls. Each sample is
@@ -430,19 +466,24 @@ class Trainer:
         """
         if n <= 0:
             return []
-        # vLLM policy path: sample n completions on the shared engine using the
-        # current policy adapter. Same chat template / enable_thinking=False as
-        # the HF path (see vllm_sim.make_vllm_policy_sampler), validated to
-        # parity with HF logprobs in build_vllm_parity_check.py.
+        # vLLM policy path: sample n completions on the shared engine. adapter=
+        # the current policy LoRA normally, or None (frozen base) when use_base.
+        # Same chat template / enable_thinking=False as the HF path (see
+        # vllm_sim.make_vllm_policy_sampler), validated to parity with HF
+        # logprobs in build_vllm_parity_check.py.
         if self.policy_sampler is not None:
+            adapter = None if use_base else self.policy_adapter_name
             return self.policy_sampler(
                 user_prompt, int(n), self.temperature, self.top_p,
-                int(self.max_new_tokens), adapter=self.policy_adapter_name)
+                int(self.max_new_tokens), adapter=adapter)
         device = next(self.model.parameters()).device
         input_ids = build_chat_input(self.tokenizer, user_prompt, system=None, device=device)
         in_len = input_ids.shape[1]
 
-        with torch.no_grad():
+        # HF path: when use_base, disable the PEFT adapter so generation runs on
+        # the frozen base weights; otherwise a normal (policy) generate.
+        base_ctx = self.model.disable_adapter() if use_base else contextlib.nullcontext()
+        with torch.no_grad(), base_ctx:
             output_ids = self.model.generate(
                 input_ids,
                 max_new_tokens=int(self.max_new_tokens),
@@ -498,8 +539,9 @@ class Trainer:
 
         Returns (responses, sources): parallel lists of length `n_samples`.
         `sources[i]` is "model", "critical" (or "perspshift" under
-        perspective_shift_steer), or "stakeholder:<name>" — persisted for
-        auditability, not used by DPO.
+        perspective_shift_steer), or "stakeholder:<name>" ("stakeholder-base:
+        <name>" when frozen_stakeholder draws it from the frozen base) —
+        persisted for auditability, not used by DPO.
         """
         n_model = min(self.n_source_model, self.n_samples)
         n_critical = min(self.n_source_critical, self.n_samples - n_model)
@@ -550,9 +592,16 @@ class Trainer:
                     post=prompt,
                     concerns_block=_format_bullets(entry["concerns"]),
                 )
-                for r in self._generate_n(stake_prompt, c):
+                # frozen_stakeholder: draw these stakeholder candidates from the
+                # frozen base Qwen3-8B (a fixed teacher) instead of the evolving
+                # policy. The source label records which was used, so the freeze
+                # is auditable in the persisted responses_*.jsonl.
+                stake_src = ("stakeholder-base" if self.frozen_stakeholder
+                             else "stakeholder")
+                for r in self._generate_n(stake_prompt, c,
+                                          use_base=self.frozen_stakeholder):
                     responses.append(r)
-                    sources.append(f"stakeholder:{entry['stakeholder']}")
+                    sources.append(f"{stake_src}:{entry['stakeholder']}")
 
         return responses, sources
 
@@ -775,7 +824,29 @@ class Trainer:
                 "support and cannot be rebuilt without re-querying the policy"
             )
         pairs.extend(record.get("pref_pairs", []))
+        self._annotate_sft_mask(pairs, responses, record.get("sources"), non_vetoed)
         return pairs, vetoed, non_vetoed
+
+    def _annotate_sft_mask(self, prompt_pairs, responses, sources, non_vetoed):
+        """When distill_self_only, tag each of this prompt's pairs with an
+        `sft_mask` (0/1) so the RPO/distill SFT term imitates only the on-policy
+        'model'-source non-vetoed responses (<= distill_max_per_prompt distinct
+        per prompt). No-op (leaves pairs untouched) when distill_self_only is
+        off, so the plain-distill and pure-DPO paths are unchanged.
+        """
+        if not self.distill_self_only:
+            return prompt_pairs
+        from self_distill_trainer import (select_sft_targets,
+                                          annotate_pairs_with_sft_mask)
+        assert sources is not None, (
+            "distill_self_only needs per-response source tags, but this "
+            "responses record has no 'sources' field (it predates mixed "
+            "sampling and cannot be used for self-distill)."
+        )
+        targets = select_sft_targets(
+            responses, sources, non_vetoed, self.distill_max_per_prompt)
+        annotate_pairs_with_sft_mask(prompt_pairs, targets)
+        return prompt_pairs
 
     def _load_partial_responses(self, responses_path, n_prompts):
         """Load completed per-prompt records from a partial
@@ -982,6 +1053,8 @@ class Trainer:
                     pref_pairs = pref_list[i]
                     num_pref_pairs = len(pref_pairs)
                     prompt_pairs.extend(pref_pairs)
+                    self._annotate_sft_mask(
+                        prompt_pairs, responses, sources, non_vetoed)
 
                     # Persist raw samples + veto subset + the self-preference
                     # pairs (the latter so resume can rebuild the dataset
@@ -1241,6 +1314,23 @@ class Trainer:
                   f"(loss_type={base_dpo_args['loss_type']}, "
                   f"loss_weights={base_dpo_args['loss_weights']})")
 
+        # Targeted ("self") distill: the SFT term above is masked per-row to the
+        # on-policy 'model'-source non-vetoed responses only (the pairs carry an
+        # sft_mask column set in _build_iteration / _record_contribution). It
+        # only means anything when an SFT term exists.
+        if self.distill_self_only:
+            assert rpo_alpha is not None, (
+                "distill_self_only masks the RPO/distill SFT term, so it "
+                "requires rpo_alpha to be set (the SFT term must exist)."
+            )
+            from self_distill_trainer import SelfDistillDPOTrainer
+            TrainerCls = SelfDistillDPOTrainer.build()
+            print(f"[train] targeted distill: SFT term masked to on-policy "
+                  f"'model'-source non-vetoed chosen "
+                  f"(<= {self.distill_max_per_prompt}/prompt)")
+        else:
+            TrainerCls = DPOTrainer
+
         # Step-level DPO checkpointing. With dpo_save_steps > 0, HF Trainer writes
         # a checkpoint-<step>/ dir into the iteration's output dir every that-many
         # optimizer steps; `_resume_dpo_checkpoint` below then continues a killed
@@ -1338,7 +1428,7 @@ class Trainer:
                 # DPOTrainer needs the model in train mode to record
                 # gradients on the LoRA params; sampling left it in eval.
                 self.model.train()
-                last_trainer = DPOTrainer(
+                last_trainer = TrainerCls(
                     model=self.model,
                     ref_model=None,
                     args=dpo_args,

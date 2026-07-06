@@ -16,8 +16,8 @@ set -uo pipefail
 
 # ===================== EDIT FOR YOUR MARLOWE SITE =====================
 PROJECT=m000254                                  # your Marlowe project ID
-REPO=/projects/$PROJECT/sycophancy               # where you put the repo
-ENV_PREFIX=/projects/$PROJECT/envs/llm           # the conda env prefix
+REPO=/projects/$PROJECT/mitigating_sycophancy    # where you put the repo
+ENV_PREFIX=/projects/$PROJECT/envs/llm126        # cu126 conda env (matches Marlowe's r565/CUDA-12.7 driver)
 export HF_HOME=/projects/$PROJECT/hf_cache       # HF model cache (1T projects quota)
 RUNS_ROOT=/projects/$PROJECT/runs                 # training outputs
 LOGS_ROOT=/projects/$PROJECT/logs
@@ -42,12 +42,18 @@ if [[ -z "${HF_TOKEN:-}" ]]; then
 fi
 export HUGGING_FACE_HUB_TOKEN="$HF_TOKEN"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# ENV_PREFIX (llm126) is fully self-contained; ignore ~/.local (which still holds
+# the old CUDA-13 torch/vllm that crash on the r565/CUDA-12.7 driver) so imports
+# are deterministic and never shadowed by user-site packages.
+export PYTHONNOUSERSITE=1
 
-module load conda
-source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate "$ENV_PREFIX"
+# Use the env's interpreter DIRECTLY. `conda activate "$ENV_PREFIX"` does not
+# reliably switch `python` on the compute nodes (the original runs silently fell
+# back to base Mambaforge python + ~/.local user-site packages — which is how the
+# CUDA-13 stack crept in). The llm126 env is self-contained (PYTHONNOUSERSITE=1),
+# so invoking its python directly is deterministic. Verified on a GPU node.
 cd "$REPO"
-PY=$(command -v python)
+PY="$ENV_PREFIX/bin/python"
 
 echo "[marlowe] env=$RUN_ENV attempt=$ATTEMPT/$MAX_ATTEMPTS jobid=${SLURM_JOB_ID:-?} node=$(hostname)"
 echo "[marlowe] gpus=$(nvidia-smi --query-gpu=name --format=csv,noheader | paste -sd, -)"
@@ -102,13 +108,58 @@ if [[ -n "${RPO_ALPHA:-}" ]]; then
   echo "[marlowe] RPO/distill mode: --rpo-alpha $RPO_ALPHA"
 fi
 
+# Targeted ("self") distill knob. When DISTILL_SELF_ONLY is set (requires
+# RPO_ALPHA), the RPO/distill SFT term is masked to ONLY the responses sampled
+# on-policy from the model itself (mixed-sampling source "model") that survived
+# the veto, <= DISTILL_MAX_PER_PROMPT distinct per prompt. The DPO cross-pairs
+# are unchanged. Isolates the distill target from the critical-skewed
+# stakeholder/perspshift/frozen-base exemplars. See core/self_distill_trainer.py.
+if [[ -n "${DISTILL_SELF_ONLY:-}" ]]; then
+  EXTRA_ARGS+=(--distill-self-only --distill-max-per-prompt "${DISTILL_MAX_PER_PROMPT:-4}")
+  echo "[marlowe] targeted distill (self-source, <= ${DISTILL_MAX_PER_PROMPT:-4}/prompt) ON"
+fi
+
+# Candidate-mix knobs. Wrappers override these before sourcing; the DEFAULTS
+# reproduce the original nocrit_distill recipe (4 model / 0 critical / 6
+# stakeholder role-play), so every existing wrapper is unchanged. The
+# perspshift_distill_gp arm sets N_SOURCE_MODEL=2 N_SOURCE_CRITICAL=2 PERSPSHIFT=1
+# STAKEHOLDER_VOICE=1 (+ PERSPSHIFT_ASSESS=1 for OEQ). See core/trainer.py.
+N_SOURCE_MODEL="${N_SOURCE_MODEL:-4}"
+N_SOURCE_CRITICAL="${N_SOURCE_CRITICAL:-0}"
+EXTRA_ARGS+=(--n-source-model "$N_SOURCE_MODEL" --n-source-critical "$N_SOURCE_CRITICAL")
+echo "[marlowe] mix: n_source_model=$N_SOURCE_MODEL n_source_critical=$N_SOURCE_CRITICAL"
+if [[ -n "${STAKEHOLDER_VOICE:-}" ]]; then
+  EXTRA_ARGS+=(--stakeholder-voice)
+  echo "[marlowe] stakeholder-voice (gp) ON"
+fi
+if [[ -n "${FROZEN_STAKEHOLDER:-}" ]]; then
+  EXTRA_ARGS+=(--frozen-stakeholder)
+  echo "[marlowe] frozen stakeholder (base teacher) ON"
+fi
+if [[ -n "${PERSPSHIFT:-}" ]]; then
+  EXTRA_ARGS+=(--perspective-shift-sampling --rewrite-max-tokens "${REWRITE_MAX_TOKENS:-1536}")
+  [[ -n "${PERSPSHIFT_ASSESS:-}" ]] && EXTRA_ARGS+=(--perspshift-assess)
+  echo "[marlowe] perspective-shift sampling ON (assess=${PERSPSHIFT_ASSESS:-0})"
+fi
+
+# Veto panel. VETO_PROMPT selects the veto method (default P5, so every existing
+# wrapper is unchanged). USER_STAKEHOLDER=1 adds the 4th "user"/narrator voice to
+# the veto panel (veto-only, NOT sampled for candidates); train_dpo_lora.py asserts
+# this is P6-only, so we guard it here too for a clearer failure. See
+# core/simulated_stakeholders.py VETO_PROMPT_USER / include_user_stakeholder.
+if [[ -n "${USER_STAKEHOLDER:-}" ]]; then
+  [[ "${VETO_PROMPT:-P5}" == "P6" ]] || { echo "ERROR: USER_STAKEHOLDER=1 requires VETO_PROMPT=P6 (the 4th narrator voice is P6-only)." >&2; exit 1; }
+  EXTRA_ARGS+=(--user-stakeholder)
+  echo "[marlowe] user-stakeholder (4th narrator/user veto voice) ON"
+fi
+
 # Run the trainer in the background so the trap can fire while it runs.
 "$PY" training_mitigations/train_dpo_lora.py \
     --env "$RUN_ENV" \
     --output-dir "$OUT_DIR" \
     --allow-preempt \
     ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
-    --veto-prompt P5 \
+    --veto-prompt "${VETO_PROMPT:-P5}" \
     --policy-on-vllm \
     --seed 0 \
     --device cuda:0 \
@@ -122,8 +173,6 @@ fi
     --test-n 500 \
     --n-samples 10 \
     --mixed-sampling \
-    --n-source-model 4 \
-    --n-source-critical 0 \
     --temperature 1.0 \
     --top-p 0.95 \
     --max-tokens 1024 \

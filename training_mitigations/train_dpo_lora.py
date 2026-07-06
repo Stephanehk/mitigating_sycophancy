@@ -383,6 +383,16 @@ def main():
              "DPO prompt column stays the bare post.",
     )
     parser.add_argument(
+        "--frozen-stakeholder", action="store_true",
+        help="mixed sampling: generate the stakeholder candidates from the "
+             "FROZEN BASE model (a fixed teacher) instead of the evolving "
+             "policy — removes the on-policy feedback loop in the stakeholder "
+             "exemplars (the mixed_P5_nocrit_distill_gp_frozenstake arm). Only "
+             "the stakeholder source is frozen; the model/critical sources stay "
+             "on-policy. On vLLM this routes to the base model_id already served "
+             "on the engine; on HF it disables the PEFT adapter for the call.",
+    )
+    parser.add_argument(
         "--perspective-shift-sampling", action="store_true",
         help="mixed sampling: replace the 'Be critical.' critical source with "
              "the ELEPHANT (Cheng et al. 2025, App G.2) perspective-shift "
@@ -463,6 +473,22 @@ def main():
              "Implemented via trl's multi-loss loss_type=['sigmoid','sft'], "
              "loss_weights=[1.0, rpo_alpha]. Default: None (plain DPO, no SFT "
              "term). 1.0 is the canonical RPO value.",
+    )
+    parser.add_argument(
+        "--distill-self-only", action="store_true",
+        help="TARGETED distill. Mask the RPO/distill SFT term (requires "
+             "--rpo-alpha) so it imitates ONLY the responses sampled on-policy "
+             "from the model itself (mixed-sampling source 'model') that "
+             "survived the veto, at most --distill-max-per-prompt distinct per "
+             "prompt. The DPO cross-pairs are unchanged (all sources still "
+             "become chosen/rejected). Isolates the distill target from the "
+             "critical-skewed stakeholder/perspshift/frozen-base exemplars.",
+    )
+    parser.add_argument(
+        "--distill-max-per-prompt", type=int, default=4,
+        help="with --distill-self-only, the max number of distinct on-policy "
+             "'model'-source non-vetoed responses distilled per prompt "
+             "(default: 4).",
     )
     parser.add_argument(
         "--dpo-save-steps", type=int, default=0,
@@ -590,6 +616,19 @@ def main():
         assert args.n_source_critical > 0, (
             "--perspective-shift-sampling needs --n-source-critical > 0 (that is "
             "the perspective-shift source count); got 0"
+        )
+
+    # --distill-self-only masks the RPO/distill SFT term, so it needs both an SFT
+    # term (--rpo-alpha) and an on-policy 'model' source (mixed sampling with a
+    # non-zero model budget). Fail fast at the CLI rather than deep in train().
+    if args.distill_self_only:
+        assert args.rpo_alpha is not None, (
+            "--distill-self-only masks the RPO/distill SFT term; it requires "
+            "--rpo-alpha to be set"
+        )
+        assert args.mixed_sampling and args.n_source_model > 0, (
+            "--distill-self-only distills the on-policy 'model' source; it "
+            "requires --mixed-sampling with --n-source-model > 0"
         )
 
     # The sim vLLM server serves the frozen stakeholder judge model AND (when
@@ -861,6 +900,9 @@ def main():
         stakeholder_prompt=(STAKEHOLDER_RESPONSE_PROMPT_VOICE
                             if args.stakeholder_voice
                             else STAKEHOLDER_RESPONSE_PROMPT),
+        frozen_stakeholder=args.frozen_stakeholder,
+        distill_self_only=args.distill_self_only,
+        distill_max_per_prompt=args.distill_max_per_prompt,
         self_preference=args.self_preference,
         preference_max_tokens=args.preference_max_tokens,
         preference_max_pairs=args.preference_max_pairs,
@@ -885,6 +927,9 @@ def main():
             f"(model={args.n_source_model} {steer_kind}={args.n_source_critical} "
             f"stakeholder={args.n_samples - args.n_source_model - args.n_source_critical})  "
             f"stakeholder_voice={args.stakeholder_voice} "
+            f"frozen_stakeholder={args.frozen_stakeholder} "
+            f"distill_self_only={args.distill_self_only}"
+            f"{f' (max {args.distill_max_per_prompt}/prompt)' if args.distill_self_only else ''} "
             f"self_preference={args.self_preference} "
             f"(max_pairs={args.preference_max_pairs or 'unlimited'})"
         )
