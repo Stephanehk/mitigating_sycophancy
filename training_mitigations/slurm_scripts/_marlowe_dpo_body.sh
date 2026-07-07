@@ -153,6 +153,10 @@ if [[ -n "${USER_STAKEHOLDER:-}" ]]; then
   echo "[marlowe] user-stakeholder (4th narrator/user veto voice) ON"
 fi
 
+# Data split: default 1000 train / 500 test (OEQ/PAS). AITA/FLIP wrappers
+# override TRAIN_N/TEST_N to match their held-out baselines (FLIP counts PAIRS).
+echo "[marlowe] split: train_n=${TRAIN_N:-1000} test_n=${TEST_N:-500}"
+
 # Run the trainer in the background so the trap can fire while it runs.
 "$PY" training_mitigations/train_dpo_lora.py \
     --env "$RUN_ENV" \
@@ -169,8 +173,8 @@ fi
     --precompute-ref-batch-size 8 \
     --dpo-save-steps 25 \
     --num-iterations 3 \
-    --train-n 1000 \
-    --test-n 500 \
+    --train-n "${TRAIN_N:-1000}" \
+    --test-n "${TEST_N:-500}" \
     --n-samples 10 \
     --mixed-sampling \
     --temperature 1.0 \

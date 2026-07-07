@@ -291,7 +291,8 @@ class Trainer:
                  stakeholder_prompt=STAKEHOLDER_RESPONSE_PROMPT,
                  frozen_stakeholder=False,
                  distill_self_only=False,
-                 distill_max_per_prompt=4):
+                 distill_max_per_prompt=4,
+                 label_suffix=""):
         """
         sim_stake:     a SimulatedStakeholders instance (see
                        simulated_stakeholders.py).
@@ -446,6 +447,13 @@ class Trainer:
         # `_build_iteration`.
         self.chunk_size = chunk_size
         self.stage_concurrency = stage_concurrency
+        # AITA/FLIP YTA/NTA nudge. Appended to EVERY candidate-generation prompt
+        # (so all N samples end with the verdict instruction, regardless of
+        # source) and to the DPO prompt column (so the trained policy is
+        # optimized on the same post+suffix surface eval uses). Deliberately NOT
+        # applied to the identify/concerns/veto/preference/rewrite stages, which
+        # receive the bare post. "" for OEQ/PAS makes all of this a no-op.
+        self.label_suffix = label_suffix
 
     def _generate_n(self, user_prompt, n, use_base=False):
         """Draw `n` stochastic responses for an arbitrary `user_prompt` (already
@@ -502,12 +510,27 @@ class Trainer:
             responses.append(text)
         return responses
 
+    def _gen(self, gen_prompt, n, use_base=False):
+        """Candidate-generation wrapper over `_generate_n` that appends
+        `self.label_suffix` to the FINAL generation prompt. Every candidate
+        source (model / critical / perspshift / stakeholder) routes through
+        here so the AITA/FLIP YTA/NTA nudge is terminal (the last instruction
+        the model sees) and present on ALL n samples, regardless of source. For
+        OEQ/PAS `label_suffix` is "" so this is exactly `_generate_n`. The nudge
+        is intentionally NOT added by the identify/concerns/veto/preference/
+        rewrite stages, which call `_generate_n`/the sim directly on the bare
+        post.
+        """
+        return self._generate_n(gen_prompt + self.label_suffix, n,
+                                use_base=use_base)
+
     def _sample_responses(self, prompt):
         """Draw `n_samples` stochastic responses from the policy for the
-        bare `prompt`. Thin wrapper over `_generate_n`; this is the
-        non-mixed sampling path. Returns a list of length `n_samples`.
+        bare `prompt`. Thin wrapper over `_gen` (so the AITA/FLIP nudge is
+        applied); this is the non-mixed sampling path. Returns a list of
+        length `n_samples`.
         """
-        return self._generate_n(prompt, self.n_samples)
+        return self._gen(prompt, self.n_samples)
 
     def _sample_responses_mixed(self, prompt, entries):
         """Variation 1: draw `n_samples` candidates split across sources.
@@ -550,7 +573,7 @@ class Trainer:
         responses = []
         sources = []
 
-        for r in self._generate_n(prompt, n_model):
+        for r in self._gen(prompt, n_model):
             responses.append(r)
             sources.append("model")
 
@@ -571,7 +594,13 @@ class Trainer:
             else:
                 steer_input = prompt + self.steer_suffix
                 steer_src = self.steer_label
-            for r in self._generate_n(steer_input, n_critical):
+            # `steer_input` is either the third-person REWRITE (perspshift) or
+            # the critical-suffixed post. `_gen` appends the label nudge AFTER
+            # it, so for AITA/FLIP even the perspshift candidates — whose rewrite
+            # dropped the nudge — end with a parseable-verdict instruction. The
+            # rewrite call above runs on the BARE `prompt` (no nudge leaks into
+            # the rewriter).
+            for r in self._gen(steer_input, n_critical):
                 responses.append(r)
                 sources.append(steer_src)
 
@@ -598,8 +627,11 @@ class Trainer:
                 # is auditable in the persisted responses_*.jsonl.
                 stake_src = ("stakeholder-base" if self.frozen_stakeholder
                              else "stakeholder")
-                for r in self._generate_n(stake_prompt, c,
-                                          use_base=self.frozen_stakeholder):
+                # `_gen` appends the label nudge after the stakeholder template
+                # so it's the terminal instruction (`post=prompt` embeds the
+                # BARE post mid-template). Covers the frozen-base path too.
+                for r in self._gen(stake_prompt, c,
+                                   use_base=self.frozen_stakeholder):
                     responses.append(r)
                     sources.append(f"{stake_src}:{entry['stakeholder']}")
 
@@ -681,7 +713,9 @@ class Trainer:
             chosen = shown_a if choice == "A" else shown_b
             rejected = shown_b if choice == "A" else shown_a
             pairs.append({
-                "prompt": prompt,
+                # DPO prompt column = post + AITA/FLIP nudge, matching the
+                # eval-time input surface (format_prompt). "" for OEQ/PAS.
+                "prompt": prompt + self.label_suffix,
                 "chosen": chosen,
                 "rejected": rejected,
             })
@@ -721,7 +755,7 @@ class Trainer:
         for rejected in vetoed:
             for chosen in non_vetoed:
                 pairs.append({
-                    "prompt": x,
+                    "prompt": x + self.label_suffix,
                     "chosen": chosen,
                     "rejected": rejected,
                 })
@@ -816,7 +850,7 @@ class Trainer:
         pairs = []
         for r in vetoed:
             for c in non_vetoed:
-                pairs.append({"prompt": x, "chosen": c, "rejected": r})
+                pairs.append({"prompt": x + self.label_suffix, "chosen": c, "rejected": r})
         if self.self_preference:
             assert "pref_pairs" in record, (
                 "resuming a --self-preference run but a persisted responses "
@@ -1046,7 +1080,7 @@ class Trainer:
                     for r in vetoed:
                         for c in non_vetoed:
                             prompt_pairs.append({
-                                "prompt": x,
+                                "prompt": x + self.label_suffix,
                                 "chosen": c,
                                 "rejected": r,
                             })
@@ -1061,6 +1095,11 @@ class Trainer:
                     # without re-querying the policy); flush per prompt so a
                     # mid-iteration crash still preserves generated work and
                     # resume reloads it exactly.
+                    # The record stores the BARE `x` (no label_suffix): resume
+                    # rebuilds the DPO pairs via _record_contribution, which
+                    # re-appends self.label_suffix to the pair prompt. Keeping
+                    # the record bare means a resumed run reconstructs the exact
+                    # same pair prompt as a fresh run.
                     responses_file.write(json.dumps({
                         "iter": iter_idx,
                         "prompt_idx": idx,

@@ -88,6 +88,7 @@ from train_data import (resolve_csv as _resolve_csv,
                         load_env_data as _load_data,
                         split_train_test as _split_train_test,
                         build_train_prompts as _build_train_prompts,
+                        label_suffix_for as _label_suffix_for,
                         subset_in_id_order as _subset_in_id_order,
                         write_ids as _write_ids,
                         detect_resume_point as _detect_resume_point)
@@ -660,7 +661,8 @@ def main():
         with open(train_ids_path) as f:
             saved_ids = json.load(f)
         train_df = _subset_in_id_order(data, saved_ids)
-        train_prompts = _build_train_prompts(args.env, train_df)
+        train_prompts = _build_train_prompts(args.env, train_df,
+                                             with_label_suffix=False)
         print(f"[data] RESUME: reusing {len(train_prompts)} train prompts "
               f"from {len(saved_ids)} saved ids in {train_ids_path}")
     else:
@@ -673,7 +675,8 @@ def main():
         _write_ids(train_ids_path, train_df)
         print(f"[data] wrote {test_ids_path}")
         print(f"[data] wrote {train_ids_path}")
-        train_prompts = _build_train_prompts(args.env, train_df)
+        train_prompts = _build_train_prompts(args.env, train_df,
+                                             with_label_suffix=False)
 
     # 2. Two model instances:
     #    - policy: trainable HF model, on args.device. Sampled from each
@@ -903,6 +906,9 @@ def main():
         frozen_stakeholder=args.frozen_stakeholder,
         distill_self_only=args.distill_self_only,
         distill_max_per_prompt=args.distill_max_per_prompt,
+        # AITA/FLIP YTA/NTA nudge (see core/trainer.py). "" for OEQ/PAS, so the
+        # whole label-suffix mechanism is a no-op for those envs.
+        label_suffix=_label_suffix_for(args.env),
         self_preference=args.self_preference,
         preference_max_tokens=args.preference_max_tokens,
         preference_max_pairs=args.preference_max_pairs,

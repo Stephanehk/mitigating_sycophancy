@@ -109,7 +109,7 @@ def split_train_test(env_name, data, train_n, test_n, seed):
     return train_df, test_df
 
 
-def format_prompt(env_name, post_text):
+def format_prompt(env_name, post_text, with_label_suffix=True):
     """Return the user message the model under training sees at both sampling
     time and train time.
 
@@ -119,15 +119,31 @@ def format_prompt(env_name, post_text):
     (no LLM classifier needed at eval). `post_text` is a single post string;
     for AITA-NTA-FLIP the caller passes either the original or the flipped post
     — see `build_train_prompts`.
+
+    `with_label_suffix` controls whether the AITA nudge is appended. Default
+    True is what eval / GRPO / probe callers want. The DPO trainer passes
+    False to obtain the BARE post — it re-attaches `label_suffix_for(env)` at
+    exactly the candidate-generation sites and the DPO prompt column, and keeps
+    the bare post for the identify/concerns/veto/preference/rewrite stages (see
+    core/trainer.py). OEQ/PAS ignore the flag (no suffix either way).
     """
     if env_name in ("OEQ", "PAS"):
         return post_text
     if env_name in _AITA_ENVS:
-        return post_text + AITA_LABEL_SUFFIX
+        return post_text + AITA_LABEL_SUFFIX if with_label_suffix else post_text
     raise AssertionError(f"unknown env_name: {env_name!r}")
 
 
-def build_train_prompts(env_name, df):
+def label_suffix_for(env_name):
+    """The generation-time YTA/NTA nudge for `env_name`: `AITA_LABEL_SUFFIX`
+    for the two AITA envs, else "" (OEQ/PAS). The DPO trainer stores this and
+    appends it to every candidate-generation prompt and the DPO prompt column,
+    so an empty string makes the whole mechanism a no-op for OEQ/PAS.
+    """
+    return AITA_LABEL_SUFFIX if env_name in _AITA_ENVS else ""
+
+
+def build_train_prompts(env_name, df, with_label_suffix=True):
     """Flatten a split DataFrame into the ordered list of training prompts the
     trainer samples against.
 
@@ -140,16 +156,21 @@ def build_train_prompts(env_name, df):
     list from the saved split ids keeps `prompt_idx` aligned with the partial
     responses file.
 
+    `with_label_suffix` is forwarded to `format_prompt`. The DPO trainer passes
+    False to get BARE posts (it owns the AITA nudge); eval / GRPO / probe use
+    the default True. OEQ/PAS are unaffected by the flag.
+
     Assumes `df` rows are already in the desired order; returns a flat list.
     """
     if env_name in ("OEQ", "PAS", "AITA"):
-        return [format_prompt(env_name, t) for t in df["post_text"].tolist()]
+        return [format_prompt(env_name, t, with_label_suffix)
+                for t in df["post_text"].tolist()]
     if env_name == "AITA-NTA-FLIP":
         prompts = []
         for orig, flip in zip(df["post_text"].tolist(),
                               df["flipped_post_text"].tolist()):
-            prompts.append(format_prompt(env_name, orig))
-            prompts.append(format_prompt(env_name, flip))
+            prompts.append(format_prompt(env_name, orig, with_label_suffix))
+            prompts.append(format_prompt(env_name, flip, with_label_suffix))
         return prompts
     raise AssertionError(f"unknown env_name: {env_name!r}")
 
