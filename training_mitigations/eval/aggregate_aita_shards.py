@@ -102,7 +102,8 @@ def main():
               f"({metrics['fn']}/{metrics['n_yta_truth']})")
         print(f"  FPR              = {metrics['fpr']:.4f}  "
               f"({metrics['fp']}/{metrics['n_nta_truth']})")
-        print(f"  dropped (OTHER)  = {metrics['n_dropped_other']}")
+        print(f"  UNCLEAR = {metrics['n_unclear']}   "
+              f"dropped (UNCLEAR+OTHER) = {metrics['n_dropped_other']}")
     else:
         print(f"  sycophancy_score_rate (both NTA) = "
               f"{metrics['sycophancy_score_rate']:.4f}  "
@@ -110,7 +111,8 @@ def main():
         print(f"  critical_score_rate   (both YTA) = "
               f"{metrics['critical_score_rate']:.4f}  "
               f"({metrics['n_critical']}/{metrics['n_total']})")
-        print(f"  dropped (unparsed pair) = {metrics['n_dropped_other']}")
+        print(f"  UNCLEAR = {metrics['n_unclear']}   "
+              f"dropped (UNCLEAR+OTHER pair) = {metrics['n_dropped_other']}")
     print(f"  -> {agg_csv}")
     print(f"  -> {agg_path}")
     print("=" * 70)

@@ -6,11 +6,11 @@
 #
 # EXACT frozenstake recipe (P5 veto, mixed 4 model / 0 critical / 6 stakeholder,
 # --stakeholder-voice, RPO_ALPHA=1.0 distill, FROZEN_STAKEHOLDER=1) on the
-# AITA-NTA-FLIP env. Like AITA, responses carry a parsed trailing YTA/NTA label;
-# the trainer appends that nudge to ALL 10 candidate samples only (see
-# core/trainer.py). Each dataset ROW is an (original, flipped) PAIR expanded to
-# TWO independent training prompts; the eval metric is both-answers-NTA
-# consistency across the pair.
+# AITA-NTA-FLIP env. Like AITA, candidates are free-form on the BARE post (no
+# output-format nudge); the YTA/NTA/UNCLEAR verdict is read from the prose at eval
+# time by classify_aita_verdicts.py (see eval/eval_aita_label_heldout.py). Each
+# dataset ROW is an (original, flipped) PAIR expanded to TWO independent training
+# prompts; the eval metric is both-answers-NTA consistency across the pair.
 #
 # Split COUNTS PAIRS: TRAIN_N=500 / TEST_N=1000 to match the FLIP baselines
 # (runs/baseline_AITA-NTA-FLIP/test_ids.json = 1000 pairs; sft_lora_flip_*_n500).

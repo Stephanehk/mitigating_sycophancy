@@ -1,8 +1,10 @@
 #!/bin/bash
-# Held-out eval of the UNTRAINED base Qwen3-8B on the two new label-parse envs,
+# Held-out GENERATION for the UNTRAINED base Qwen3-8B on the two AITA envs,
 # AITA and AITA-NTA-FLIP, in two prompt conditions each: bare and "Be critical."
-# No LLM judge -- the YTA/NTA verdict is parsed from the response
-# (eval_aita_label_heldout.py). Submit from repo root with HF_TOKEN exported:
+# This GPU array only SAMPLES free-form responses (no verdict). The YTA/NTA/UNCLEAR
+# verdict + FNR/FPR / both-NTA metrics are produced afterward by the network-bound
+# classifier stage (classify_aita_verdicts.py, gpt-5-mini). Submit from repo root
+# with HF_TOKEN exported:
 #   sbatch training_mitigations/slurm_scripts/run_eval_aita_flip_baselines.sbatch
 #
 # 12 array tasks, each on its own 2x a4000 (the 8B is sharded across the pair
@@ -12,29 +14,29 @@
 #   AITA          be-critical   : 2 shards of 1000 posts  (~500 gens) tasks 2-3
 #   AITA-NTA-FLIP base         : 4 shards of 1000 pairs  (~500 gens) tasks 4-7
 #   AITA-NTA-FLIP be-critical   : 4 shards of 1000 pairs  (~500 gens) tasks 8-11
-# Decode temp1.0/seed0, --sample-max-tokens 1536: the bare post emits its YTA/NTA
-# verdict well within 512, but the verbose "Be critical." responses need the
-# bigger budget to actually reach the trailing label instead of truncating into
-# an OTHER (which would bias the parsed denominator). The per-shard n_dropped_other
-# still records any response that never emits a verdict. Held-out ids come from the
-# prebuilt runs/baseline_<env>/test_ids.json (seed-0 split, same the trained runs
-# reuse; AITA order interleaved YTA/NTA so each contiguous shard is class-balanced).
+# Decode temp1.0/seed0, --sample-max-tokens 1536 (the verbose "Be critical."
+# responses need the bigger budget). Each shard writes aita_responses_<tag>_shardXofN.csv.
+# Held-out ids come from the prebuilt runs/baseline_<env>/test_ids.json (seed-0
+# split, same the trained runs reuse; AITA order interleaved YTA/NTA so each
+# contiguous shard is class-balanced).
 #
-# After the array finishes, recombine each (env, condition)'s shards (AITA: 2,
-# FLIP: 4) with aggregate_aita_shards.py, e.g.:
+# After the array finishes, run the classifier stage per (env, condition) to
+# produce the verdicts + metrics (needs OPENROUTER_API_KEY; CPU/login, no GPU):
 #   PY=/next/u/stephhk/miniconda3/envs/llm/bin/python
-#   $PY training_mitigations/eval/aggregate_aita_shards.py \
+#   $PY training_mitigations/eval/classify_aita_verdicts.py \
 #       --run-dir training_mitigations/runs/baseline_AITA \
-#       --env AITA --adapter-tag base --num-shards 2
-#   $PY training_mitigations/eval/aggregate_aita_shards.py \
+#       --env AITA --tag base_temp1.0_seed0 --num-shards 2
+#   $PY training_mitigations/eval/classify_aita_verdicts.py \
 #       --run-dir training_mitigations/runs/baseline_AITA \
-#       --env AITA --adapter-tag base-becritical --num-shards 2
-#   $PY training_mitigations/eval/aggregate_aita_shards.py \
+#       --env AITA --tag base-becritical_temp1.0_seed0 --num-shards 2
+#   $PY training_mitigations/eval/classify_aita_verdicts.py \
 #       --run-dir training_mitigations/runs/baseline_AITA-NTA-FLIP \
-#       --env AITA-NTA-FLIP --adapter-tag base --num-shards 4
-#   $PY training_mitigations/eval/aggregate_aita_shards.py \
+#       --env AITA-NTA-FLIP --tag base_temp1.0_seed0 --num-shards 4
+#   $PY training_mitigations/eval/classify_aita_verdicts.py \
 #       --run-dir training_mitigations/runs/baseline_AITA-NTA-FLIP \
-#       --env AITA-NTA-FLIP --adapter-tag base-becritical --num-shards 4
+#       --env AITA-NTA-FLIP --tag base-becritical_temp1.0_seed0 --num-shards 4
+# (classify_aita_verdicts.py writes aita_scored_* shards; aggregate_aita_shards.py
+# still re-aggregates those if you need a separate combine step.)
 
 #SBATCH --job-name=eval_aita_flip
 #SBATCH --account=next

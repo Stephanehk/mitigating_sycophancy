@@ -3,12 +3,14 @@
 # (run_train_aita_becritical_sft) on the CANONICAL test set (each SFT run dir's
 # test_ids.json == baseline_<env>/test_ids.json), so the SFT numbers sit on the
 # same 1000-prompt held-out as base / be-critical / explicit / sharma / dontbesyco
-# / perspective-shift. The student sees the BARE post + YTA/NTA nudge (no steer);
-# verdict parsed deterministically (parse_yta_nta). 2x a4000 via --device-map auto.
+# / perspective-shift. The student sees the BARE post (no steer, no verdict nudge);
+# this GPU array only samples responses. 2x a4000 via --device-map auto.
 # Gate afterok on run_train_aita_becritical_sft.
 #
 # 6 array tasks = AITA 2 shards + FLIP 4 shards. adapter==run_dir -> tag 'final'.
-# Aggregate after with aggregate_aita_shards.py --adapter-tag final per env.
+# After the array, run the verdict + metrics stage per env (needs OPENROUTER_API_KEY):
+#   classify_aita_verdicts.py --run-dir <sft_run> --env <ENV> \
+#       --tag final_temp1.0_seed0 --num-shards {2|4}
 
 #SBATCH --job-name=eval_aita_sft
 #SBATCH --account=next

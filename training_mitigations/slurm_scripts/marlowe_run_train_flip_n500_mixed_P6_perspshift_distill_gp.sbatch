@@ -6,12 +6,11 @@
 #
 # P6_perspshift_distill_gp recipe (mixed 2 model / 2 perspshift / 6 stakeholder,
 # --stakeholder-voice, RPO_ALPHA=1.0 distill, P6 bidirectional veto +
-# USER_STAKEHOLDER) on the AITA-NTA-FLIP env. The trainer appends the YTA/NTA
-# nudge to ALL 10 candidate samples including the 2 perspshift candidates, and
-# keeps it out of the rewrite/identify/concerns/veto/preference stages (see
-# core/trainer.py + test_aita_label_suffix.py). Each row is an (original,
-# flipped) PAIR -> two independent training prompts; eval metric = both-NTA
-# consistency across the pair.
+# USER_STAKEHOLDER) on the AITA-NTA-FLIP env. All candidates are free-form on the
+# BARE post (no output-format nudge); the YTA/NTA/UNCLEAR verdict is read from the
+# prose at eval time by classify_aita_verdicts.py (see
+# eval/eval_aita_label_heldout.py). Each row is an (original, flipped) PAIR -> two
+# independent training prompts; eval metric = both-NTA consistency across the pair.
 #
 # PERSPSHIFT_ASSESS=1: FLIP posts are long narratives (like OEQ/AITA). Remove to
 # match the PAS perspshift arm's candidate generation.

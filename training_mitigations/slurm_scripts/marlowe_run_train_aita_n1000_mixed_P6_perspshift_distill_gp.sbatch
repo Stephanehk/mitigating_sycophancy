@@ -6,11 +6,10 @@
 #
 # P6_perspshift_distill_gp recipe (mixed 2 model / 2 perspshift / 6 stakeholder,
 # --stakeholder-voice, RPO_ALPHA=1.0 distill, P6 bidirectional veto +
-# USER_STAKEHOLDER) on the AITA binary-verdict env. The trainer appends the
-# YTA/NTA nudge (label_suffix) to ALL 10 candidate samples INCLUDING the 2
-# perspshift candidates — whose third-person rewrite otherwise drops the nudge —
-# and keeps it OUT of the rewrite/identify/concerns/veto/preference stages (see
-# core/trainer.py + test_aita_label_suffix.py).
+# USER_STAKEHOLDER) on the AITA binary-verdict env. All candidates are free-form
+# on the BARE post (no output-format nudge); the YTA/NTA/UNCLEAR verdict is read
+# from the prose at eval time by classify_aita_verdicts.py, not self-emitted (see
+# eval/eval_aita_label_heldout.py + test_aita_bare_prompt.py).
 #
 # PERSPSHIFT_ASSESS=1: AITA posts are long narratives (like OEQ), so the
 # 'Assess this narrative.' addendum applies — UNLIKE PAS. Remove it if you want

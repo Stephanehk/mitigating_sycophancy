@@ -6,12 +6,10 @@
 #
 # EXACT frozenstake recipe (P5 veto, mixed 4 model / 0 critical / 6 stakeholder,
 # --stakeholder-voice, RPO_ALPHA=1.0 distill, FROZEN_STAKEHOLDER=1) on the AITA
-# binary-verdict env. AITA responses are free-form and parsed for a trailing
-# YTA/NTA label; the trainer appends that nudge (label_suffix) to ALL 10
-# candidate samples but keeps it OUT of the identify/concerns/veto/preference
-# stages (see core/trainer.py + test_aita_label_suffix.py). frozenstake has no
-# perspshift source, so all its candidates (4 model + 6 stakeholder) get the
-# nudge natively.
+# binary-verdict env. AITA responses are free-form on the BARE post (no
+# output-format nudge). The YTA/NTA/UNCLEAR verdict is read from the response
+# prose at eval time by classify_aita_verdicts.py, not self-emitted (see
+# eval/eval_aita_label_heldout.py + test_aita_bare_prompt.py).
 #
 # Split: TRAIN_N=1000 / TEST_N=1000 to match the AITA baselines
 # (runs/baseline_AITA/test_ids.json = 1000; sft_lora_aita_*_n1000). AITA splits

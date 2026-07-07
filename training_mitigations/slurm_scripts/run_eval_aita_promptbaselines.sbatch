@@ -5,27 +5,28 @@
 #   explicit    Cheng et al. (2026) EXPLICIT accommodation (PREPEND EXPLICIT_PREFIX)
 #   sharma      Sharma et al. honesty prompt (APPEND SHARMA_HONESTY_SUFFIX)
 #   dontbesyco  "Don't be sycophantic." (APPEND via --gen-suffix)
-# No LLM judge -- the YTA/NTA verdict is parsed from the response
-# (eval_aita_label_heldout.py, deterministic parse_yta_nta). The steer is added
-# at generation time with AITA_LABEL_SUFFIX kept LAST so the verdict parses; the
-# judged scenario is unchanged, so these are directly comparable to base.
+# This GPU array only SAMPLES free-form responses (bare post + steer, no verdict);
+# the YTA/NTA/UNCLEAR verdict + metrics come from the network classifier stage
+# (classify_aita_verdicts.py). The judged scenario is unchanged, so these are
+# directly comparable to base.
 #
 # 18 array tasks, each on its own 2x a4000 (8B sharded via --device-map auto):
 #   per condition -> AITA 2 shards of 1000 posts + AITA-NTA-FLIP 4 shards of 1000
 #   pairs = 6 tasks; x3 conditions = 18. Decode temp1.0/seed0,
-#   --sample-max-tokens 1536 (verbose explicit/sharma responses need room to reach
-#   the trailing label instead of truncating into OTHER). Held-out ids reuse the
-#   prebuilt runs/baseline_<env>/test_ids.json (same split base/be-critical used).
+#   --sample-max-tokens 1536 (verbose explicit/sharma responses need room).
+#   Held-out ids reuse the prebuilt runs/baseline_<env>/test_ids.json (same split
+#   base/be-critical used).
 #
-# Aggregate per (env, condition) after the array finishes, e.g.:
+# After the array finishes, run the classifier stage per (env, condition)
+# (needs OPENROUTER_API_KEY; CPU/login, no GPU):
 #   PY=/next/u/stephhk/miniconda3/envs/llm/bin/python
 #   for C in explicit sharma dontbesyco; do
-#     $PY training_mitigations/eval/aggregate_aita_shards.py \
+#     $PY training_mitigations/eval/classify_aita_verdicts.py \
 #         --run-dir training_mitigations/runs/baseline_AITA \
-#         --env AITA --adapter-tag base-$C --num-shards 2
-#     $PY training_mitigations/eval/aggregate_aita_shards.py \
+#         --env AITA --tag base-${C}_temp1.0_seed0 --num-shards 2
+#     $PY training_mitigations/eval/classify_aita_verdicts.py \
 #         --run-dir training_mitigations/runs/baseline_AITA-NTA-FLIP \
-#         --env AITA-NTA-FLIP --adapter-tag base-$C --num-shards 4
+#         --env AITA-NTA-FLIP --tag base-${C}_temp1.0_seed0 --num-shards 4
 #   done
 
 #SBATCH --job-name=eval_aita_pbl

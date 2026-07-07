@@ -3,7 +3,7 @@
 # FLIP: sample ONE response per TRAIN prompt from the UNTRAINED base Qwen3-8B with
 # "\n\nBe critical." appended (eval_aita_label_heldout.py --base --be-critical
 # --teacher-out). The teacher CSV records `sentence` = the BARE student surface
-# (post + AITA_LABEL_SUFFIX, NO steer) and `response` = the critical target, so
+# (the post, NO steer, no verdict nudge) and `response` = the critical target, so
 # the SFT step (run_train_aita_becritical_sft) distills bare-prompt -> critical.
 # AITA-NTA-FLIP emits TWO teacher rows per pair (original + flipped).
 #
