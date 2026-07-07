@@ -13,8 +13,14 @@
 #   PAS   osfstorage-archive/Data/PAS_results/endorse4_elephant_oeq_pas_claude.csv (~25M,
 #         usually already on Marlowe from prior PAS runs — set SKIP_PAS=1 to omit)
 #
+# The push hop uses ONE `sftp` batch instead of `ssh host mkdir` + `scp`, because
+# Marlowe's login node authenticates but then closes non-interactive remote
+# COMMAND execution (`ssh host "mkdir ..."` -> "Connection closed"). The SFTP
+# subsystem is still permitted, so we make dirs and upload over sftp — which also
+# means Marlowe prompts for password/Duo only ONCE for the whole push.
+#
 # Usage (on your laptop). MARLOWE_HOST defaults to login-01.marlowe.stanford.edu:
-#   NEXT_HOST=you@next-login.stanford.edu \
+#   NEXT_HOST=stephhk@scdt.stanford.edu \
 #   [MARLOWE_HOST=stephhk@login-01.marlowe.stanford.edu] \
 #   [NEXT_REPO=/next/u/stephhk/sycophancy] \
 #   [MARLOWE_REPO=/projects/m000254/sycophancy] \
@@ -41,19 +47,42 @@ echo "[relay] stage   : $STAGE (local)"
 echo "[relay] marlowe : $MARLOWE_HOST:$MARLOWE_REPO"
 echo
 
+# --- Hop 1: next -> laptop (scp per file; next is key-based, no Duo). ---
+# Skip a file that is already staged at the exact same byte size (lets a re-run
+# after a failed push avoid re-pulling the 175M aita_clean.csv).
 for rel in "${CSVS[@]}"; do
     local_path="$STAGE/$rel"
     mkdir -p "$(dirname "$local_path")"
-
-    # Hop 1: next -> laptop. (Swap to `rsync -avhP` for a resumable pull.)
+    remote_size=$(ssh "$NEXT_HOST" "stat -c%s '$NEXT_REPO/$rel'" 2>/dev/null || echo "")
+    if [[ -f "$local_path" && -n "$remote_size" ]]; then
+        local_size=$(wc -c < "$local_path" | tr -d ' ')
+        if [[ "$local_size" == "$remote_size" ]]; then
+            echo "[relay] pull  $rel  (already staged, $local_size bytes — skip)"
+            continue
+        fi
+    fi
     echo "[relay] pull  $rel"
     scp -p "$NEXT_HOST:$NEXT_REPO/$rel" "$local_path"
-
-    # Hop 2: laptop -> Marlowe, recreating the repo-relative dir remotely.
-    echo "[relay] push  $rel  ($(du -h "$local_path" | cut -f1))"
-    ssh "$MARLOWE_HOST" "mkdir -p '$MARLOWE_REPO/$(dirname "$rel")'"
-    scp -p "$local_path" "$MARLOWE_HOST:$MARLOWE_REPO/$(dirname "$rel")/"
 done
+
+# --- Hop 2: laptop -> Marlowe, ONE sftp batch (subsystem, not remote-exec). ---
+# Build a batch that -mkdir's each dir component (leading '-' => ignore "exists")
+# then put's each file at its full repo-relative path.
+batch=$(mktemp)
+for rel in "${CSVS[@]}"; do
+    dir="$(dirname "$rel")"
+    path="$MARLOWE_REPO"
+    IFS='/' read -ra parts <<< "$dir"
+    for p in "${parts[@]}"; do
+        path="$path/$p"
+        echo "-mkdir $path" >> "$batch"
+    done
+    echo "put $STAGE/$rel $MARLOWE_REPO/$rel" >> "$batch"
+done
+
+echo "[relay] push $(printf '%s ' "${CSVS[@]}")-> Marlowe (single sftp session)"
+sftp -b "$batch" "$MARLOWE_HOST"
+rm -f "$batch"
 
 if [[ "${KEEP_STAGE:-0}" == "1" ]]; then
     echo "[relay] kept local stage at $STAGE"
