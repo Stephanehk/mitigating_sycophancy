@@ -15,13 +15,13 @@
 #
 # Usage:
 #   MARLOWE_HOST=you@marlowe-login \
-#   [MARLOWE_REPO=/projects/m000254/mitigating_sycophancy] \
+#   [MARLOWE_REPO=/projects/m000254/sycophancy] \
 #   [SKIP_PAS=1] \
 #   bash training_mitigations/slurm_scripts/scp_env_csvs_to_marlowe.sh
 set -euo pipefail
 
-: "${MARLOWE_HOST:?set MARLOWE_HOST=user@marlowe-login-hostname}"
-MARLOWE_REPO="${MARLOWE_REPO:-/projects/m000254/mitigating_sycophancy}"
+MARLOWE_HOST="${MARLOWE_HOST:-stephhk@login-01.marlowe.stanford.edu}"
+MARLOWE_REPO="${MARLOWE_REPO:-/projects/m000254/sycophancy}"
 
 # Source repo root (this script lives two dirs under it).
 SRC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

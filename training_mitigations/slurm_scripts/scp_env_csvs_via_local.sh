@@ -13,19 +13,19 @@
 #   PAS   osfstorage-archive/Data/PAS_results/endorse4_elephant_oeq_pas_claude.csv (~25M,
 #         usually already on Marlowe from prior PAS runs — set SKIP_PAS=1 to omit)
 #
-# Usage (on your laptop):
+# Usage (on your laptop). MARLOWE_HOST defaults to login-01.marlowe.stanford.edu:
 #   NEXT_HOST=you@next-login.stanford.edu \
-#   MARLOWE_HOST=you@marlowe-login \
+#   [MARLOWE_HOST=stephhk@login-01.marlowe.stanford.edu] \
 #   [NEXT_REPO=/next/u/stephhk/sycophancy] \
-#   [MARLOWE_REPO=/projects/m000254/mitigating_sycophancy] \
+#   [MARLOWE_REPO=/projects/m000254/sycophancy] \
 #   [STAGE=./marlowe_csv_stage] [KEEP_STAGE=1] [SKIP_PAS=1] \
 #   bash scp_env_csvs_via_local.sh
 set -euo pipefail
 
 : "${NEXT_HOST:?set NEXT_HOST=user@next-login-hostname}"
-: "${MARLOWE_HOST:?set MARLOWE_HOST=user@marlowe-login-hostname}"
+MARLOWE_HOST="${MARLOWE_HOST:-stephhk@login-01.marlowe.stanford.edu}"
 NEXT_REPO="${NEXT_REPO:-/next/u/stephhk/sycophancy}"
-MARLOWE_REPO="${MARLOWE_REPO:-/projects/m000254/mitigating_sycophancy}"
+MARLOWE_REPO="${MARLOWE_REPO:-/projects/m000254/sycophancy}"
 STAGE="${STAGE:-./marlowe_csv_stage}"
 
 CSVS=(

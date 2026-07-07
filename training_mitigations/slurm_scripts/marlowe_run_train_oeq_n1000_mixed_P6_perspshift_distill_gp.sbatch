@@ -2,7 +2,7 @@
 # Marlowe `preempt`-partition OEQ P6_perspshift_distill_gp run.
 # Submit from anywhere (paths are absolute):
 #   export HF_TOKEN=...        # Qwen3-8B is gated
-#   sbatch /projects/m000254/mitigating_sycophancy/training_mitigations/slurm_scripts/marlowe_run_train_oeq_n1000_mixed_P6_perspshift_distill_gp.sbatch
+#   sbatch /projects/m000254/sycophancy/training_mitigations/slurm_scripts/marlowe_run_train_oeq_n1000_mixed_P6_perspshift_distill_gp.sbatch
 #
 # EXACT clone of marlowe_run_train_oeq_n1000_mixed_P5_perspshift_distill_gp.sbatch
 # (same mixed 2 model / 2 perspshift / 6 stakeholder recipe, RPO_ALPHA=1.0 distill
@@ -50,4 +50,4 @@ PERSPSHIFT_ASSESS=1
 STAKEHOLDER_VOICE=1
 VETO_PROMPT=P6
 USER_STAKEHOLDER=1
-source /projects/m000254/mitigating_sycophancy/training_mitigations/slurm_scripts/_marlowe_dpo_body.sh
+source /projects/m000254/sycophancy/training_mitigations/slurm_scripts/_marlowe_dpo_body.sh

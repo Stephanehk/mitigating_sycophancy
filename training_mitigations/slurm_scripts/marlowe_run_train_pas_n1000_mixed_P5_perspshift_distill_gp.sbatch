@@ -2,7 +2,7 @@
 # Marlowe `preempt`-partition PAS P5_perspshift_distill_gp run.
 # Submit from anywhere (paths are absolute):
 #   export HF_TOKEN=...        # Qwen3-8B is gated
-#   sbatch /projects/m000254/mitigating_sycophancy/training_mitigations/slurm_scripts/marlowe_run_train_pas_n1000_mixed_P5_perspshift_distill_gp.sbatch
+#   sbatch /projects/m000254/sycophancy/training_mitigations/slurm_scripts/marlowe_run_train_pas_n1000_mixed_P5_perspshift_distill_gp.sbatch
 #
 # Training config: P5 veto, mixed sampling 2 model / 2 perspshift / 6 stakeholder,
 # with THREE interventions stacked (all wired via _marlowe_dpo_body.sh env knobs):
@@ -42,4 +42,4 @@ N_SOURCE_MODEL=2
 N_SOURCE_CRITICAL=2
 PERSPSHIFT=1
 STAKEHOLDER_VOICE=1
-source /projects/m000254/mitigating_sycophancy/training_mitigations/slurm_scripts/_marlowe_dpo_body.sh
+source /projects/m000254/sycophancy/training_mitigations/slurm_scripts/_marlowe_dpo_body.sh

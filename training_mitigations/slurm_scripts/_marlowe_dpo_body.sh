@@ -16,7 +16,7 @@ set -uo pipefail
 
 # ===================== EDIT FOR YOUR MARLOWE SITE =====================
 PROJECT=m000254                                  # your Marlowe project ID
-REPO=/projects/$PROJECT/mitigating_sycophancy    # where you put the repo
+REPO=/projects/$PROJECT/sycophancy               # where you put the repo
 ENV_PREFIX=/projects/$PROJECT/envs/llm126        # cu126 conda env (matches Marlowe's r565/CUDA-12.7 driver)
 export HF_HOME=/projects/$PROJECT/hf_cache       # HF model cache (1T projects quota)
 RUNS_ROOT=/projects/$PROJECT/runs                 # training outputs

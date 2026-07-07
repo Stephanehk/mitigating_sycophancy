@@ -2,7 +2,7 @@
 # Marlowe `hero`-partition variant of the OEQ P5_nocrit_distill run.
 # Submit from anywhere (paths are absolute):
 #   export HF_TOKEN=...        # Qwen3-8B is gated
-#   sbatch /projects/m000254/mitigating_sycophancy/training_mitigations/slurm_scripts/marlowe_hero_run_train_oeq_n1000_mixed_P5_nocrit_distill.sbatch
+#   sbatch /projects/m000254/sycophancy/training_mitigations/slurm_scripts/marlowe_hero_run_train_oeq_n1000_mixed_P5_nocrit_distill.sbatch
 #
 # Training config: P5 veto, mixed sampling 4 model / 0 critical / 6 stakeholder,
 # RPO_ALPHA=1.0 SFT-on-chosen term (total = DPO + 1.0 * mean-token CE(chosen)),
@@ -33,4 +33,4 @@ RUN_ENV=OEQ
 OUT_NAME=dpo_lora_oeq_qwen3-8b_n1000_mixed_P5_nocrit_distill
 SELF_BASENAME=marlowe_hero_run_train_oeq_n1000_mixed_P5_nocrit_distill.sbatch
 RPO_ALPHA=1.0
-source /projects/m000254/mitigating_sycophancy/training_mitigations/slurm_scripts/_marlowe_dpo_body.sh
+source /projects/m000254/sycophancy/training_mitigations/slurm_scripts/_marlowe_dpo_body.sh

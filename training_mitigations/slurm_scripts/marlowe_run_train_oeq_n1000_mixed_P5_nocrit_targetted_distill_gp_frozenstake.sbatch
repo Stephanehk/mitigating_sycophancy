@@ -2,7 +2,7 @@
 # Marlowe `preempt`-partition OEQ P5_nocrit_targetted_distill_gp_frozenstake run.
 # Submit from anywhere (paths are absolute):
 #   export HF_TOKEN=...        # Qwen3-8B is gated
-#   sbatch /projects/m000254/mitigating_sycophancy/training_mitigations/slurm_scripts/marlowe_run_train_oeq_n1000_mixed_P5_nocrit_targetted_distill_gp_frozenstake.sbatch
+#   sbatch /projects/m000254/sycophancy/training_mitigations/slurm_scripts/marlowe_run_train_oeq_n1000_mixed_P5_nocrit_targetted_distill_gp_frozenstake.sbatch
 #
 # EXACTLY the nocrit_distill_gp_frozenstake recipe (P5 veto, mixed 4 model / 0
 # critical / 6 stakeholder, --stakeholder-voice, FROZEN_STAKEHOLDER=1,
@@ -46,4 +46,4 @@ STAKEHOLDER_VOICE=1
 FROZEN_STAKEHOLDER=1
 DISTILL_SELF_ONLY=1
 DISTILL_MAX_PER_PROMPT=4
-source /projects/m000254/mitigating_sycophancy/training_mitigations/slurm_scripts/_marlowe_dpo_body.sh
+source /projects/m000254/sycophancy/training_mitigations/slurm_scripts/_marlowe_dpo_body.sh
