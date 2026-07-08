@@ -33,19 +33,24 @@
 # recorded as source "stakeholder-base:<name>" in responses_*.jsonl so the freeze
 # is auditable. See core/trainer.py (_generate_n use_base / _sample_responses_mixed).
 #
-# preempt partition: MaxTime=04:00:00 (4h), GraceTime=900 (15min), preemptible.
-# SELF-RESUBMITTING 4h chain (the body queues an afterany successor each window),
-# resumable via responses_iter_*.jsonl + --dpo-save-steps checkpoints. All site
-# paths + the recipe knobs live in _marlowe_dpo_body.sh.
+# free/batch partition: MaxTime=2-00:00:00, PreemptMode=OFF -- these runs are NOT
+# preemptible. The award account's `preempt` partition (what every older training
+# wrapper uses) has PreemptMode=SUSPEND and preempted 42% of this project's OEQ
+# windows; `batch` removes that entirely. The free award has 5000 GPU-h and ~258
+# used, so a ~106 GPU-h sweep costs ~2%. --time=24h comfortably covers the longest
+# observed chain (11.2h), so the self-resubmit chain in _marlowe_dpo_body.sh should
+# never fire; if it does (hardware failure), the successor resumes from
+# responses_iter_*.jsonl + --dpo-save-steps checkpoints exactly as before, and
+# no-ops once .complete exists.
 #SBATCH --job-name=dpo_oeq_n1000_mixed_P5_nocrit_distill_gp_frozenstake_rpo0p5
-#SBATCH --account=marlowe-m000254
-#SBATCH --partition=preempt
+#SBATCH --account=marlowe-m000254-free
+#SBATCH --partition=batch
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus=2
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=200G
-#SBATCH --time=04:00:00
+#SBATCH --time=24:00:00
 #SBATCH --signal=B:USR1@300
 #SBATCH --no-requeue
 #SBATCH --open-mode=append
