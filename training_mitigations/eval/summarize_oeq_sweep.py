@@ -43,7 +43,6 @@ ARMS = [
     ("dpo_lora_oeq_qwen3-8b_n1000_mixed_P6_perspshift_distill_gp_rpo0p25",         "oeq_P6perspshift_a025_final1000",  "0.25", "P6_perspshift"),
     ("dpo_lora_oeq_qwen3-8b_n1000_mixed_P6_perspshift_distill_gp_rpo0p5",          "oeq_P6perspshift_a05_final1000",   "0.5",  "P6_perspshift"),
     ("dpo_lora_oeq_qwen3-8b_n1000_mixed_P6_perspshift_distill_gp",                 "oeq_P6perspshift_a1_final1000",    "1.0",  "P6_perspshift"),
-    ("dpo_lora_oeq_qwen3-8b_n1000_mixed_P5_nocrit_gp_frozenstake",                 "oeq_frozenstake_a0_final1000",     "0",    "frozenstake"),
     ("dpo_lora_oeq_qwen3-8b_n1000_mixed_P5_nocrit_distill_gp_frozenstake_rpo0p25", "oeq_frozenstake_a025_final1000",   "0.25", "frozenstake"),
     ("dpo_lora_oeq_qwen3-8b_n1000_mixed_P5_nocrit_distill_gp_frozenstake_rpo0p5",  "oeq_frozenstake_a05_final1000",    "0.5",  "frozenstake"),
     ("dpo_lora_oeq_qwen3-8b_n1000_mixed_P5_nocrit_distill_gp_frozenstake",         "oeq_frozenstake_a1_final1000",     "1.0",  "frozenstake"),

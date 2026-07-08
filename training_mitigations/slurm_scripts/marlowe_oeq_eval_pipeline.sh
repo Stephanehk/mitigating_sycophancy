@@ -50,7 +50,12 @@ declare -A ARMS=(
   [dpo_lora_oeq_qwen3-8b_n1000_mixed_P6_perspshift_gp]=sweep
   [dpo_lora_oeq_qwen3-8b_n1000_mixed_P6_perspshift_distill_gp_rpo0p25]=sweep
   [dpo_lora_oeq_qwen3-8b_n1000_mixed_P6_perspshift_distill_gp_rpo0p5]=sweep
-  [dpo_lora_oeq_qwen3-8b_n1000_mixed_P5_nocrit_gp_frozenstake]=sweep
+  # NOTE: P5_nocrit_gp_frozenstake (alpha=0) is deliberately NOT run. Its wrapper
+  # exists (marlowe_run_train_oeq_n1000_mixed_P5_nocrit_gp_frozenstake.sbatch) but
+  # the arm was cancelled; the frozenstake curve is therefore alpha in {0.25,0.5,1.0}
+  # with no zero, so the distill hypothesis is slope-measurable but not falsifiable
+  # for that recipe. If you re-add it, add it to marlowe_endorse_judge_all.sh's
+  # OEQ_ALPHA_SWEEP and summarize_oeq_sweep.py's ARMS too -- all three must agree.
   [dpo_lora_oeq_qwen3-8b_n1000_mixed_P5_nocrit_distill_gp_frozenstake_rpo0p25]=sweep
   [dpo_lora_oeq_qwen3-8b_n1000_mixed_P5_nocrit_distill_gp_frozenstake_rpo0p5]=sweep
   # --- alpha=1.0 references (already trained) ---
@@ -58,6 +63,22 @@ declare -A ARMS=(
   [dpo_lora_oeq_qwen3-8b_n1000_mixed_P5_nocrit_distill_gp_frozenstake]=ref
   [dpo_lora_oeq_qwen3-8b_n1000_mixed_P5_perspshift_distill_gp]=ref
 )
+
+SHARD0='eval/responses_final_final1000_temp1.0_seed0_shard0of2.csv'
+SHARD1='eval/responses_final_final1000_temp1.0_seed0_shard1of2.csv'
+gen_done(){ [[ -f "$RUNS_ROOT/$1/$SHARD0" && -f "$RUNS_ROOT/$1/$SHARD1" ]]; }
+
+# ---------------- phase 0: adopt any in-flight generation ----------------
+# RESTART SAFETY. This driver may be relaunched after being killed (e.g. the arm
+# list changed). A previous instance may have left genoeq_* arrays RUNNING; those
+# jobs are writing into <run>/eval/. Resubmitting gen for the same run while they
+# are in flight would have two jobs writing the same csv. Wait them out, then let
+# phase 1's gen_done() guard skip whatever they finished.
+if squeue -u "$USER" -h -o "%j" | grep -q '^genoeq_'; then
+  log "phase 0: in-flight genoeq_* from a previous driver — waiting them out"
+  while squeue -u "$USER" -h -o "%j" | grep -q '^genoeq_'; do sleep 120; done
+  log "phase 0: previous generations finished"
+fi
 
 # ---------------- phase 1: wait for training, submit gen per arm ----------------
 declare -A GENJOB
@@ -79,12 +100,16 @@ print(f"[leak] {run.split('/')[-1]}: heldout∩train = {n}")
 sys.exit(1 if n else 0)
 PY
       if (( $? != 0 )); then log "ABORT: leakage, heldout ids overlap $arm train_ids"; exit 1; fi
-      log "trained: $arm -> submitting gen"
-      jid=$(GEN_RUNDIR="$RUNS_ROOT/$arm" GEN_ENV=OEQ GEN_IDS="$OEQ1000" \
-            sbatch --parsable --job-name="genoeq_${arm: -18}" \
-            --export=ALL,GEN_RUNDIR,GEN_ENV,GEN_IDS "$GEN")
-      GENJOB[$arm]=$jid
-      log "  gen array = $jid"
+      if gen_done "$arm"; then
+        log "trained: $arm -> gen already complete (both shards present), skipping submit"
+      else
+        log "trained: $arm -> submitting gen"
+        jid=$(GEN_RUNDIR="$RUNS_ROOT/$arm" GEN_ENV=OEQ GEN_IDS="$OEQ1000" \
+              sbatch --parsable --job-name="genoeq_${arm: -18}" \
+              --export=ALL,GEN_RUNDIR,GEN_ENV,GEN_IDS "$GEN")
+        GENJOB[$arm]=$jid
+        log "  gen array = $jid"
+      fi
     else
       still+=("$arm")
     fi
