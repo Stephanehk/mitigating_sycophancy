@@ -9,12 +9,13 @@
 #       > /projects/m000254/logs/oeq_pipeline.log 2>&1 &
 #
 # WHY POLL .complete INSTEAD OF sbatch --dependency=afterok:
-# training runs as a SELF-RESUBMITTING preempt chain (_marlowe_dpo_body.sh queues
-# an afterany successor each 4h window). The job id we submit is only the FIRST
-# link, and it terminates non-zero on preemption -- an afterok on it would never
-# release, and an afterany would fire while the chain is still running. The chain
-# writes $OUT_DIR/.complete exactly once, after the final adapter is saved. That
-# marker is the only reliable completion signal. (eval_pipeline.sh does the same.)
+# _marlowe_dpo_body.sh queues an afterany successor up front on every launch, so the
+# job id we submit is only the FIRST link of a chain. An afterok on it would never
+# release if that link dies; an afterany would fire while the chain is still running.
+# (The 6 sweep arms now run on free/batch with PreemptMode=OFF and a 24h limit, so the
+# chain should never actually resubmit -- but the successor job still exists, and the
+# driver must not key off it.) The chain writes $OUT_DIR/.complete exactly once, after
+# the final adapter is saved. That marker is the only reliable completion signal.
 set -uo pipefail
 
 PROJECT=m000254
@@ -40,12 +41,13 @@ except AssertionError as e:
     print("FATAL:", e); print("Restore the OEQ csv before running this pipeline."); sys.exit(1)
 PY
 
-# Every arm the pipeline generates + judges. The 7 SWEEP arms are being trained now;
-# the 3 REF arms (alpha=1.0) finished training 2026-07-03..05 and already carry
-# .complete, so phase 1 submits their generation on the first poll -- they are the
-# top of each dose-response curve and had NO eval until now (the OEQ csv was missing).
+# The 6 arms this pipeline covers -- exactly the OEQ training jobs being run, and
+# nothing else. The already-trained alpha=1.0 adapters (P6_perspshift_distill_gp,
+# P5_nocrit_distill_gp_frozenstake, P5_perspshift_distill_gp) are deliberately NOT
+# generated or judged here. Consequence: the sweep has no alpha=1.0 endpoint, so the
+# alpha trend is measured only over {0, 0.25, 0.5}. Add them back to this map AND to
+# marlowe_endorse_judge_all.sh AND to summarize_oeq_sweep.py if that changes.
 declare -A ARMS=(
-  # --- sweep (training now) ---
   [dpo_lora_oeq_qwen3-8b_n1000_mixed_P5_perspshift_gp]=sweep
   [dpo_lora_oeq_qwen3-8b_n1000_mixed_P6_perspshift_gp]=sweep
   [dpo_lora_oeq_qwen3-8b_n1000_mixed_P6_perspshift_distill_gp_rpo0p25]=sweep
@@ -58,10 +60,6 @@ declare -A ARMS=(
   # OEQ_ALPHA_SWEEP and summarize_oeq_sweep.py's ARMS too -- all three must agree.
   [dpo_lora_oeq_qwen3-8b_n1000_mixed_P5_nocrit_distill_gp_frozenstake_rpo0p25]=sweep
   [dpo_lora_oeq_qwen3-8b_n1000_mixed_P5_nocrit_distill_gp_frozenstake_rpo0p5]=sweep
-  # --- alpha=1.0 references (already trained) ---
-  [dpo_lora_oeq_qwen3-8b_n1000_mixed_P6_perspshift_distill_gp]=ref
-  [dpo_lora_oeq_qwen3-8b_n1000_mixed_P5_nocrit_distill_gp_frozenstake]=ref
-  [dpo_lora_oeq_qwen3-8b_n1000_mixed_P5_perspshift_distill_gp]=ref
 )
 
 SHARD0='eval/responses_final_final1000_temp1.0_seed0_shard0of2.csv'
@@ -144,7 +142,7 @@ done
 (( missing )) && { log "ABORT: generation incomplete; not judging."; exit 1; }
 
 log "all shards present -> gpt-5-mini action-endorsement judge (v5)"
-bash "$JUDGE" oeq_all      # 7 sweep arms + the 3 alpha=1.0 references
+bash "$JUDGE" oeq_alpha_sweep   # the 6 arms trained by this sweep, nothing else
 log "endorse judge complete -> sycoharm_runs/endorse_gpt5mini_v5/"
 
 # ---------------- phase 4: voice census ----------------
