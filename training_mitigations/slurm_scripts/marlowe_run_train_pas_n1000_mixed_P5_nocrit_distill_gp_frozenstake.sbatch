@@ -11,14 +11,14 @@
 # machinery is inert here (label_suffix="" for PAS) — this is the OEQ frozenstake
 # wrapper with RUN_ENV=PAS. Split: default 1000 train / 500 test.
 #SBATCH --job-name=dpo_pas_n1000_mixed_P5_nocrit_distill_gp_frozenstake
-#SBATCH --account=marlowe-m000254
-#SBATCH --partition=preempt
+#SBATCH --account=marlowe-m000254-free
+#SBATCH --partition=batch
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus=2
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=200G
-#SBATCH --time=04:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --signal=B:USR1@300
 #SBATCH --no-requeue
 #SBATCH --open-mode=append

@@ -19,14 +19,14 @@
 # (runs/baseline_AITA/test_ids.json = 1000). Balanced 50/50 on is_asshole at
 # --seed 0; confirm it reproduces the baseline held-out set before comparing.
 #SBATCH --job-name=dpo_aita_n1000_mixed_P6_perspshift_distill_gp
-#SBATCH --account=marlowe-m000254
-#SBATCH --partition=preempt
+#SBATCH --account=marlowe-m000254-free
+#SBATCH --partition=batch
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus=2
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=200G
-#SBATCH --time=04:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --signal=B:USR1@300
 #SBATCH --no-requeue
 #SBATCH --open-mode=append

@@ -10,14 +10,14 @@
 # (label machinery inert, label_suffix=""). PAS does NOT set PERSPSHIFT_ASSESS
 # (that OEQ-only addendum is for long narratives). Split: default 1000 / 500.
 #SBATCH --job-name=dpo_pas_n1000_mixed_P6_perspshift_distill_gp
-#SBATCH --account=marlowe-m000254
-#SBATCH --partition=preempt
+#SBATCH --account=marlowe-m000254-free
+#SBATCH --partition=batch
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus=2
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=200G
-#SBATCH --time=04:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --signal=B:USR1@300
 #SBATCH --no-requeue
 #SBATCH --open-mode=append

@@ -17,14 +17,14 @@
 # Confirm the seed-0 pair split reproduces the baseline held-out set before
 # comparing consistency head-to-head.
 #SBATCH --job-name=dpo_flip_n500_mixed_P5_nocrit_distill_gp_frozenstake
-#SBATCH --account=marlowe-m000254
-#SBATCH --partition=preempt
+#SBATCH --account=marlowe-m000254-free
+#SBATCH --partition=batch
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus=2
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=200G
-#SBATCH --time=04:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --signal=B:USR1@300
 #SBATCH --no-requeue
 #SBATCH --open-mode=append

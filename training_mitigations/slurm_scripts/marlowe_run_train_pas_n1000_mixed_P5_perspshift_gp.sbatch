@@ -33,19 +33,19 @@
 # distill_gp wrapper omits it too. Kept identical so this is a clean 1-knob ablation.
 # The DPO prompt column stays the bare first-person sentence throughout.
 #
-# preempt partition: MaxTime=04:00:00 (4h), GraceTime=900 (15min), preemptible.
-# SELF-RESUBMITTING 4h chain (the body queues an afterany successor each window),
-# resumable via responses_iter_*.jsonl + --dpo-save-steps checkpoints. All site
-# paths + the recipe knobs live in _marlowe_dpo_body.sh.
+# free/batch partition: MaxTime=2-00:00:00, PreemptMode=OFF -- not preemptible.
+# The self-resubmit chain in _marlowe_dpo_body.sh stays wired but should never fire
+# within the 24h limit; if it does, it resumes from responses_iter_*.jsonl +
+# --dpo-save-steps checkpoints and no-ops once .complete exists.
 #SBATCH --job-name=dpo_pas_n1000_mixed_P5_perspshift_gp
-#SBATCH --account=marlowe-m000254
-#SBATCH --partition=preempt
+#SBATCH --account=marlowe-m000254-free
+#SBATCH --partition=batch
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gpus=2
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=200G
-#SBATCH --time=04:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --signal=B:USR1@300
 #SBATCH --no-requeue
 #SBATCH --open-mode=append
