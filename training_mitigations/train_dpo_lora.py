@@ -345,11 +345,17 @@ def main():
     )
     parser.add_argument(
         "--train-n", type=int, required=True,
-        help="number of training prompts",
+        help="number of training prompts (IGNORED under --use-final-data)",
     )
     parser.add_argument(
         "--test-n", type=int, required=True,
-        help="number of held-out test prompts",
+        help="number of held-out test prompts (IGNORED under --use-final-data)",
+    )
+    parser.add_argument(
+        "--use-final-data", action="store_true",
+        help="train/eval on the frozen final_training_eval_data/ split for "
+             "--env instead of the seed-derived sample; --train-n/--test-n/"
+             "--seed are ignored (sizes come from the id files).",
     )
     parser.add_argument(
         "--n-samples", type=int, default=10,
@@ -667,8 +673,14 @@ def main():
     else:
         train_df, test_df = _split_train_test(
             args.env, data, args.train_n, args.test_n, args.seed,
+            use_final_data=args.use_final_data,
         )
-        print(f"[data] held out test_n={len(test_df)}  train_n={len(train_df)}  seed={args.seed}")
+        if args.use_final_data:
+            print(f"[data] FINAL split for {args.env}: "
+                  f"test_n={len(test_df)}  train_n={len(train_df)} "
+                  f"(from final_training_eval_data/; --train-n/--test-n/--seed ignored)")
+        else:
+            print(f"[data] held out test_n={len(test_df)}  train_n={len(train_df)}  seed={args.seed}")
         test_ids_path = os.path.join(args.output_dir, "test_ids.json")
         _write_ids(test_ids_path, test_df)
         _write_ids(train_ids_path, train_df)

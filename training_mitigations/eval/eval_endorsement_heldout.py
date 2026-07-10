@@ -57,6 +57,7 @@ sys.path.insert(0, os.path.join(_HERE, "core"))
 from explore_mitigations import OEQ_DATA_CSV, PAS_DATA_CSV, load_oeq, load_pas
 from llama_local import DEFAULT_HF_MODEL_ID, load_llama, build_chat_input
 from perspective_shift import perspective_shift_post
+from train_data import final_ids_path
 
 import importlib.util
 
@@ -285,6 +286,16 @@ def main():
                              "overriding <run-dir>/test_ids.json (e.g. a fresh "
                              "disjoint held-out sample or a combined set). The "
                              "ids must resolve in the env CSV.")
+    parser.add_argument("--use-final-data", action="store_true",
+                        help="evaluate on the frozen final_training_eval_data/ "
+                             "split for the env (see --final-split) instead of "
+                             "<run-dir>/test_ids.json. Mutually exclusive with "
+                             "--test-ids-file.")
+    parser.add_argument("--final-split", choices=("test", "train"), default="test",
+                        help="which final split to load under --use-final-data: "
+                             "'test' (default; the held-out eval) or 'train' "
+                             "(used to generate SFT be-critical teacher targets "
+                             "over the final train prompts).")
     parser.add_argument("--n", type=int, default=None,
                         help="limit to the first N held-out prompts (default: all)")
     parser.add_argument("--num-shards", type=int, default=1,
@@ -329,6 +340,12 @@ def main():
 
     assert not (args.base and args.adapter), "--base and --adapter are mutually exclusive"
     env = args.env or infer_env_from_run_dir(args.run_dir)
+    if args.use_final_data:
+        assert args.test_ids_file is None, \
+            "--use-final-data and --test-ids-file are mutually exclusive"
+        args.test_ids_file = final_ids_path(env, args.final_split)
+        print(f"[data] FINAL {args.final_split} split for {env}: "
+              f"{args.test_ids_file}")
 
     # Build the judge client FIRST so missing Azure creds fail before GPU work.
     # Skipped entirely under --no-judge (generation-only): no Azure dependency.

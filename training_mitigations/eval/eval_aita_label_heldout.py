@@ -75,6 +75,7 @@ from perspective_shift import perspective_shift_post
 # Reuse the sibling eval's generation + adapter + shard helpers verbatim so the
 # decoding path is identical to the OEQ/PAS eval (single source of truth).
 from eval_endorsement_heldout import generate_one, attach_adapter, shard_slice
+from train_data import final_ids_path
 
 
 # --- env / data ------------------------------------------------------------
@@ -216,6 +217,16 @@ def main():
     parser.add_argument("--test-ids-file", default=None,
                         help="explicit JSON list of held-out ids to evaluate, "
                              "overriding <run-dir>/test_ids.json")
+    parser.add_argument("--use-final-data", action="store_true",
+                        help="evaluate on the frozen final_training_eval_data/ "
+                             "split for the env (see --final-split) instead of "
+                             "<run-dir>/test_ids.json. Mutually exclusive with "
+                             "--test-ids-file.")
+    parser.add_argument("--final-split", choices=("test", "train"), default="test",
+                        help="which final split to load under --use-final-data: "
+                             "'test' (default; the held-out eval) or 'train' "
+                             "(used to generate SFT be-critical teacher targets "
+                             "over the final train prompts).")
     parser.add_argument("--n", type=int, default=None,
                         help="limit to the first N held-out rows (default: all)")
     parser.add_argument("--num-shards", type=int, default=1,
@@ -236,6 +247,12 @@ def main():
 
     assert not (args.base and args.adapter), "--base and --adapter are mutually exclusive"
     env = args.env or infer_env_from_run_dir(args.run_dir)
+    if args.use_final_data:
+        assert args.test_ids_file is None, \
+            "--use-final-data and --test-ids-file are mutually exclusive"
+        args.test_ids_file = final_ids_path(env, args.final_split)
+        print(f"[data] FINAL {args.final_split} split for {env}: "
+              f"{args.test_ids_file}")
 
     # Tag for output filenames.
     if args.base:

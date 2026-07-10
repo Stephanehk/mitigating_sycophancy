@@ -75,12 +75,70 @@ def load_env_data(env_name, csv_path):
     raise AssertionError(f"unknown env_name: {env_name!r}")
 
 
-def split_train_test(env_name, data, train_n, test_n, seed):
+# ---------------------------------------------------------------------------
+# Final, frozen train/eval splits (final_training_eval_data/).
+#
+# The `--use-final-data` flag on the trainers and eval scripts routes here
+# instead of the seed-derived `split_train_test`. These splits were frozen by
+# data_build/build_final_training_eval_data.py after the earlier held-out sets
+# were used to tune the method (and are therefore contaminated for a final,
+# unbiased evaluation). The `*_ids.json` files ARE the authoritative artifact;
+# this module never re-derives them — it selects the env rows in the saved id
+# order. See final_training_eval_data/README.md for provenance and the FLIP
+# contamination caveat.
+# ---------------------------------------------------------------------------
+
+FINAL_DATA_DIR = os.path.join(_REPO_ROOT, "final_training_eval_data")
+FINAL_STEM = {"OEQ": "oeq", "PAS": "pas", "AITA": "aita", "AITA-NTA-FLIP": "flip"}
+
+
+def final_ids_path(env_name, split):
+    """Abs path to `final_training_eval_data/<stem>_<split>_ids.json`.
+
+    `split` is 'train' or 'test'. Asserts the env is known and the file exists
+    (so a missing artifact fails loud rather than silently falling back).
+    """
+    assert split in ("train", "test"), f"split must be train/test, got {split!r}"
+    assert env_name in FINAL_STEM, f"no final split for env {env_name!r}"
+    path = os.path.join(FINAL_DATA_DIR, f"{FINAL_STEM[env_name]}_{split}_ids.json")
+    assert os.path.exists(path), (
+        f"missing final split file: {path}; run "
+        f"training_mitigations/data_build/build_final_training_eval_data.py")
+    return path
+
+
+def load_final_ids(env_name, split):
+    """Load the ordered id list for one frozen final split."""
+    with open(final_ids_path(env_name, split)) as f:
+        ids = json.load(f)
+    assert isinstance(ids, list) and ids, f"empty/malformed final ids: {env_name}/{split}"
+    return [str(i) for i in ids]
+
+
+def load_final_split(env_name, data):
+    """Return (train_df, test_df) from the frozen final_training_eval_data ids.
+
+    Selects the env rows in saved-id order (via `subset_in_id_order`, which
+    asserts every id resolves) instead of resampling. train_n/test_n/seed are
+    NOT used — the split is fixed by the id files. Re-checks disjointness as a
+    guard against a corrupted artifact.
+    """
+    test_df = subset_in_id_order(data, load_final_ids(env_name, "test"))
+    train_df = subset_in_id_order(data, load_final_ids(env_name, "train"))
+    assert set(test_df["id"].astype(str)).isdisjoint(set(train_df["id"].astype(str))), (
+        f"final train/test id overlap for {env_name} — corrupted artifact")
+    return train_df, test_df
+
+
+def split_train_test(env_name, data, train_n, test_n, seed, use_final_data=False):
     """Pick `test_n` test rows and a disjoint `train_n` train rows from `data`.
 
-    Disjointness is always enforced by dropping the test ids from the pool
-    before sampling train; the train seed is `seed + 1000` so the two samplers
-    never collide. Returns (train_df, test_df).
+    When `use_final_data` is True, ignore train_n/test_n/seed and return the
+    frozen `final_training_eval_data/` split (see `load_final_split`).
+
+    Otherwise (the default seed-derived split): disjointness is enforced by
+    dropping the test ids from the pool before sampling train; the train seed is
+    `seed + 1000` so the two samplers never collide. Returns (train_df, test_df).
 
     Sampling differs by env:
       - OEQ / PAS / AITA-NTA-FLIP: `sample_uniform` (no per-row ground-truth
@@ -91,6 +149,8 @@ def split_train_test(env_name, data, train_n, test_n, seed):
         be even). A balanced train keeps the DPO signal symmetric, and a
         balanced held-out makes FNR and FPR both meaningful.
     """
+    if use_final_data:
+        return load_final_split(env_name, data)
     if env_name == "AITA":
         test_df = sample_balanced(data, test_n, seed)
         pool = data[~data["id"].isin(set(test_df["id"]))].reset_index(drop=True)

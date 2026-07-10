@@ -95,9 +95,13 @@ def main():
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED,
                         help=f"split / sampler / RL seed (default: {DEFAULT_SEED})")
     parser.add_argument("--train-n", type=int, required=True,
-                        help="number of training prompts")
+                        help="number of training prompts (IGNORED under --use-final-data)")
     parser.add_argument("--test-n", type=int, required=True,
-                        help="number of held-out test prompts")
+                        help="number of held-out test prompts (IGNORED under --use-final-data)")
+    parser.add_argument("--use-final-data", action="store_true",
+                        help="train/eval on the frozen final_training_eval_data/ "
+                             "split for --env instead of the seed-derived sample; "
+                             "--train-n/--test-n/--seed are ignored.")
 
     # GRPO knobs.
     parser.add_argument("--num-generations", type=int, default=8,
@@ -187,8 +191,14 @@ def main():
     data = load_env_data(args.env, csv_path)
     print(f"[data] pool size: {len(data)} rows")
     train_df, test_df = split_train_test(
-        args.env, data, args.train_n, args.test_n, args.seed)
-    print(f"[data] held out test_n={len(test_df)}  train_n={len(train_df)}  seed={args.seed}")
+        args.env, data, args.train_n, args.test_n, args.seed,
+        use_final_data=args.use_final_data)
+    if args.use_final_data:
+        print(f"[data] FINAL split for {args.env}: test_n={len(test_df)}  "
+              f"train_n={len(train_df)} (from final_training_eval_data/; "
+              f"--train-n/--test-n/--seed ignored)")
+    else:
+        print(f"[data] held out test_n={len(test_df)}  train_n={len(train_df)}  seed={args.seed}")
     write_ids(os.path.join(args.output_dir, "test_ids.json"), test_df)
     write_ids(os.path.join(args.output_dir, "train_ids.json"), train_df)
     train_prompts = build_train_prompts(args.env, train_df)
