@@ -80,7 +80,11 @@ printf "%-14s %-8s %-11s %-58s %-9s %s\n" ENV KIND STEER RUN STATE ACTION
 for row in "${JOBS[@]}"; do
   read -r ENV KIND STEER RUN <<< "$row"
   rundir="$RUNS_ROOT/$RUN"
-  case "$ENV" in OEQ|PAS) ARRAY=0-1; N=2; PREFIX=responses ;; *) ARRAY=0; N=1; PREFIX=aita_responses ;; esac
+  case "$ENV" in
+    OEQ|PAS)       ARRAY=0-1; N=2; PREFIX=responses ;;
+    AITA)          ARRAY=0;   N=1; PREFIX=aita_responses ;;
+    AITA-NTA-FLIP) ARRAY=0-1; N=2; PREFIX=aita_responses ;;  # 2-sharded: heaviest gen (2000 gens @1536tok)
+  esac
   TAG="$(adapter_tag "$KIND" "$STEER")_finaldata_temp1.0_seed0"
 
   # trained arms must have finished training first.
@@ -101,7 +105,7 @@ for row in "${JOBS[@]}"; do
     printf "%-14s %-8s %-11s %-58s %-9s %s\n" "$ENV" "$KIND" "$STEER" "$RUN" "ready" "would submit (array $ARRAY)"
   else
     jid=$(sbatch --parsable --array="$ARRAY" \
-        --export=ALL,GEN_ENV="$ENV",GEN_RUNDIR="$rundir",GEN_KIND="$KIND",GEN_STEER="$STEER" \
+        --export=ALL,GEN_ENV="$ENV",GEN_RUNDIR="$rundir",GEN_KIND="$KIND",GEN_STEER="$STEER",GEN_NUM_SHARDS="$N" \
         "$GENJOB")
     printf "%-14s %-8s %-11s %-58s %-9s %s\n" "$ENV" "$KIND" "$STEER" "$RUN" "ready" "submitted $jid (array $ARRAY)"
   fi

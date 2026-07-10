@@ -50,13 +50,18 @@ esac
 for row in "${JOBS[@]}"; do
   read -r ENV RUN TAG <<< "$row"
   rundir="$RUNS_ROOT/$RUN"
+  # FLIP gen is 2-sharded, AITA unsharded (mirrors marlowe_final_gen_submit.sh).
+  case "$ENV" in AITA) N=1 ;; AITA-NTA-FLIP) N=2 ;; *) echo "bad env $ENV"; continue ;; esac
   echo "=================================================================="
-  gen="$rundir/eval/aita_responses_${TAG}_shard0of1.csv"
-  if [[ ! -f "$gen" ]]; then
-    echo "[classify] $ENV $TAG: gen not ready ($gen) — skipping for now."
+  ready=1
+  for ((s=0; s<N; s++)); do
+    [[ -f "$rundir/eval/aita_responses_${TAG}_shard${s}of${N}.csv" ]] || ready=0
+  done
+  if (( ! ready )); then
+    echo "[classify] $ENV $TAG: gen not ready (need $N shard(s) in $rundir/eval) — skipping for now."
     continue
   fi
-  echo "[classify] env=$ENV tag=$TAG run=$RUN"
-  "$PY" "$CLS" --run-dir "$rundir" --env "$ENV" --tag "$TAG" --num-shards 1
+  echo "[classify] env=$ENV tag=$TAG run=$RUN num_shards=$N"
+  "$PY" "$CLS" --run-dir "$rundir" --env "$ENV" --tag "$TAG" --num-shards "$N"
 done
 echo "[classify] group=$GROUP complete. Scored -> <run>/eval/aita_scored_<tag>_shard0of1.csv"

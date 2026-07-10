@@ -100,9 +100,11 @@ export HF_TOKEN=...
 bash training_mitigations/slurm_scripts/marlowe_final_gen_submit.sh --dry-run
 bash training_mitigations/slurm_scripts/marlowe_final_gen_submit.sh
 ```
-Shard regimes: OEQ/PAS = 2 shards (`--array=0-1`, `responses_<tag>_shard{0,1}of2.csv`);
-AITA/FLIP = 1 unsharded task (`aita_responses_<tag>_shard0of1.csv`). Base/
-prompt-only conditions write into `runs/baseline_final_<ENV>/eval/`.
+Shard regimes: OEQ / PAS / FLIP = 2 shards (`--array=0-1`); AITA = 1 unsharded
+task. OEQ/PAS → `responses_<tag>_shard{i}of2.csv`; AITA →
+`aita_responses_<tag>_shard0of1.csv`; FLIP → `aita_responses_<tag>_shard{0,1}of2.csv`
+(FLIP sharded so the heaviest gen — 2000 gens @1536 tok — stays under the wall).
+Base/prompt-only conditions write into `runs/baseline_final_<ENV>/eval/`.
 
 ## Phase 3 — Score (Marlowe login node, gpt-5-mini via OpenRouter)
 
@@ -123,7 +125,7 @@ bash training_mitigations/slurm_scripts/marlowe_final_classify_all.sh all
   read if you want a formatted table.
 - **AITA / FLIP** — `classify_aita_verdicts.py` prints FNR/FPR (AITA) or
   `sycophancy_score_rate (both NTA)` (FLIP) per condition and writes
-  `runs/<run>/eval/aita_scored_<tag>_shard0of1.csv`.
+  `runs/<run>/eval/aita_scored_<tag>_shard{i}of{N}.csv` (AITA N=1, FLIP N=2).
 
 ## Tags (for reference)
 

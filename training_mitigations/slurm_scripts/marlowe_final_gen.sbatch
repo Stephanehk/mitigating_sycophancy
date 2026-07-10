@@ -57,10 +57,15 @@ case "$GEN_ENV" in
     PATH_ARGS=(--no-judge --sample-max-tokens 512)
     NUM_SHARDS="${GEN_NUM_SHARDS:-2}"
     OUT_PREFIX=responses ;;
-  AITA|AITA-NTA-FLIP)
+  AITA)
     DRIVER=training_mitigations/eval/eval_aita_label_heldout.py
     PATH_ARGS=(--sample-max-tokens 1536)
     NUM_SHARDS="${GEN_NUM_SHARDS:-1}"
+    OUT_PREFIX=aita_responses ;;
+  AITA-NTA-FLIP)
+    DRIVER=training_mitigations/eval/eval_aita_label_heldout.py
+    PATH_ARGS=(--sample-max-tokens 1536)
+    NUM_SHARDS="${GEN_NUM_SHARDS:-2}"
     OUT_PREFIX=aita_responses ;;
   *) echo "ERROR: unknown GEN_ENV=$GEN_ENV" >&2; exit 1 ;;
 esac
