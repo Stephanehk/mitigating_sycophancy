@@ -160,6 +160,25 @@ The situation:
 Write a response addressed directly to the narrator that reflects {stakeholder}'s perspective and concerns about the situation. Address the narrator directly as "you"; never reply in the voice of {stakeholder} or any other person described. Write only the response to the narrator and nothing else."""
 
 
+# Future-user-voice candidate-generation prompt. A generation-time steer that
+# OCCUPIES the n_source_critical budget (like CRITICAL_SUFFIX / the perspshift
+# rewrite), selected by `future_user_steer` instead of the 'Be critical.'
+# suffix. The policy answers in the voice of the narrator's OWN future self, who
+# has to live with the long-term consequences of the present decision — surfacing
+# long-horizon concerns as candidate "chosen" exemplars while the DPO prompt
+# column stays the bare first-person post. Tagged "future_user" in the source
+# list (so it is auditable and, like "critical"/"perspshift", is NOT distilled by
+# --distill-self-only, which targets only the on-policy "model" source).
+FUTURE_USER_RESPONSE_PROMPT = """Consider the perspective of the narrator's own future self — the person the narrator will become years from now, who must live with the long-term consequences of the decision described below.
+
+The situation:
+---
+{post}
+---
+
+In that future self's voice, write a response addressed directly to the present narrator, focused on the long-term impact of what they are about to do. Address the narrator as "you"; write only the response and nothing else."""
+
+
 # ---------------------------------------------------------------------------
 # Preference-elicitation template (variation 2).
 #
@@ -280,6 +299,7 @@ class Trainer:
                  rewrite_instruction=PERSPECTIVE_SHIFT_REWRITE_PROMPT,
                  rewrite_max_tokens=1536,
                  perspshift_assess=False,
+                 future_user_steer=False,
                  self_preference=False,
                  preference_max_tokens=128,
                  preference_max_pairs=0,
@@ -379,6 +399,24 @@ class Trainer:
                 "perspective_shift_steer requires mixed_sampling and is "
                 "incompatible with neutral-mixed (steer_only)"
             )
+        # future_user_steer (mixed_P5_futureuser): the n_source_critical steer
+        # source becomes the future-self voice (FUTURE_USER_RESPONSE_PROMPT),
+        # drawn on-policy. Like perspshift it CONSUMES the critical budget and
+        # only applies to the stakeholder mixed path, so it requires that budget
+        # and is mutually exclusive with perspshift and neutral-mixed.
+        if future_user_steer:
+            assert mixed_sampling and not steer_only, (
+                "future_user_steer requires mixed_sampling and is incompatible "
+                "with neutral-mixed (steer_only)"
+            )
+            assert n_source_critical > 0, (
+                "future_user_steer fills the n_source_critical slots, so it "
+                "needs n_source_critical > 0"
+            )
+            assert not perspective_shift_steer, (
+                "future_user_steer and perspective_shift_steer both consume the "
+                "critical budget; enable at most one"
+            )
         self.sim_stake = sim_stake
         self.model = model
         self.tokenizer = tokenizer
@@ -396,6 +434,7 @@ class Trainer:
         self.rewrite_instruction = rewrite_instruction
         self.rewrite_max_tokens = rewrite_max_tokens
         self.perspshift_assess = perspshift_assess
+        self.future_user_steer = future_user_steer
         # Generation prompt for stakeholder-voiced candidates. Defaults to the
         # role-play STAKEHOLDER_RESPONSE_PROMPT; the _gp arm passes the
         # second-person STAKEHOLDER_RESPONSE_PROMPT_VOICE to drop the role-play.
@@ -550,9 +589,10 @@ class Trainer:
 
         Returns (responses, sources): parallel lists of length `n_samples`.
         `sources[i]` is "model", "critical" (or "perspshift" under
-        perspective_shift_steer), or "stakeholder:<name>" ("stakeholder-base:
-        <name>" when frozen_stakeholder draws it from the frozen base) —
-        persisted for auditability, not used by DPO.
+        perspective_shift_steer, or "future_user" under future_user_steer — both
+        fill the n_source_critical slots), or "stakeholder:<name>"
+        ("stakeholder-base:<name>" when frozen_stakeholder draws it from the
+        frozen base) — persisted for auditability, not used by DPO.
         """
         n_model = min(self.n_source_model, self.n_samples)
         n_critical = min(self.n_source_critical, self.n_samples - n_model)
@@ -579,6 +619,14 @@ class Trainer:
                     prompt, assess_narrative=self.perspshift_assess,
                     rewrite_instruction=self.rewrite_instruction)
                 steer_src = "perspshift"
+            elif self.future_user_steer:
+                # Future-user voice: draw the n_critical samples on-policy from
+                # FUTURE_USER_RESPONSE_PROMPT (the narrator's own future self),
+                # instead of the 'Be critical.' suffix. `post=prompt` embeds the
+                # BARE post mid-template; the DPO prompt column stays the bare
+                # first-person post (set downstream).
+                steer_input = FUTURE_USER_RESPONSE_PROMPT.format(post=prompt)
+                steer_src = "future_user"
             else:
                 steer_input = prompt + self.steer_suffix
                 steer_src = self.steer_label

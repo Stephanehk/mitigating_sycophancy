@@ -194,7 +194,7 @@ echo "[marlowe] num_iterations=${NUM_ITERATIONS:-3} (with --allow-preempt, resum
     --sim-backend vllm \
     --veto-concurrency 16 \
     --precompute-ref-batch-size 8 \
-    --dpo-save-steps 25 \
+    --dpo-save-steps "${DPO_SAVE_STEPS:-25}" \
     --num-iterations "${NUM_ITERATIONS:-3}" \
     --train-n "${TRAIN_N:-1000}" \
     --test-n "${TEST_N:-500}" \

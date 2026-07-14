@@ -411,6 +411,27 @@ def main():
              "mixed_P5_perspective_shift arm.",
     )
     parser.add_argument(
+        "--future-user-sampling", action="store_true",
+        help="mixed sampling: replace the 'Be critical.' critical source with "
+             "the FUTURE-USER voice — the --n-source-critical samples are drawn "
+             "on-policy from the narrator's own future self, who must live with "
+             "the long-term consequences of the present decision "
+             "(FUTURE_USER_RESPONSE_PROMPT). The DPO prompt column stays the "
+             "bare first-person post. Requires --mixed-sampling with "
+             "--n-source-critical > 0; mutually exclusive with "
+             "--perspective-shift-sampling and --neutral-mixed-sampling. This is "
+             "the mixed_P5_futureuser arm.",
+    )
+    parser.add_argument(
+        "--addressee-filter", action="store_true",
+        help="veto pipeline: before the veto panel, drop any candidate that "
+             "critiques the FORM of the user's message (grammar, wording, "
+             "structure, a 'more polished version') instead of engaging their "
+             "situation (ADDRESSEE_FILTER_PROMPT, on the veto backend). A "
+             "filtered response becomes neither chosen nor rejected. Composes "
+             "with any --veto-prompt. This is the mixed_P5_addrfilter arm.",
+    )
+    parser.add_argument(
         "--rewrite-max-tokens", type=int, default=1536,
         help="--perspective-shift-sampling: max new tokens for the greedy "
              "first->third-person rewrite (default: 1536, matching the eval "
@@ -623,6 +644,26 @@ def main():
         assert args.n_source_critical > 0, (
             "--perspective-shift-sampling needs --n-source-critical > 0 (that is "
             "the perspective-shift source count); got 0"
+        )
+
+    # --future-user-sampling: the critical steer source becomes the future-self
+    # voice. Same budget/exclusivity constraints as perspshift (both consume the
+    # n_source_critical slots).
+    if args.future_user_sampling:
+        assert args.mixed_sampling, (
+            "--future-user-sampling requires --mixed-sampling"
+        )
+        assert not args.neutral_mixed_sampling, (
+            "--future-user-sampling and --neutral-mixed-sampling are mutually "
+            "exclusive"
+        )
+        assert not args.perspective_shift_sampling, (
+            "--future-user-sampling and --perspective-shift-sampling both "
+            "consume the critical budget; enable at most one"
+        )
+        assert args.n_source_critical > 0, (
+            "--future-user-sampling needs --n-source-critical > 0 (that is the "
+            "future-user source count); got 0"
         )
 
     # --distill-self-only masks the RPO/distill SFT term, so it needs both an SFT
@@ -883,11 +924,13 @@ def main():
             # 4th narrator voice (veto-only, never sampled for candidates).
             bidirectional=(args.veto_prompt == "P6"),
             include_user_stakeholder=args.user_stakeholder,
+            addressee_filter=args.addressee_filter,
         )
         print(f"[setup] veto prompt: {args.veto_prompt}"
               f"{' (two-stage)' if args.veto_prompt in ENDORSE_CLASSIFY_PROMPTS else ''}"
               f"{' +bidirectional' if args.veto_prompt == 'P6' else ''}"
-              f"{' +user-stakeholder' if args.user_stakeholder else ''}")
+              f"{' +user-stakeholder' if args.user_stakeholder else ''}"
+              f"{' +addressee-filter' if args.addressee_filter else ''}")
 
     # 5. Trainer + train. Trainer.model is the policy (trainable);
     # Trainer's `_sample_responses` calls policy.generate() directly,
@@ -910,6 +953,7 @@ def main():
         perspective_shift_steer=args.perspective_shift_sampling,
         rewrite_max_tokens=args.rewrite_max_tokens,
         perspshift_assess=args.perspshift_assess,
+        future_user_steer=args.future_user_sampling,
         stakeholder_prompt=(STAKEHOLDER_RESPONSE_PROMPT_VOICE
                             if args.stakeholder_voice
                             else STAKEHOLDER_RESPONSE_PROMPT),
@@ -934,6 +978,7 @@ def main():
         )
     else:
         steer_kind = ("perspshift" if args.perspective_shift_sampling
+                      else "future_user" if args.future_user_sampling
                       else "critical")
         print(
             f"[train] mixed_sampling={args.mixed_sampling} "
