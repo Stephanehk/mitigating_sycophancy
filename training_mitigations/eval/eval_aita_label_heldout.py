@@ -23,7 +23,8 @@ policies.
 The held-out ids come from `<run-dir>/test_ids.json` (written by the trainer's
 split), or an explicit `--test-ids-file`. Output filenames are tagged by adapter
 / decode / seed so reruns and shards don't clobber each other. Each shard writes
-`aita_responses_<tag>.csv` (raw responses, no verdict) + `responses_aita_<tag>.jsonl`.
+`aita_responses_<tag>_shard{i}of{N}.csv` (raw responses, no verdict; the shard
+suffix is always present, N=1 for an unsharded run) + `responses_aita_<tag>.jsonl`.
 
 PROMPT-ONLY BASELINES (on the base model, --base). At most one applies; each is a
 generation-time steer on the bare post:
@@ -311,12 +312,16 @@ def main():
     if args.n is not None:
         rows = rows.iloc[:args.n].reset_index(drop=True)
     n_total = len(rows)
-    if args.num_shards > 1:
-        s, e = shard_slice(n_total, args.num_shards, args.shard_id)
-        rows = rows.iloc[s:e].reset_index(drop=True)
-        tag = f"{tag}_shard{args.shard_id}of{args.num_shards}"
-        print(f"[eval] shard {args.shard_id}/{args.num_shards}: rows [{s}:{e}) "
-              f"of {n_total}")
+    # Always tile + tag by shard, INCLUDING the single-shard case (1 of 1 == the
+    # full set): the classifier stage (classify_aita_verdicts.py) reads
+    # aita_responses_<tag>_shard{i}of{N}.csv unconditionally, so the gen must
+    # always emit that suffix or num-shards=1 runs would be unreadable downstream.
+    assert args.num_shards >= 1, "--num-shards must be >= 1"
+    s, e = shard_slice(n_total, args.num_shards, args.shard_id)
+    rows = rows.iloc[s:e].reset_index(drop=True)
+    tag = f"{tag}_shard{args.shard_id}of{args.num_shards}"
+    print(f"[eval] shard {args.shard_id}/{args.num_shards}: rows [{s}:{e}) "
+          f"of {n_total}")
     print(f"[eval] env={env}  rows={len(rows)}  adapter={adapter_tag}  decode={decode_tag}")
 
     # 2. Load policy.
