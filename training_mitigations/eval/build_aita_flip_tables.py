@@ -56,10 +56,20 @@ FLIP_MAP = [
     ("+ “Be critical”",        ("baseline_AITA-NTA-FLIP", "base-becritical", "temp1.0")),
     ("+ perspective-shift",    ("baseline_AITA-NTA-FLIP", "base-perspshift", "temp1.0")),
     ("SFT “be critical”",      ("sft_lora_flip_qwen3-8b_n500_becritical", "final", "temp1.0")),
+    ("mixed_P5",               ("dpo_lora_flip_qwen3-8b_n500_mixed_P5", "final", "final1000_temp1.0")),
     ("mixed_P5_nocrit_distill_gp_frozenstake",
         ("dpo_lora_flip_qwen3-8b_n500_mixed_P5_nocrit_distill_gp_frozenstake", "final", "final1000_temp1.0")),
     ("mixed_P6_perspshift_distill_gp",
         ("dpo_lora_flip_qwen3-8b_n500_mixed_P6_perspshift_distill_gp", "final", "final1000_temp1.0")),
+    # DIFFERENT EVAL SET from every row above: this arm is the frozen final run,
+    # held out on final_training_eval_data/AITA-NTA-FLIP_test (decode tag
+    # `finaldata`), whereas the rows above are the tuning-era `final1000`
+    # held-out. The two splits overlap but are not identical, so this row is NOT
+    # a like-for-like comparison against them — hence the explicit label. It is
+    # comparable only to other `finaldata` rows (see marlowe_final_classify_all.sh).
+    ("mixed_P6_perspshift_distill_gp_rpo0p5 [FINAL DATA — different split]",
+        ("dpo_lora_flip_qwen3-8b_n500_mixed_P6_perspshift_distill_gp_rpo0p5_final",
+         "final", "finaldata_temp1.0")),
 ]
 OUR = {"mixed_P5", "mixed_P5_nocrit_distill_gp_frozenstake",
        "mixed_P6_perspshift_distill_gp"}

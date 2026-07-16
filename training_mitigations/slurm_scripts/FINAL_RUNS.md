@@ -76,20 +76,41 @@ sbatch $SS/next_final_train_pas_neutral_mixed_dpo.sbatch
 Each run writes `.complete` + the final adapter (`adapter_config.json` at the run
 root) when finished.
 
-## Phase 1b — Relay the 4 `next` neutral adapters to Marlowe
+## Phase 1b — SUPERSEDED: the `next` arms were generated + scored on `next`
 
-The Marlowe generation driver reads adapters from `/projects/m000254/runs/`, so
-copy each finished neutral run dir over (whole dir: `adapter_config.json`,
-`adapter_model.safetensors`, `.complete`). Names are IDENTICAL on both sides:
+**What this phase originally said:** relay the 4 neutral adapters to Marlowe so
+Marlowe's generation driver (which reads `/projects/m000254/runs/`) could produce
+their held-out responses.
+
+**What actually happened:** generation AND scoring for those arms ran on `next`
+instead, via `next_final_gen_neutral.sbatch` — which mirrors
+`marlowe_final_gen.sbatch`'s OEQ/PAS path exactly (same driver, flags, 2-shard
+regime, and `final_finaldata_temp1.0_seed0` tag), differing only in site and
+`--device-map auto` vs `--device cuda:0`. So the outputs are drop-in compatible
+and Marlowe never needs those adapters to generate anything.
+
+The same is true of **AITA-NTA-FLIP P6**: its adapter was trained on Marlowe, then
+copied to `next`, where generation ran via `next_final_gen_flip_P6_perspshift.sbatch`
+and the gpt-5-mini verdict classify produced the final numbers.
+
+⚠️ **FLIP P6 shard-count divergence.** `marlowe_final_gen_submit.sh` generates FLIP
+at 2 shards, but the `next` FLIP P6 gen used **5** (to fit 2000 gens @1536 tok onto
+next6's a4000 pairs), so its files are `*of5`. `marlowe_final_classify_all.sh` now
+carries an explicit per-condition `NSHARDS` column for this reason — do not
+collapse it back to a per-env constant.
+
+**Therefore the transfer is results-only, not adapters.** Use:
+```bash
+NEXT_HOST=stephhk@scdt.stanford.edu bash training_mitigations/slurm_scripts/scp_final_results_via_local.sh
 ```
-dpo_lora_oeq_qwen3-8b_n1000_neutral_final
-dpo_lora_oeq_qwen3-8b_n1000_neutral_mixed_final
-dpo_lora_pas_qwen3-8b_n1000_neutral_final
-dpo_lora_pas_qwen3-8b_n1000_neutral_mixed_final
-```
-`next:.../training_mitigations/runs/<name>` → `marlowe:/projects/m000254/runs/<name>`
-(use the usual two-hop relay via your laptop if the clusters can't reach each
-other directly).
+It relays the scored/staged CSVs to `$MARLOWE_REPO/training_mitigations/sycoharm_runs/`
+and the run `eval/` dirs to `/projects/m000254/runs/<name>/` (two different roots —
+run dirs live OUTSIDE the repo). Adapters ride along for archival only; set
+`SKIP_ADAPTERS=1` to omit them (~670M). Landing `scored_<name>.csv` makes
+`marlowe_final_endorse_all.sh` skip those arms, so they are not re-judged/re-billed.
+
+If a stage must instead be re-scored *in place on `next`*, `marlowe_final_endorse_all.sh`
+takes `REPO`/`RUNS_ROOT`/`PY` overrides (see its header).
 
 ## Phase 2 — Generate (Marlowe login node)
 

@@ -12,11 +12,20 @@
 #
 #   export OPENROUTER_API_KEY=...   # in ~/.bashrc on Marlowe
 #   bash training_mitigations/slurm_scripts/marlowe_final_endorse_all.sh [oeq|pas|all]
+#
+# SITE: defaults are Marlowe. The 4 neutral arms are trained+generated on `next`
+# (their veto needs egress), so their run dirs never leave it; score them in
+# place by overriding REPO/RUNS_ROOT/PY. Conditions whose shards are absent at
+# the given site are skipped, so the same loop scores whichever arms are local:
+#   REPO=/next/u/stephhk/sycophancy \
+#   RUNS_ROOT=/next/u/stephhk/sycophancy/training_mitigations/runs \
+#   PY=/next/u/stephhk/miniconda3/envs/llm/bin/python \
+#     bash training_mitigations/slurm_scripts/marlowe_final_endorse_all.sh all
 set -uo pipefail
 PROJECT=m000254
-REPO=/projects/$PROJECT/sycophancy
-RUNS_ROOT=/projects/$PROJECT/runs
-PY=/projects/$PROJECT/envs/llm126/bin/python
+REPO="${REPO:-/projects/$PROJECT/sycophancy}"
+RUNS_ROOT="${RUNS_ROOT:-/projects/$PROJECT/runs}"
+PY="${PY:-/projects/$PROJECT/envs/llm126/bin/python}"
 SCORED_DIR=$REPO/training_mitigations/sycoharm_runs/endorse_gpt5mini_v5_temp0
 cd "$REPO"
 : "${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY (source ~/.bashrc on Marlowe)}"

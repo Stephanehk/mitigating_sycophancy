@@ -19,6 +19,11 @@
 # subsystem is still permitted, so we make dirs and upload over sftp — which also
 # means Marlowe prompts for password/Duo only ONCE for the whole push.
 #
+# NOTE: `sftp -b` normally implies BatchMode=yes, which DISABLES interactive
+# (keyboard-interactive/Duo) auth -> instant "Permission denied" with no prompt.
+# We pass `-o BatchMode=no` so sftp still prompts for password/Duo once while
+# reading its command batch from the file.
+#
 # Usage (on your laptop). MARLOWE_HOST defaults to login-01.marlowe.stanford.edu:
 #   NEXT_HOST=stephhk@scdt.stanford.edu \
 #   [MARLOWE_HOST=stephhk@login-01.marlowe.stanford.edu] \
@@ -81,7 +86,7 @@ for rel in "${CSVS[@]}"; do
 done
 
 echo "[relay] push $(printf '%s ' "${CSVS[@]}")-> Marlowe (single sftp session)"
-sftp -b "$batch" "$MARLOWE_HOST"
+sftp -o BatchMode=no -b "$batch" "$MARLOWE_HOST"
 rm -f "$batch"
 
 if [[ "${KEEP_STAGE:-0}" == "1" ]]; then
