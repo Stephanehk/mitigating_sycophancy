@@ -143,7 +143,24 @@ def attach_adapter(base_model, adapter_dir):
 def generate_one(model, tokenizer, prompt, max_new_tokens, temperature, top_p, greedy):
     """Sample a single response from the policy for the bare `prompt`, using
     the same chat-template path training sampled against. Greedy when --greedy,
-    else nucleus sampling at (temperature, top_p). Returns the decoded text."""
+    else nucleus sampling at (temperature, top_p). Returns the decoded text.
+
+    Guards the decode against corrupted token ids. Multi-GPU `device_map=auto`
+    generation can rarely emit an out-of-range token id (negative, or >= the
+    vocab size) — a flaky placement/offload numerics event, not tied to the
+    prompt. Such an id crashes `tokenizer.decode` with an OverflowError and,
+    unguarded, aborts the whole 541-prompt eval. So when any `new_ids` fall
+    outside [0, len(tokenizer)) we treat the generation as corrupted and
+    regenerate ONCE. A flaky event does not recur, so the retry is clean and
+    proceeds; if the retry is ALSO out of range the fault is systematic (bad
+    checkpoint / broken placement), not flaky, and we raise rather than silently
+    mask it.
+
+    Assumptions: `model.generate` returns ids in the model's output space; a
+    valid decodable id is 0 <= id < len(tokenizer). len(tokenizer) (not
+    `vocab_size`) is the bound because added/special tokens past `vocab_size`
+    are still decodable.
+    """
     device = next(model.parameters()).device
     input_ids = build_chat_input(tokenizer, prompt, system=None, device=device)
     in_len = input_ids.shape[1]
@@ -157,10 +174,25 @@ def generate_one(model, tokenizer, prompt, max_new_tokens, temperature, top_p, g
     if not greedy:
         gen_kwargs["temperature"] = float(temperature)
         gen_kwargs["top_p"] = float(top_p)
-    with torch.no_grad():
-        output_ids = model.generate(input_ids, **gen_kwargs)
-    new_ids = output_ids[0, in_len:]
-    return tokenizer.decode(new_ids, skip_special_tokens=True).strip()
+    vocab_n = len(tokenizer)
+    for attempt in range(2):
+        with torch.no_grad():
+            output_ids = model.generate(input_ids, **gen_kwargs)
+        new_ids = output_ids[0, in_len:]
+        bad = (new_ids < 0) | (new_ids >= vocab_n)
+        if not bool(bad.any()):
+            return tokenizer.decode(new_ids, skip_special_tokens=True).strip()
+        print(
+            f"[generate_one] WARNING: {int(bad.sum())} out-of-range token id(s) "
+            f"(valid [0,{vocab_n})); corrupted values "
+            f"{new_ids[bad][:10].tolist()} on attempt {attempt + 1}/2.",
+            file=sys.stderr, flush=True,
+        )
+    raise AssertionError(
+        f"generate_one: token ids out of range [0,{vocab_n}) on both attempts "
+        f"(corrupted values {new_ids[bad][:10].tolist()}) — not a flaky event; "
+        f"investigate placement/offload numerics or the checkpoint."
+    )
 
 
 # --- metric ----------------------------------------------------------------

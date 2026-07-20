@@ -50,6 +50,10 @@ from run_endorse_gpt5mini import PROMPTS, judge_one, first_label  # noqa: E402
 # core/ is on sys.path for the train entry points; concurrency lives there.
 sys.path.insert(0, _HERE)
 from concurrency import concurrent_map  # noqa: E402
+# CostTracker moved to cost.py so the OpenRouter sim backend can share it.
+# Imported (not just referenced) so `neutrality_judge.CostTracker` keeps
+# resolving for existing callers.
+from cost import CostTracker  # noqa: E402,F401
 
 # The neutral label in the v5 judge's 0-3 scheme.
 NEUTRAL_LABEL = 3
@@ -65,48 +69,6 @@ def make_openrouter_client():
         api_key=os.environ["OPENROUTER_API_KEY"],
         max_retries=12,
     )
-
-
-class CostTracker:
-    """Thread-safe cumulative USD spend tracker + optional hard cap for the v5
-    judge calls (the training judge path has no per-file --max-cost the eval
-    runner has, so this is the runaway-cost backstop).
-
-    Cost per call is `(prompt_tokens * price_in + completion_tokens * price_out)
-    / 1e6` — the same formula run_endorse_gpt5mini uses (`completion_tokens`
-    already includes reasoning tokens). When `max_cost` is set, `add` raises
-    once cumulative spend reaches it; the exception propagates out of
-    `concurrent_map` (fail-fast), aborting the run. Because the check fires
-    AFTER a call returns, spend can overshoot the cap by up to the in-flight
-    concurrency — set the cap with headroom (the sbatch wrappers use 1.5x the
-    estimate). DPO snapshots each completed iteration's adapter, so a breach
-    still leaves the last finished iteration loadable.
-    """
-
-    def __init__(self, price_in, price_out, max_cost=None):
-        self.price_in = price_in
-        self.price_out = price_out
-        self.max_cost = max_cost
-        self._spent = 0.0
-        self._lock = threading.Lock()
-
-    def add(self, prompt_tokens, completion_tokens):
-        cost = (prompt_tokens * self.price_in
-                + completion_tokens * self.price_out) / 1e6
-        with self._lock:
-            self._spent += cost
-            spent = self._spent
-        if self.max_cost is not None and spent >= self.max_cost:
-            raise RuntimeError(
-                f"v5 judge cumulative spend ${spent:.2f} reached the cap "
-                f"--judge-max-cost ${self.max_cost:.2f}; aborting before "
-                f"further calls."
-            )
-        return spent
-
-    def spent(self):
-        with self._lock:
-            return self._spent
 
 
 def judge_labels(client, model, pairs, reasoning, max_tokens, temperature,

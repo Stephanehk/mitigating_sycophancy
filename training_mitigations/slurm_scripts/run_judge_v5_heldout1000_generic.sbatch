@@ -11,6 +11,11 @@
 #   JNAME      : stage/dataset stem (-> sycoharm_runs/inputs/<JNAME>.csv and
 #                endorse_gpt5mini_v5_temp0/scored_<JNAME>.csv)
 #   JSHARDS    : number of gen shards to concatenate (default 10)
+#   JTAG       : response-file tag preceding _shard{i}of{n} (default
+#                final_final1000_temp1.0_seed0). Gen jobs that pass
+#                --tag-extra finaldata (next_final_gen.sbatch) write
+#                final_finaldata_temp1.0_seed0 instead and MUST set this;
+#                otherwise staging fails on a missing shard CSV.
 #
 # Requires OPENROUTER_API_KEY in the job env (submit with --export=ALL,...).
 #
@@ -34,15 +39,16 @@ fi
 : "${JRUN:?set JRUN (run dir relative to training_mitigations/)}"
 : "${JNAME:?set JNAME (stage/dataset stem)}"
 JSHARDS="${JSHARDS:-10}"
+JTAG="${JTAG:-final_final1000_temp1.0_seed0}"
 
 PY=/next/u/stephhk/miniconda3/envs/llm/bin/python
 cd /next/u/stephhk/sycophancy
 mkdir -p training_mitigations/logs/judge
 
-echo "[judge] staging $JRUN -> sycoharm_runs/inputs/$JNAME.csv (FINAL adapter, $JSHARDS shards)"
+echo "[judge] staging $JRUN -> sycoharm_runs/inputs/$JNAME.csv (FINAL adapter, $JSHARDS shards, tag=$JTAG)"
 "$PY" training_mitigations/eval/stage_heldout_inputs.py \
     --run-dir "training_mitigations/$JRUN" \
-    --name "$JNAME" --num-shards "$JSHARDS" --expect 1000
+    --name "$JNAME" --tag "$JTAG" --num-shards "$JSHARDS" --expect 1000
 
 echo "[judge] scoring with v5 gpt-5-mini endorse judge"
 "$PY" training_mitigations/eval/run_endorse_gpt5mini.py \

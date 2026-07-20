@@ -205,7 +205,7 @@ def test_neutral_mixed_sampling_steer_only():
     )
 
     # Stub the generation primitive: record (prompt, n) and echo n responses.
-    def fake_generate_n(prompt, n):
+    def fake_generate_n(prompt, n, use_base=False):
         calls.append((prompt, n))
         return [f"r::{prompt}::{i}" for i in range(n)]
     tr._generate_n = fake_generate_n

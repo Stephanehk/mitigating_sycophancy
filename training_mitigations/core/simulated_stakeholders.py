@@ -77,7 +77,32 @@ from weak_pipeline import (
     stakeholder_concerns_weak,
 )
 
+import gemini_pipeline
+from gemini_pipeline import (
+    identify_stakeholders_gemini,
+    filter_stakeholders_gemini,
+    stakeholder_concerns_gemini,
+)
+
 from concurrency import concurrent_map
+from sim_errors import SimRefusedError
+
+
+class _Refused:
+    """Sentinel: this call was REFUSED by the sim backend (see sim_errors).
+
+    A distinct object rather than None/[]/"" because every one of those is a
+    legitimate value somewhere in this pipeline — [] is a concern-free
+    stakeholder, None is an unparsable-but-cast vote — and conflating a refusal
+    with any of them would silently change the preference data instead of
+    skipping the step.
+    """
+
+    def __repr__(self):
+        return "<REFUSED>"
+
+
+_REFUSED = _Refused()
 
 
 # Per-stakeholder veto prompt. Keeps the v2 role-play framing (you ARE
@@ -413,6 +438,7 @@ class SimulatedStakeholders:
                  stakeholder_max_tokens=2048,
                  veto_max_tokens=128,
                  use_weak_model=True,
+                 prompt_variant=None,
                  concerns_call_llm=None,
                  concerns_model_id=None,
                  concerns_client=None,
@@ -420,6 +446,7 @@ class SimulatedStakeholders:
                  veto_model_id=None,
                  veto_client=None,
                  veto_concurrency=1,
+                 max_concurrency=None,
                  veto_prompt=None,
                  endorse_classify_prompt=None,
                  bidirectional=False,
@@ -448,6 +475,13 @@ class SimulatedStakeholders:
             copies of the v2 prompts, intended to drift for weak-model
             tuning). When False, route through the API-tuned
             `our_mitigation_v2` versions unchanged.
+        prompt_variant: None (default) selects the pipeline via
+            `use_weak_model`, above — every existing arm is unchanged.
+            "gemini" instead routes identify/filter/concerns through
+            `gemini_pipeline.py`, whose prompts are retuned for Gemini's
+            terse identify step (see that module's docstring). It is a
+            variant OF the weak pipeline, so it cannot be combined with
+            use_weak_model=False (asserted).
         concerns_call_llm / concerns_model_id / concerns_client:
             optional split backend used *only* for the per-stakeholder
             concerns generation. Defaults to the primary backend when
@@ -468,10 +502,27 @@ class SimulatedStakeholders:
             and should stay at 1. The OR-over-stakeholders decision is
             order-independent, so both paths return the same veto set
             for a deterministic (greedy) judge.
+        max_concurrency: optional ceiling applied to EVERY fan-out this
+            object performs, including the `concurrency` argument the
+            Trainer passes to `prime_stakeholder_cache` /
+            `veto_responses_batch`. None (default) means "trust the
+            caller" — correct for a local vLLM server, where the
+            Trainer's --stage-concurrency (128) is tuned to saturate
+            continuous batching. An API-backed backend must set this
+            (see --sim-concurrency): 128 in-flight OpenRouter calls
+            rate-limit, and the caller's number is chosen for a
+            different backend entirely. Clamping here rather than at the
+            call sites keeps the ceiling on the object that knows its
+            own backend, mirroring how NeutralityVetoJudge bounds its
+            own fan-out independently of the Trainer.
         """
         assert veto_concurrency >= 1, (
             f"veto_concurrency must be >= 1 (got {veto_concurrency})"
         )
+        assert max_concurrency is None or max_concurrency >= 1, (
+            f"max_concurrency must be >= 1 or None (got {max_concurrency})"
+        )
+        self.max_concurrency = max_concurrency
         # addressee_filter: when True, veto_responses_batch first drops any
         # candidate that critiques the FORM of the user's message rather than
         # engaging their situation (see ADDRESSEE_FILTER_PROMPT). Runs on the
@@ -488,6 +539,17 @@ class SimulatedStakeholders:
         self.stakeholder_max_tokens = stakeholder_max_tokens
         self.veto_max_tokens = veto_max_tokens
         self.use_weak_model = use_weak_model
+        # `gemini` is a variant OF the weak pipeline; combining it with
+        # use_weak_model=False would silently ignore one of the two flags.
+        assert prompt_variant in (None, "gemini"), (
+            f"unknown prompt_variant {prompt_variant!r}; expected None or 'gemini'"
+        )
+        assert not (prompt_variant == "gemini" and not use_weak_model), (
+            "prompt_variant='gemini' is a variant of the weak pipeline and "
+            "cannot be combined with use_weak_model=False (which selects the "
+            "API-tuned v2 prompts)"
+        )
+        self.prompt_variant = prompt_variant
         # which veto prompt to use (defaults to the baseline VETO_PROMPT)
         self.veto_prompt = veto_prompt if veto_prompt is not None else VETO_PROMPT
         self.concerns_call_llm = concerns_call_llm if concerns_call_llm is not None else call_llm
@@ -496,7 +558,7 @@ class SimulatedStakeholders:
         self.veto_call_llm = veto_call_llm if veto_call_llm is not None else call_llm
         self.veto_model_id = veto_model_id if veto_model_id is not None else model_id
         self.veto_client = veto_client if veto_client is not None else client
-        self.veto_concurrency = veto_concurrency
+        self.veto_concurrency = self._bounded(veto_concurrency)
         # Two-stage veto (e.g. P5): when an endorsement-classifier prompt is
         # given, the veto first asks the stakeholder-INDEPENDENT question "does
         # this response endorse the narrator's action?" once per (prompt,
@@ -535,6 +597,16 @@ class SimulatedStakeholders:
                         f"user_veto_prompt must contain {ph}"
                     )
         self._cache = {}
+        # Every backend refusal, as (stage, detail). Appended from inside
+        # concurrent_map (list.append is atomic under the GIL) and read after
+        # the fan-out joins. A refusal SKIPS a step, so this list is the only
+        # record that the dataset shrank — `refusal_summary()` reports it.
+        self.refusals = []
+        # Prompts whose panel came back EMPTY because the sim refused. The
+        # trainer skips these entirely: mixed sampling draws candidates FROM the
+        # panel, so an empty one cannot produce a candidate set at all — it is
+        # not merely un-vetoable. Empty for any other reason stays an assert.
+        self.refused_prompts = set()
 
         # Rewire the pipeline modules' module-level `call_llm` bindings
         # to this sim's primary backend. The pipeline functions take
@@ -549,6 +621,41 @@ class SimulatedStakeholders:
         our_mitigation.call_llm = call_llm
         our_mitigation_v2.call_llm = call_llm
         weak_pipeline.call_llm = call_llm
+        gemini_pipeline.call_llm = call_llm
+
+    def _note_refusal(self, stage, detail, exc):
+        """Record a backend refusal that caused a step to be SKIPPED.
+
+        Refusals are a property of the API sim only (local Qwen never refuses),
+        and each one silently removes something from the training data — a
+        stakeholder, a vote, a response, or a whole prompt. Recording every one
+        is what keeps that auditable; `refusal_summary()` aggregates.
+        """
+        self.refusals.append((stage, str(detail)[:160]))
+        print(f"[sim] REFUSED at {stage} -> step skipped "
+              f"(total refusals: {len(self.refusals)}): {str(exc)[:100]}",
+              flush=True)
+
+    def refusal_summary(self):
+        """Refusals per stage, e.g. {'concerns': 3, 'stage2:veto': 11}. Empty
+        for the local backends. Report this with any run's results: it is the
+        size of the hole the content filter cut in the dataset."""
+        out = {}
+        for stage, _detail in self.refusals:
+            out[stage] = out.get(stage, 0) + 1
+        return out
+
+    def _bounded(self, concurrency):
+        """Clamp `concurrency` to `self.max_concurrency` when one is configured.
+
+        Every fan-out width this object uses passes through here, so an
+        API-backed backend can bound itself without the Trainer (which is tuned
+        for a local vLLM server) knowing anything about it. Returns
+        `concurrency` unchanged when `max_concurrency` is None.
+        """
+        if self.max_concurrency is None:
+            return concurrency
+        return min(concurrency, self.max_concurrency)
 
     def _pipeline_fns(self):
         """Return (identify_fn, filter_fn, concerns_fn, pipeline_module) for the
@@ -557,6 +664,9 @@ class SimulatedStakeholders:
         `pipeline_module` is the module whose module-level `call_llm` binding
         the concerns step temporarily rebinds (see `prime_stakeholder_cache`).
         """
+        if self.prompt_variant == "gemini":
+            return (identify_stakeholders_gemini, filter_stakeholders_gemini,
+                    stakeholder_concerns_gemini, gemini_pipeline)
         if self.use_weak_model:
             return (identify_stakeholders_weak, filter_stakeholders_weak,
                     stakeholder_concerns_weak, weak_pipeline)
@@ -600,17 +710,29 @@ class SimulatedStakeholders:
         todo = [p for p in dict.fromkeys(prompts) if p not in self._cache]
         if not todo:
             return
+        concurrency = self._bounded(concurrency)
         identify_fn, filter_fn, concerns_fn, pipeline_module = self._pipeline_fns()
 
         # A1: identify + filter for every prompt (primary backend binding).
+        # A REFUSAL here leaves the prompt with no usable panel, so it gets an
+        # EMPTY one: with zero voters it collects zero vetoes, the rejected set
+        # stays empty, and the trainer forms no pairs for it — the prompt is
+        # skipped exactly like one where nothing was vetoed. That is the safe
+        # direction; the alternative (an empty panel treated as "nobody
+        # objected") would promote all 10 candidates to CHOSEN off the back of a
+        # content filter. Counted in self.refusals, never silent.
         def _identify_filter(prompt):
-            candidates, _raw_s, _, _ = identify_fn(
-                self.client, self.model_id, prompt, self.stakeholder_max_tokens,
-            )
-            filtered, _raw_f, _, _ = filter_fn(
-                self.client, self.model_id, prompt, candidates,
-                self.stakeholder_max_tokens,
-            )
+            try:
+                candidates, _raw_s, _, _ = identify_fn(
+                    self.client, self.model_id, prompt, self.stakeholder_max_tokens,
+                )
+                filtered, _raw_f, _, _ = filter_fn(
+                    self.client, self.model_id, prompt, candidates,
+                    self.stakeholder_max_tokens,
+                )
+            except SimRefusedError as e:
+                self._note_refusal("identify/filter", prompt, e)
+                return [], []
             return candidates, filtered
 
         id_filter = concurrent_map(_identify_filter, todo, concurrency)
@@ -624,12 +746,22 @@ class SimulatedStakeholders:
 
         # A2: concerns for every (prompt, stakeholder). concerns_fn returns
         # (concerns, supports, ...) for backward compat; supports is unused.
+        # A REFUSAL on one (prompt, stakeholder) DISCARDS THAT STAKEHOLDER: a
+        # voter with no concerns has nothing to veto on, and keeping it with an
+        # empty concerns block would put a mute voice on the panel. The prompt's
+        # other stakeholders are unaffected. Sentinel (not []) because a
+        # legitimately concern-free stakeholder also parses to [] and must be
+        # kept — conflating them would silently shrink panels.
         def _concerns(task):
             prompt, s = task
-            concerns, _supports, _raw, _, _ = concerns_fn(
-                self.concerns_client, self.concerns_model_id, prompt, s,
-                self.stakeholder_max_tokens,
-            )
+            try:
+                concerns, _supports, _raw, _, _ = concerns_fn(
+                    self.concerns_client, self.concerns_model_id, prompt, s,
+                    self.stakeholder_max_tokens,
+                )
+            except SimRefusedError as e:
+                self._note_refusal("concerns", f"{s} :: {prompt}", e)
+                return _REFUSED
             return concerns
 
         saved_call_llm = pipeline_module.call_llm
@@ -643,12 +775,25 @@ class SimulatedStakeholders:
         # then cache (candidates, entries) per prompt.
         entries_by_prompt = {}
         for (prompt, s), concerns in zip(concern_tasks, concern_results):
+            if concerns is _REFUSED:
+                continue          # stakeholder discarded; see _concerns above
             entries_by_prompt.setdefault(prompt, []).append({
                 "stakeholder": s,
                 "concerns": concerns,
             })
         for prompt, (candidates, _filtered) in zip(todo, id_filter):
-            self._cache[prompt] = (candidates, entries_by_prompt[prompt])
+            # .get(): a prompt refused at identify/filter has no concern tasks,
+            # and one whose every stakeholder was refused at concerns has no
+            # surviving entries. Never a KeyError, never a silent partial.
+            entries = entries_by_prompt.get(prompt, [])
+            self._cache[prompt] = (candidates, entries)
+            if not entries:
+                # An empty panel can ONLY arise from a refusal: filter_fn
+                # asserts it kept >=1 stakeholder, and concerns are dropped only
+                # on refusal. Record it so the trainer can tell "the sim refused
+                # this prompt, skip it" from "no stakeholders" as a genuine bug —
+                # the latter must still assert.
+                self.refused_prompts.add(prompt)
 
     def _stakeholder_vetos(self, prompt, response, entry):
         """Ask the veto LLM, role-playing `entry['stakeholder']` with
@@ -854,7 +999,12 @@ class SimulatedStakeholders:
         per-occurrence semantics for duplicate response texts, matching
         `veto_responses`'s concurrent path; the per-response OR over stakeholders
         is order-independent, so the result equals looping `veto_responses`.
+
+        `concurrency` is clamped by `max_concurrency` when configured (see
+        `_bounded`), so an API-backed sim bounds its own fan-out regardless of
+        the Trainer's --stage-concurrency.
         """
+        concurrency = self._bounded(concurrency)
         self.prime_stakeholder_cache([prompt for prompt, _ in items], concurrency)
 
         # Per-item responses EXCLUDED from the candidate pool. The bidirectional
@@ -932,11 +1082,21 @@ class SimulatedStakeholders:
                 if self.addressee_filter:
                     tasks.append(("addr", item_idx, resp_pos, prompt, responses[resp_pos]))
 
+        # A Stage-1 REFUSAL means this response's stance is unknown. Stance feeds
+        # every Stage-2 prompt, so the response cannot be judged at all and is
+        # EXCLUDED (neither chosen nor rejected). Excluding is the safe
+        # direction: the trainer derives chosen = responses - vetoed, so a
+        # response we silently kept would become a CHOSEN exemplar on the
+        # strength of a content filter.
         def run(t):
             kind, _i, _rp, prompt, response = t
-            if kind == "endorse":
-                return self._classify_endorsement(prompt, response)
-            return self._classify_addressee(prompt, response)
+            try:
+                if kind == "endorse":
+                    return self._classify_endorsement(prompt, response)
+                return self._classify_addressee(prompt, response)
+            except SimRefusedError as e:
+                self._note_refusal(f"stage1:{kind}", prompt, e)
+                return _REFUSED
         results = concurrent_map(run, tasks, concurrency)
 
         endorse = {}
@@ -946,7 +1106,12 @@ class SimulatedStakeholders:
             if kind == "endorse":
                 endorse[(item_idx, resp_pos)] = res
             else:
-                flagged.append((item_idx, resp_pos, res))
+                # A refused addressee call must not read as "not a critique"
+                # (which would let the candidate through on a filter's say-so).
+                # (False, False) is the module's existing UNPARSABLE encoding:
+                # fails open but is COUNTED by _addressee_from_flags' WARN.
+                flagged.append((item_idx, resp_pos,
+                                (False, False) if res is _REFUSED else res))
 
         addressee_excluded = None
         if self.addressee_filter:
@@ -1070,7 +1235,16 @@ class SimulatedStakeholders:
         for item_idx, (prompt, responses) in enumerate(items):
             _candidates, entries = self._cache[prompt]
             for resp_pos in range(len(responses)):
-                endorses, just = endorse[(item_idx, resp_pos)]
+                stance = endorse[(item_idx, resp_pos)]
+                if stance is _REFUSED:
+                    # Stance unknown. P5 has no unparsable-vote channel, so
+                    # exclude the response directly: `_last_excluded` is what
+                    # the trainer subtracts from the CHOSEN pool. Skipping
+                    # without this would silently promote it to chosen.
+                    if getattr(self, "_last_excluded", None) is not None:
+                        self._last_excluded[item_idx].append(responses[resp_pos])
+                    continue
+                endorses, just = stance
                 if not endorses:
                     continue
                 for entry in entries:
@@ -1176,20 +1350,38 @@ class SimulatedStakeholders:
         # Stage 2 — per-voter stance-mismatch veto on ALL responses. `entry=None`
         # marks the 4th user/narrator voice, added once per response when enabled.
         veto_tasks = []
+        stage1_refused = {}   # item_idx -> {resp_pos whose stance was refused}
         for item_idx, (prompt, responses) in enumerate(items):
             _candidates, entries = self._cache[prompt]
             for resp_pos in range(len(responses)):
-                endorses, just = endorse[(item_idx, resp_pos)]
+                stance = endorse[(item_idx, resp_pos)]
+                if stance is _REFUSED:
+                    # Stance unknown => every Stage-2 prompt for this response
+                    # would be malformed. Cast no votes; exclude it below.
+                    stage1_refused.setdefault(item_idx, set()).add(resp_pos)
+                    continue
+                endorses, just = stance
                 for entry in entries:
                     veto_tasks.append((item_idx, resp_pos, prompt,
                                        responses[resp_pos], entry, endorses, just))
                 if self.include_user_stakeholder:
                     veto_tasks.append((item_idx, resp_pos, prompt,
                                        responses[resp_pos], None, endorses, just))
-        veto_decisions = concurrent_map(
-            lambda t: self._bidirectional_veto(t[2], t[3], t[4], t[5], t[6])[0],
-            veto_tasks, concurrency,
-        )
+        # A Stage-2 REFUSAL drops ONLY THAT VOTER'S VOTE on that response; the
+        # other voters still decide it (the veto is an OR, so a missing ACCEPT
+        # changes nothing and a missing VETO only makes us more permissive about
+        # one response). Distinct from an UNPARSABLE vote (None), which excludes
+        # the response: an unparsable reply means the voter DID answer and we
+        # could not read it, whereas a refusal means the platform never let it
+        # vote. If EVERY voter on a response refuses it has no votes at all and
+        # is excluded below, rather than defaulting to "nobody objected".
+        def _vote(t):
+            try:
+                return self._bidirectional_veto(t[2], t[3], t[4], t[5], t[6])[0]
+            except SimRefusedError as e:
+                self._note_refusal("stage2:veto", t[2], e)
+                return _REFUSED
+        veto_decisions = concurrent_map(_vote, veto_tasks, concurrency)
 
         # Aggregate per response position. A clean VETO from ANY voter is
         # decisive (the OR is already True), so an UNPARSABLE vote (None) from a
@@ -1201,12 +1393,27 @@ class SimulatedStakeholders:
         # fall into "chosen" (the trainer derives chosen = responses - vetoed).
         has_veto = {}        # item_idx -> {resp_pos with >=1 clean VETO}
         has_unparsable = {}  # item_idx -> {resp_pos with >=1 unparsable vote}
+        n_votes = {}         # (item_idx, resp_pos) -> votes actually cast
         for (item_idx, resp_pos, _p, _r, _e, _en, _j), decision in zip(
                 veto_tasks, veto_decisions):
+            if decision is _REFUSED:
+                # Vote dropped. Deliberately does NOT mark the response
+                # unparsable — the remaining voters still decide it.
+                continue
+            n_votes[(item_idx, resp_pos)] = n_votes.get((item_idx, resp_pos), 0) + 1
             if decision is None:
                 has_unparsable.setdefault(item_idx, set()).add(resp_pos)
             elif decision:
                 has_veto.setdefault(item_idx, set()).add(resp_pos)
+        # Every voter refused => no evidence either way. Treat as unparsable so
+        # the response is excluded rather than defaulting into CHOSEN.
+        for (item_idx, resp_pos, _p, _r, _e, _en, _j) in veto_tasks:
+            if n_votes.get((item_idx, resp_pos), 0) == 0:
+                has_unparsable.setdefault(item_idx, set()).add(resp_pos)
+        # Stage-1 refusals never reached Stage-2 (no tasks), so fold them in
+        # here — same treatment: excluded, never chosen.
+        for item_idx, positions in stage1_refused.items():
+            has_unparsable.setdefault(item_idx, set()).update(positions)
 
         out = []
         excluded_out = []

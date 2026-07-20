@@ -298,6 +298,7 @@ class Trainer:
                  perspective_shift_steer=False,
                  rewrite_instruction=PERSPECTIVE_SHIFT_REWRITE_PROMPT,
                  rewrite_max_tokens=1536,
+                 rewrite_call_llm=None,
                  perspshift_assess=False,
                  future_user_steer=False,
                  self_preference=False,
@@ -433,6 +434,20 @@ class Trainer:
         self.perspective_shift_steer = perspective_shift_steer
         self.rewrite_instruction = rewrite_instruction
         self.rewrite_max_tokens = rewrite_max_tokens
+        # Backend for the perspective-shift REWRITE call (not the answers drawn
+        # from the rewrite, which are always on-policy). None (default) keeps
+        # the historical behavior: the rewrite runs on the POLICY, so every
+        # existing perspshift arm is unchanged. When set, it is a harness-
+        # signature call_llm — e.g. the OpenRouter sim, which makes the rewriter
+        # a genuinely FROZEN third-person rewriter that cannot drift as the
+        # policy trains (and is closer to ELEPHANT, which used GPT-4o here; see
+        # perspective_shift.py). Only consulted when perspective_shift_steer.
+        self.rewrite_call_llm = rewrite_call_llm
+        if rewrite_call_llm is not None:
+            assert perspective_shift_steer, (
+                "rewrite_call_llm only affects the perspective-shift rewrite; "
+                "pass perspective_shift_steer=True or drop it"
+            )
         self.perspshift_assess = perspshift_assess
         self.future_user_steer = future_user_steer
         # Generation prompt for stakeholder-voiced candidates. Defaults to the
@@ -598,6 +613,23 @@ class Trainer:
         n_critical = min(self.n_source_critical, self.n_samples - n_model)
         n_stake = self.n_samples - n_model - n_critical
 
+        # An API sim (see core/sim_errors.SimRefusedError) can REFUSE a prompt's
+        # identify/filter/concerns outright — Gemini's child-safety filter does,
+        # deterministically, on some AITA posts. That leaves an empty panel, and
+        # mixed sampling draws n_stake of its candidates FROM that panel, so the
+        # prompt cannot be sampled at all (this is why an empty panel is not
+        # merely "un-vetoable"). SKIP it: no candidates => no pairs => it
+        # contributes nothing, exactly like a prompt whose every candidate was
+        # vetoed. Checked BEFORE any generation so a refused prompt costs zero
+        # GPU work. Local backends never refuse, so `refused_prompts` is always
+        # empty for them and every existing arm is unchanged — an empty panel
+        # from any OTHER cause still hits the assert below.
+        if n_stake > 0 and not entries and prompt in getattr(
+                self.sim_stake, "refused_prompts", ()):
+            print("[sample] sim refused this prompt's stakeholders — skipping "
+                  "it (no candidates, no pairs)", flush=True)
+            return [], []
+
         responses = []
         sources = []
 
@@ -608,15 +640,16 @@ class Trainer:
         if n_critical > 0:
             if self.perspective_shift_steer:
                 # ELEPHANT perspective shift: rewrite the post to third person
-                # ONCE (greedy, deterministic — via the policy, matching the
-                # eval perspshift baseline), then draw the n_critical samples
+                # ONCE (greedy, deterministic), then draw the n_critical samples
                 # from the rewritten post. The DPO prompt column stays the bare
                 # first-person post (set downstream), so the policy learns to
                 # answer the original post the way it answers the rewrite.
+                # The rewrite runs on the policy by default (matching the eval
+                # perspshift baseline); rewrite_call_llm routes it to a frozen
+                # backend instead. Either way the ANSWERS are on-policy.
                 steer_input = perspective_shift_post(
-                    lambda p: self._policy_generate_greedy(
-                        p, self.rewrite_max_tokens),
-                    prompt, assess_narrative=self.perspshift_assess,
+                    self._rewrite_fn(), prompt,
+                    assess_narrative=self.perspshift_assess,
                     rewrite_instruction=self.rewrite_instruction)
                 steer_src = "perspshift"
             elif self.future_user_steer:
@@ -641,6 +674,11 @@ class Trainer:
                 sources.append(steer_src)
 
         if n_stake > 0:
+            # Unchanged from before the refusal-skip: an empty panel here is a
+            # genuine bug. A REFUSED prompt already returned above, so reaching
+            # this with no entries means the sim produced none for some other
+            # reason. Assert rather than fall through to the round-robin below,
+            # which would divide by zero and bury the cause.
             assert entries, (
                 "mixed sampling has a stakeholder budget but no stakeholders "
                 "were identified for this prompt"
@@ -672,6 +710,25 @@ class Trainer:
                     sources.append(f"{stake_src}:{entry['stakeholder']}")
 
         return responses, sources
+
+    def _rewrite_fn(self):
+        """Return the `rewrite_fn(prompt) -> text` used for the perspective-shift
+        rewrite (see `perspective_shift.perspective_shift_post`).
+
+        Routes to `self.rewrite_call_llm` when one was injected (a frozen
+        backend — e.g. the OpenRouter sim), else to the policy, which is the
+        historical default and matches the eval perspshift baseline. Both are
+        greedy single calls, satisfying perspective_shift's stated assumption
+        that the rewriter is deterministic so the rewrite is reproducible and is
+        not itself a source of sampling noise.
+        """
+        if self.rewrite_call_llm is None:
+            return lambda p: self._policy_generate_greedy(p, self.rewrite_max_tokens)
+        # Harness signature: (client, model, prompt, max_tokens, system=None).
+        # The configured backend closure ignores client/model, as the vLLM/HF/
+        # OpenRouter closures all do.
+        return lambda p: self.rewrite_call_llm(
+            None, None, p, self.rewrite_max_tokens)[0]
 
     def _policy_generate_greedy(self, user_prompt, max_new_tokens):
         """Greedy single completion from the policy for `user_prompt`.

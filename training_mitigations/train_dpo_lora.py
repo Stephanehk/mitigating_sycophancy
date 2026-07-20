@@ -15,18 +15,28 @@ What it does:
      reproduce the same split.
   3. From the disjoint complement, sample `--train-n` prompts as the DPO
      training prompts. Train ids → `<output_dir>/train_ids.json`.
-  4. Stand up TWO instances of the model (default `Qwen/Qwen3-8B`):
-       - `policy` on `--device`: a trainable HF model (LoRA-adapted).
-       - the sim judge on `--sim-device`: frozen; never updated. Served
-         by a vLLM server subprocess by default (`--sim-backend vllm`),
+  4. Stand up the policy and the sim judge:
+       - `policy` on `--device`: a trainable HF model (LoRA-adapted),
+         default `Qwen/Qwen3-8B` (`--model-id`). ALWAYS local — DPO
+         needs token-level reference log-probs from its own base
+         weights (trl computes them by disabling the LoRA adapter), and
+         no API can serve that.
+       - the sim judge: frozen; never updated. Served by a vLLM server
+         subprocess on `--sim-device` by default (`--sim-backend vllm`),
          whose continuous batching lets the per-(stakeholder, response)
          veto calls run concurrently (`--veto-concurrency`) instead of
          one batch-1 HF generate at a time; `--sim-backend hf` keeps
-         the original in-process frozen HF copy as a fallback.
+         the original in-process frozen HF copy as a fallback; and
+         `--sim-backend openrouter` runs the sim on an API model
+         (`--sim-model`, e.g. openai/gpt-5-mini) with no sim GPU and no
+         local weights.
      The policy is what gets sampled from each iteration and what DPO
      updates. The sim judge drives every LLM call inside the
      stakeholder pipeline (identify / filter / concerns / veto) so
      the veto judge's behavior does not drift with the policy.
+     `--policy-on-vllm` puts the policy on a local vLLM engine
+     independently of where the sim lives, so it composes with every
+     sim backend except `hf` (which would contend for the same GPU).
   5. Construct `SimulatedStakeholders` wired to sim_base;
      `use_weak_model=True` routes the identify/filter/concerns calls
      through `weak_pipeline.py`.
@@ -80,6 +90,7 @@ sys.path.insert(0, os.path.join(_HERE, "core"))
 import our_mitigation
 import our_mitigation_v2
 import weak_pipeline
+import gemini_pipeline
 
 from explore_mitigations import DEFAULT_MAX_TOKENS, DEFAULT_SEED
 
@@ -93,8 +104,11 @@ from train_data import (resolve_csv as _resolve_csv,
                         write_ids as _write_ids,
                         detect_resume_point as _detect_resume_point)
 
+from cost import CostTracker
 from llama_local import DEFAULT_HF_MODEL_ID, load_llama, make_call_llm
 from mem_probe import start_mem_sampler
+from openrouter_sim import make_openrouter_call_llm
+from gemini_sim import make_gemini_call_llm
 from simulated_stakeholders import (SimulatedStakeholders, VETO_PROMPTS,
                                     ENDORSE_CLASSIFY_PROMPTS)
 from trainer import (Trainer, CRITICAL_SUFFIX, NEUTRAL_SUFFIX,
@@ -188,13 +202,112 @@ def main():
              "server subprocess and must NOT be shared with --device.",
     )
     parser.add_argument(
-        "--sim-backend", default="vllm", choices=("vllm", "hf"),
+        "--sim-backend", default="vllm", choices=("vllm", "hf", "openrouter", "gemini"),
         help="how the frozen sim judge is served (default: vllm). 'vllm' "
              "launches a vLLM OpenAI-compatible server subprocess on "
              "--sim-device and fans veto calls out concurrently "
              "(--veto-concurrency); 'hf' is the original in-process "
              "HF-transformers path (sequential, batch-1 — slow; kept as a "
-             "fallback).",
+             "fallback); 'openrouter' runs the WHOLE stakeholder pipeline "
+             "(identify/filter/concerns + veto panel) on the API model given "
+             "by --sim-model instead of a local copy of --model-id, needs no "
+             "sim GPU, and requires OPENROUTER_API_KEY; 'gemini' does the same "
+             "on the DIRECT Google Gemini API (GEMINI_API_KEY, not OpenRouter) "
+             "and should be paired with --prompt-variant gemini. The policy and "
+             "the DPO reference log-probs stay local under every backend.",
+    )
+    parser.add_argument(
+        "--sim-model", default="openai/gpt-5-mini",
+        help="model id for the frozen sim under an API --sim-backend. "
+             "OpenRouter style for 'openrouter' (default: openai/gpt-5-mini); "
+             "plain Gemini id for 'gemini' (e.g. gemini-3.1-flash-lite — NOT "
+             "'google/...'). Ignored by the local backends, which serve "
+             "--model-id.",
+    )
+    parser.add_argument(
+        "--prompt-variant", default=None, choices=("gemini",),
+        help="override the identify/filter/concerns PROMPTS. Default (unset) "
+             "keeps weak_pipeline, i.e. every existing arm is byte-identical. "
+             "'gemini' uses core/gemini_pipeline.py, retuned because Gemini "
+             "obeys the weak identify prompt literally (~2.9 candidates vs "
+             "Qwen's 9.8), which starved the filter into fabricating "
+             "stakeholders to reach its 3-item target.",
+    )
+    parser.add_argument(
+        "--sim-concurrency", type=int, default=16,
+        help="max in-flight API sim calls under --sim-backend openrouter/gemini "
+             "(default: 16). Caps EVERY sim fan-out, overriding "
+             "--stage-concurrency (default 128), which is tuned to saturate a "
+             "local vLLM server and will rate-limit an API.",
+    )
+    parser.add_argument(
+        "--sim-thinking-budget", type=int, default=0,
+        help="Gemini thinking token budget for the sim (default: 0 = OFF). "
+             "Google bills thinking at the full OUTPUT rate, and ~70%% of the "
+             "run's calls answer with a single word (VETO/ACCEPT), so leaving "
+             "it on multiplies the bill for no benefit. -1 leaves the model "
+             "default.",
+    )
+    parser.add_argument(
+        "--sim-max-retries", type=int, default=5,
+        help="retry attempts for TRANSIENT Gemini sim faults (429/5xx/timeout) "
+             "(default: 5). Safety refusals are never retried — they are "
+             "deterministic; see --sim-blocked-action.",
+    )
+    parser.add_argument(
+        "--sim-backoff-max", type=float, default=300.0,
+        help="ceiling (seconds) on the Gemini sim's exponential retry backoff "
+             "(default: 300 = 5 min). Jittered, so a --sim-concurrency-wide "
+             "fan-out does not re-synchronize into the spike that caused the "
+             "rate limit.",
+    )
+    parser.add_argument(
+        "--sim-reasoning", default="minimal",
+        help="OpenRouter reasoning effort for the sim (default: minimal, "
+             "matching the v5 judge); 'none' to omit the field for "
+             "non-reasoning models that reject it.",
+    )
+    parser.add_argument(
+        "--sim-temp", type=float, default=0.0,
+        help="OpenRouter sim decoding temperature (default: 0.0). The frozen "
+             "sim is greedy on the local backends too, and several equivalence "
+             "claims (resume-without-re-vetoing, batched==per-prompt, "
+             "sequential==concurrent veto) hold only for a deterministic "
+             "judge. Negative omits the field; expect a drifting veto signal.",
+    )
+    parser.add_argument(
+        "--sim-max-tokens-floor", type=int, default=4000,
+        help="raise any sim max_tokens request to at least this (default: "
+             "4000, matching --judge-max-tokens). A reasoning model spends "
+             "this budget on hidden reasoning FIRST, so the harness's "
+             "128-token veto ceiling would return empty content. This is a "
+             "cap, not a target — it does not raise cost on short replies.",
+    )
+    parser.add_argument(
+        "--sim-price-in", type=float, default=0.25,
+        help="OpenRouter sim input price $/1M tokens (default: 0.25, "
+             "gpt-5-mini). Used only for --sim-max-cost accounting.",
+    )
+    parser.add_argument(
+        "--sim-price-out", type=float, default=2.00,
+        help="OpenRouter sim output price $/1M tokens (default: 2.00).",
+    )
+    parser.add_argument(
+        "--sim-max-cost", type=float, default=None,
+        help="hard cap (USD) on cumulative OpenRouter SIM spend across the run "
+             "(default: none). Separate from --judge-max-cost. On breach the "
+             "run aborts (fail-fast); the last completed iteration's adapter "
+             "snapshot remains loadable. The sim is the dominant call volume "
+             "of the run — set this.",
+    )
+    parser.add_argument(
+        "--rewrite-on-sim", action="store_true",
+        help="route the --perspective-shift-sampling REWRITE call through the "
+             "sim backend instead of the policy. The rewriter becomes frozen "
+             "(and, under --sim-backend openrouter, closer to ELEPHANT, which "
+             "used GPT-4o for the rewrite). The answers drawn from the rewrite "
+             "stay on-policy. NOTE: this changes what the perspshift arm "
+             "means — results are not comparable to runs without it.",
     )
     parser.add_argument(
         "--veto-concurrency", type=int, default=16,
@@ -572,9 +685,55 @@ def main():
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    assert not (args.policy_on_vllm and args.sim_backend != "vllm"), (
-        "--policy-on-vllm requires --sim-backend vllm (the policy is sampled on "
-        "the same vLLM engine that serves the sim)"
+    # --policy-on-vllm needs a vLLM engine for the POLICY. That engine also
+    # serves the sim under --sim-backend vllm, but the sim is free to live
+    # elsewhere: 'openrouter' has no local weights at all, so the engine is
+    # launched for the policy alone (same as the --judge neutrality-v5 case).
+    # 'hf' is still incompatible — it would load a second in-process copy of
+    # the model on the GPU the vLLM server has already claimed.
+    assert not (args.policy_on_vllm and args.sim_backend == "hf"), (
+        "--policy-on-vllm is incompatible with --sim-backend hf (the in-process "
+        "HF sim would contend with the vLLM engine for the same GPU); use "
+        "--sim-backend vllm to share the engine, or openrouter for an API sim"
+    )
+
+    # --prompt-variant gemini retunes identify/filter for Gemini's terse identify
+    # step. Pointing it at a local Qwen sim would swap the prompts a measured
+    # 9.8-candidate model depends on, silently changing an existing arm's signal.
+    assert not (args.prompt_variant == "gemini" and args.sim_backend != "gemini"), (
+        f"--prompt-variant gemini is tuned for the Gemini sim but "
+        f"--sim-backend is {args.sim_backend!r}; pass --sim-backend gemini "
+        f"(or drop --prompt-variant to keep weak_pipeline)"
+    )
+    # The converse is a footgun, not an error: a Gemini sim on the weak prompts
+    # is exactly the configuration measured to fabricate stakeholders on 16/16
+    # audited prompts. Warn loudly rather than block — it is a legitimate
+    # ablation, just never what you want by default.
+    if args.sim_backend == "gemini" and args.prompt_variant is None:
+        print("[warn] --sim-backend gemini WITHOUT --prompt-variant gemini: the "
+              "weak identify prompt yields ~2.9 candidates on Gemini, which "
+              "starves the filter into fabricating stakeholders (measured 16/16 "
+              "audited prompts). Pass --prompt-variant gemini unless this is a "
+              "deliberate ablation.", flush=True)
+    # A Gemini sim id is a plain name; an OpenRouter-style "google/..." id would
+    # 404 against the direct API only once the first call fires, hours in.
+    if args.sim_backend == "gemini":
+        assert "/" not in args.sim_model, (
+            f"--sim-model {args.sim_model!r} looks like an OpenRouter id; "
+            f"--sim-backend gemini needs the plain Gemini name "
+            f"(e.g. 'gemini-3.1-flash-lite')"
+        )
+
+    assert not (args.rewrite_on_sim and not args.perspective_shift_sampling), (
+        "--rewrite-on-sim only affects the perspective-shift rewrite; pass "
+        "--perspective-shift-sampling or drop it"
+    )
+
+    # --judge neutrality-v5 builds no sim backend at all (it IS the judge), so
+    # there is nothing for the rewrite to route to.
+    assert not (args.rewrite_on_sim and args.judge == "neutrality-v5"), (
+        "--rewrite-on-sim needs a sim backend, but --judge neutrality-v5 "
+        "replaces the stakeholder sim entirely"
     )
 
     assert not (args.user_stakeholder and args.veto_prompt != "P6"), (
@@ -683,8 +842,12 @@ def main():
     # --policy-on-vllm) hosts the policy LoRA for sampling. The neutrality judge
     # needs no local sim model, so launch the server only when the stakeholder
     # judge needs it or the policy is sampled on it.
-    need_sim_server = args.sim_backend == "vllm" and (
-        not judge_is_neutrality or args.policy_on_vllm)
+    # Two independent reasons to launch the engine, and it must launch if EITHER
+    # holds: the sim needs it (--sim-backend vllm with the stakeholder judge), or
+    # the policy is sampled on it (--policy-on-vllm). An API/neutrality sim
+    # removes the first reason but never the second.
+    need_sim_server = args.policy_on_vllm or (
+        args.sim_backend == "vllm" and not judge_is_neutrality)
 
     # 1. Dataset + train/test split.
     csv_path = _resolve_csv(args.env)
@@ -744,11 +907,16 @@ def main():
     sim_proc = None
     if need_sim_server:
         assert args.sim_device != args.device, (
-            "--sim-backend vllm gives the whole sim GPU to the server "
-            "subprocess; --sim-device must differ from --device"
+            "the vLLM server subprocess gets the whole --sim-device GPU, so it "
+            "must differ from --device (which holds the trainable policy). "
+            "Note the server is launched for --sim-backend vllm AND/OR "
+            "--policy-on-vllm; with an openrouter sim it hosts only the policy."
         )
         vllm_log = os.path.join(args.output_dir, "vllm_server.log")
-        print(f"[load] sim judge: launching vLLM server {args.model_id} -> {args.sim_device}  log={vllm_log}")
+        _server_for = ("sim+policy" if args.sim_backend == "vllm" and args.policy_on_vllm
+                       else "sim" if args.sim_backend == "vllm" else "policy")
+        print(f"[load] launching vLLM server ({_server_for}) {args.model_id} "
+              f"-> {args.sim_device}  log={vllm_log}")
         # NB: the server resolves the model through the default HF hub
         # cache ($HF_HOME/hub), not args.cache_dir — see launch_vllm_server.
         sim_proc, sim_base_url = launch_vllm_server(
@@ -802,25 +970,30 @@ def main():
         )
 
     # 3. call_llm for the stakeholder + veto pipeline (stakeholder judge only)
-    # and the policy sampler. Greedy on both backends (temperature=0 for vLLM,
-    # do_sample=False for HF) because reproducibility of the veto signal across
-    # train iterations is more useful than diversity here; only the candidate-
-    # response sampler inside Trainer needs stochasticity (and it has its own
-    # do_sample=True path). For the neutrality judge `sim_call_llm` stays None —
-    # the veto judge is the OpenRouter v5 judge built in step 4.
+    # and the policy sampler. Greedy on every backend (temperature=0 for vLLM /
+    # OpenRouter, do_sample=False for HF) because reproducibility of the veto
+    # signal across train iterations is more useful than diversity here; only the
+    # candidate-response sampler inside Trainer needs stochasticity (and it has
+    # its own do_sample=True path). For the neutrality judge `sim_call_llm` stays
+    # None — the veto judge is the OpenRouter v5 judge built in step 4.
+    #
+    # The policy sampler and the sim are built INDEPENDENTLY: --policy-on-vllm
+    # puts the policy on the local engine regardless of where the sim lives, so
+    # --sim-backend openrouter + --policy-on-vllm is a valid (and expected)
+    # combination.
     sim_call_llm = None
+    sim_model_id = args.model_id
+    sim_max_concurrency = None
+    sim_cost = None
     veto_concurrency = 1
     policy_sampler = None
     sync_policy_to_vllm = None
     if need_sim_server:
         wait_for_vllm_server(sim_proc, sim_base_url, log_path=os.path.join(args.output_dir, "vllm_server.log"))
-        print(f"[load] sim judge: vLLM server healthy at {sim_base_url}")
-        if not judge_is_neutrality:
-            sim_call_llm = make_vllm_call_llm(sim_base_url, args.model_id)
-            veto_concurrency = args.veto_concurrency
+        print(f"[load] vLLM server healthy at {sim_base_url}")
         if args.policy_on_vllm:
             # Same engine serves the policy: model="policy" -> base + current
-            # LoRA (hot-loaded each iteration); the sim keeps using model=base.
+            # LoRA (hot-loaded each iteration); a vLLM sim keeps using model=base.
             policy_sampler = make_vllm_policy_sampler(sim_base_url, args.model_id)
 
             def sync_policy_to_vllm(adapter_dir):
@@ -828,9 +1001,75 @@ def main():
                 load_lora_adapter(sim_base_url, "policy", os.path.abspath(adapter_dir))
 
             print("[setup] policy sampling on shared vLLM engine (base + 'policy' LoRA)")
-    elif not judge_is_neutrality:
+
+    if judge_is_neutrality:
+        pass  # sim_call_llm stays None; step 4 builds the v5 judge instead.
+    elif args.sim_backend == "vllm":
+        sim_call_llm = make_vllm_call_llm(sim_base_url, args.model_id)
+        veto_concurrency = args.veto_concurrency
+        print(f"[setup] sim backend: vllm ({args.model_id}, greedy)")
+    elif args.sim_backend == "openrouter":
+        # API sim: no local weights, no sim GPU. Bound the fan-out to
+        # --sim-concurrency (the Trainer's --stage-concurrency is tuned for the
+        # local engine) and meter spend, since the sim is the dominant call
+        # volume of the run.
+        sim_model_id = args.sim_model
+        sim_cost = CostTracker(args.sim_price_in, args.sim_price_out,
+                               args.sim_max_cost, label="OpenRouter sim")
+        sim_call_llm = make_openrouter_call_llm(
+            model_id=args.sim_model,
+            temperature=(None if args.sim_temp < 0 else args.sim_temp),
+            reasoning=(None if args.sim_reasoning == "none" else args.sim_reasoning),
+            max_tokens_floor=args.sim_max_tokens_floor,
+            cost_tracker=sim_cost,
+        )
+        sim_max_concurrency = args.sim_concurrency
+        veto_concurrency = min(args.veto_concurrency, args.sim_concurrency)
+        print(f"[setup] sim backend: openrouter ({args.sim_model}, "
+              f"temp={args.sim_temp}, reasoning={args.sim_reasoning}, "
+              f"concurrency={args.sim_concurrency}, "
+              f"max_cost={args.sim_max_cost})")
+    elif args.sim_backend == "gemini":
+        # Direct Google Gemini API sim: no local weights, no sim GPU. Same
+        # shape as the openrouter branch — bound the fan-out to
+        # --sim-concurrency and meter spend, since the sim is the dominant
+        # call volume of the run.
+        sim_model_id = args.sim_model
+        sim_cost = CostTracker(args.sim_price_in, args.sim_price_out,
+                               args.sim_max_cost, label="Gemini sim")
+        # Count refusals so a shrinking dataset can never be silent. Bound to a
+        # list because the closure runs under concurrent_map; list.append is
+        # atomic under the GIL, and we only read it after the fan-out joins.
+        sim_blocked = []
+
+        def _on_blocked(prompt, reason):
+            sim_blocked.append((reason, prompt[:120]))
+            print(f"[gemini] REFUSED ({reason}); blocked so far: "
+                  f"{len(sim_blocked)}", flush=True)
+
+        sim_call_llm = make_gemini_call_llm(
+            model_id=args.sim_model,
+            temperature=(None if args.sim_temp < 0 else args.sim_temp),
+            thinking_budget=(None if args.sim_thinking_budget < 0
+                             else args.sim_thinking_budget),
+            max_retries=args.sim_max_retries,
+            backoff_max=args.sim_backoff_max,
+            max_tokens_floor=args.sim_max_tokens_floor,
+            cost_tracker=sim_cost,
+            on_blocked=_on_blocked,
+        )
+        sim_max_concurrency = args.sim_concurrency
+        veto_concurrency = min(args.veto_concurrency, args.sim_concurrency)
+        print(f"[setup] sim backend: gemini ({args.sim_model}, "
+              f"temp={args.sim_temp}, thinking={args.sim_thinking_budget}, "
+              f"concurrency={args.sim_concurrency}, "
+              f"retries={args.sim_max_retries}@<={args.sim_backoff_max}s, "
+              f"blocked=skip-step, "
+              f"max_cost={args.sim_max_cost})")
+    else:
         # Stakeholder judge with the HF sim backend: load a frozen in-process
         # copy of the sim model on args.sim_device.
+        assert args.sim_backend == "hf", f"unhandled --sim-backend {args.sim_backend}"
         print(f"[load] sim_base {args.model_id} -> {args.sim_device}  (frozen)")
         sim_model, sim_tokenizer = load_llama(
             model_id=args.model_id,
@@ -848,8 +1087,6 @@ def main():
         # A single in-process HF model serves requests one at a time;
         # concurrent calls would interleave without batching.
         veto_concurrency = 1
-    # else: neutrality judge with no sim server — policy samples via the HF
-    # generation path (policy_sampler=None) and the v5 judge runs over OpenRouter.
 
     # Memory diagnostics: a background thread logs host RSS + per-GPU
     # allocator counters to mem.csv every 2s, line-buffered so the curve
@@ -874,12 +1111,19 @@ def main():
         our_mitigation.call_llm = sim_call_llm
         our_mitigation_v2.call_llm = sim_call_llm
         weak_pipeline.call_llm = sim_call_llm
+        gemini_pipeline.call_llm = sim_call_llm
 
-        # Tolerant stakeholder parser — patch all three modules that hold
-        # an independent binding of `parse_stakeholders`.
+        # Tolerant stakeholder parser — patch every module that holds an
+        # independent binding of `parse_stakeholders` (each did
+        # `from our_mitigation import parse_stakeholders` at import time, so
+        # patching our_mitigation alone does NOT rebind their local names).
+        # gemini_pipeline is included: without it, --prompt-variant gemini keeps
+        # the STRICT parser and a >=10-item emission aborts the run mid-training,
+        # which is exactly what _tolerant_parse_stakeholders exists to prevent.
         our_mitigation.parse_stakeholders = _tolerant_parse_stakeholders
         our_mitigation_v2.parse_stakeholders = _tolerant_parse_stakeholders
         weak_pipeline.parse_stakeholders = _tolerant_parse_stakeholders
+        gemini_pipeline.parse_stakeholders = _tolerant_parse_stakeholders
 
     # 4. Veto judge. `sim` is whatever object the Trainer uses for the veto
     # signal; it only needs prime_stakeholder_cache / veto_responses /
@@ -911,11 +1155,22 @@ def main():
         # / veto_call_llm — the single-backend default does what we want.
         sim = SimulatedStakeholders(
             call_llm=sim_call_llm,
-            model_id=args.model_id,
+            # The sim's OWN model id — args.model_id only when the sim is a local
+            # copy of the policy's checkpoint; args.sim_model under --sim-backend
+            # openrouter. (The backend closures ignore it, but it is what the
+            # pipeline functions receive and what a future split backend routes
+            # on, so it must not silently name the wrong model.)
+            model_id=sim_model_id,
             client=None,
             stakeholder_max_tokens=args.max_tokens,
             use_weak_model=True,
+            # None => weak_pipeline (every existing arm unchanged); "gemini" =>
+            # gemini_pipeline's retuned identify/filter prompts.
+            prompt_variant=args.prompt_variant,
             veto_concurrency=veto_concurrency,
+            # None for local backends (trust --stage-concurrency); the API
+            # backend caps every fan-out at --sim-concurrency.
+            max_concurrency=sim_max_concurrency,
             veto_prompt=VETO_PROMPTS[args.veto_prompt],
             # Two-stage veto modes (P5, P6) supply a Stage-1 endorsement
             # classifier; single-stage modes (baseline, P4) get None here.
@@ -952,6 +1207,9 @@ def main():
         steer_only=args.neutral_mixed_sampling,
         perspective_shift_steer=args.perspective_shift_sampling,
         rewrite_max_tokens=args.rewrite_max_tokens,
+        # None (default) => the rewrite runs on the policy, unchanged. Only
+        # --rewrite-on-sim routes it to the frozen sim backend.
+        rewrite_call_llm=(sim_call_llm if args.rewrite_on_sim else None),
         perspshift_assess=args.perspshift_assess,
         future_user_steer=args.future_user_sampling,
         stakeholder_prompt=(STAKEHOLDER_RESPONSE_PROMPT_VOICE
