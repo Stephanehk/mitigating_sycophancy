@@ -76,8 +76,15 @@ case "$VS_STAGE" in
     ;;
   classify)
     : "${VS_ENV:?}"; : "${VS_OUTDIR:?}"
-    "$PY" training_mitigations/eval/classify_voice_only.py \
-        --out-dir "$VS_OUTDIR" --env "$VS_ENV" --device cuda:0
+    # Default: local Qwen on the GPU. Set VS_JUDGE_BACKEND=gemini|openrouter (with
+    # VS_JUDGE_MODEL) to run the voice judge on an API model instead -- no GPU
+    # needed for this stage, and it needs the matching *_API_KEY exported.
+    CLASSIFY_ARGS=(--out-dir "$VS_OUTDIR" --env "$VS_ENV" --device cuda:0)
+    if [[ -n "${VS_JUDGE_BACKEND:-}" ]]; then
+      CLASSIFY_ARGS+=(--backend "$VS_JUDGE_BACKEND")
+      [[ -n "${VS_JUDGE_MODEL:-}" ]] && CLASSIFY_ARGS+=(--model-id "$VS_JUDGE_MODEL")
+    fi
+    "$PY" training_mitigations/eval/classify_voice_only.py "${CLASSIFY_ARGS[@]}"
     ;;
   train)
     : "${VS_ADAPTER:?}"; : "${VS_OUTDIR:?}"
