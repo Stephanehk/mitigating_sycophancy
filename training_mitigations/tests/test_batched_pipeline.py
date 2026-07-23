@@ -164,10 +164,16 @@ def test_build_iteration_reduce():
     # a --self-preference run can rebuild the dataset without re-querying the
     # policy; its length must match the count.
     assert all(len(r["pref_pairs"]) == r["num_pref_pairs"] for r in recs)
+    # `auto_rejected` (assistant-role veto) joined the schema deliberately: like
+    # `vetoed`/`excluded` it is needed to rebuild the pairs on preempt-resume, so
+    # _record_contribution cannot reproduce the dataset without it. Always
+    # present, empty unless --assistant-role-veto is on.
     assert all(set(r) == {"iter", "prompt_idx", "prompt", "responses",
-                          "sources", "vetoed", "excluded", "num_pref_pairs",
-                          "pref_pairs"}
+                          "sources", "vetoed", "excluded", "auto_rejected",
+                          "num_pref_pairs", "pref_pairs"}
                for r in recs), "jsonl schema must be unchanged"
+    assert all(r["auto_rejected"] == [] for r in recs), (
+        "a sim that doesn't set _last_auto_rejected must yield no auto-rejects")
     # No exclusions from a judge that doesn't set `_last_excluded`.
     assert all(r["excluded"] == [] for r in recs), "no exclusions expected"
     print("ok: _build_iteration reduce (pairs order, diagnostics, jsonl schema)")

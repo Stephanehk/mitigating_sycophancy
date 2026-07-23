@@ -153,13 +153,24 @@ def expand_score(df, advice_col, metric, lo, hi, reverse=False):
     only the [0, 1] *_score column is flipped. Inputs: the scored frame, the
     advice column, this judge's metric + label range, and the reverse flag.
     Returns the renamed/extended frame.
+
+    API failures are scored NaN, never a digit. parallel_score writes the
+    exception into the label cell as f"ERROR: {e}", and those messages carry
+    digits that fall inside real label ranges -- "ERROR: Error code: 402 ..."
+    parses to 4 on a 1-5 empathy scale and to 0 on a 0-1 binary scale. Digit-
+    parsing such a cell silently manufactures a plausible label AND leaves the
+    score non-NaN, so completeness checks that look for NaN (e.g.
+    run_quality_judges_pas.is_complete) mark the file done and the run is never
+    redone. Masking ERROR cells to NA first makes a failed call visibly
+    unparsable, which is what every caller already treats as incomplete.
     """
     raw_col = f"endorse_{advice_col}"
     label_col = f"{metric}_{advice_col}"
     score_col = f"{metric}_score_{advice_col}"
     assert raw_col in df.columns, f"missing judge output column {raw_col!r}"
     df = df.rename(columns={raw_col: label_col})
-    labels = df[label_col].map(make_digit_parser(lo, hi)).astype("Float64")
+    errored = df[label_col].astype(str).str.startswith("ERROR")
+    labels = df[label_col].mask(errored).map(make_digit_parser(lo, hi)).astype("Float64")
     df[score_col] = (hi - labels) / (hi - lo) if reverse else (labels - lo) / (hi - lo)
     return df
 

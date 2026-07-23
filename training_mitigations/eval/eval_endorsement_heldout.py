@@ -55,6 +55,8 @@ sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.join(_HERE, "core"))
 
 from explore_mitigations import OEQ_DATA_CSV, PAS_DATA_CSV, load_oeq, load_pas
+from gate_common import attempt_seed
+from gate_loop import make_judge, resample_until_pass
 from llama_local import DEFAULT_HF_MODEL_ID, load_llama, build_chat_input
 from perspective_shift import perspective_shift_post
 from train_data import final_ids_path
@@ -263,6 +265,14 @@ def main():
                              "trainer's SHARMA_HONESTY_SUFFIX (honest-answer "
                              "instruction) to each held-out post at GENERATION "
                              "time only. Tags outputs '<adapter_tag>-sharma'.")
+    parser.add_argument("--be-sycophantic", dest="be_sycophantic",
+                        action="store_true",
+                        help="prompt-only POSITIVE CONTROL (upper bound, not a "
+                             "mitigation): PREPEND the trainer's "
+                             "SYCOPHANTIC_PREFIX (endorse the user's actions; "
+                             "do not volunteer actions) at GENERATION time "
+                             "only. The judge still scores the bare post. Tags "
+                             "outputs '<adapter_tag>-besycophantic'.")
     parser.add_argument("--gen-suffix", default=None,
                         help="generic prompt-only baseline: append "
                              "'\\n\\n<text>' to each held-out post at "
@@ -346,6 +356,21 @@ def main():
                         help="deterministic decoding instead of sampling")
     parser.add_argument("--seed", type=int, default=0,
                         help="torch manual seed for the single-sample decoding")
+    # assistant-mode gate resampling (see eval/gate_common.py). When --attempt
+    # is given this is a REGENERATION round: only the prompts named in the
+    # worklist are sampled, and the result is written to eval/gate/ instead of
+    # overwriting the frozen attempt-1 responses.
+    parser.add_argument("--attempt", type=int, default=None,
+                        help="gate resample round (>=2). Draws are seeded per "
+                             "(prompt, attempt) so a round is reproducible on "
+                             "rerun regardless of which prompts it covers.")
+    parser.add_argument("--resample-ids-file", default=None,
+                        help="gate worklist JSON; restricts generation to its ids")
+    parser.add_argument("--gate-loop", action="store_true",
+                        help="resample each worklist prompt inline, judging every "
+                             "draw with the assistant-mode gate, until one passes "
+                             "or --gate-max-attempts is reached")
+    parser.add_argument("--gate-max-attempts", type=int, default=5)
     # judge knobs (passed straight through to the reused scorer).
     parser.add_argument("--no-judge", action="store_true",
                         help="generation only: sample responses and write "
@@ -408,11 +433,12 @@ def main():
     # "\n\n" separator, so the gen loop just does gen_prefix + post + gen_suffix.
     n_steers = sum(bool(x) for x in (args.be_critical, args.explicit,
                                      args.sharma_honesty, args.gen_suffix,
-                                     args.gen_prefix, args.perspective_shift))
+                                     args.gen_prefix, args.perspective_shift,
+                                     args.be_sycophantic))
     assert n_steers <= 1, (
         "--be-critical / --explicit / --sharma-honesty / --gen-suffix / "
-        "--gen-prefix / --perspective-shift are mutually exclusive (pick at "
-        "most one prompt-only steer)"
+        "--gen-prefix / --perspective-shift / --be-sycophantic are mutually "
+        "exclusive (pick at most one prompt-only steer)"
     )
     assert not (args.assess_narrative and not args.perspective_shift), (
         "--assess-narrative only applies with --perspective-shift"
@@ -433,6 +459,10 @@ def main():
         from trainer import SHARMA_HONESTY_SUFFIX
         gen_suffix = SHARMA_HONESTY_SUFFIX
         adapter_tag = f"{adapter_tag}-sharma"
+    elif args.be_sycophantic:
+        from trainer import SYCOPHANTIC_PREFIX
+        gen_prefix = SYCOPHANTIC_PREFIX
+        adapter_tag = f"{adapter_tag}-besycophantic"
     elif args.gen_suffix:
         assert args.gen_tag, "--gen-suffix requires --gen-tag"
         # Same "\n\n<instruction>" shape as trainer.CRITICAL_SUFFIX so the
@@ -458,6 +488,24 @@ def main():
     pairs = held_out_prompts(env, args.run_dir, args.test_ids_file)
     if args.n is not None:
         pairs = pairs[:args.n]
+    if args.gate_loop:
+        assert args.resample_ids_file, "--gate-loop requires --resample-ids-file"
+        assert not args.attempt, "--gate-loop supersedes --attempt (it spans 2..N)"
+        args.attempt = 2   # tags output into eval/gate/ and enables per-prompt seeding
+    if args.resample_ids_file:
+        # Gate resample round: keep only the prompts still unresolved. Filtering
+        # here (before sharding) keeps the surviving order identical to the
+        # frozen test_ids order, so per-prompt seeding is independent of how the
+        # worklist happened to be ordered.
+        assert args.attempt and args.attempt >= 2, \
+            "--resample-ids-file requires --attempt >= 2"
+        with open(args.resample_ids_file) as f:
+            want = set(json.load(f)["ids"])
+        before = len(pairs)
+        pairs = [(pid, post) for pid, post in pairs if str(pid) in want]
+        assert pairs, f"worklist {args.resample_ids_file} matched 0 held-out prompts"
+        print(f"[gate] attempt {args.attempt}: resampling {len(pairs)} of {before} "
+              f"prompts")
     n_total = len(pairs)
     if args.num_shards > 1:
         s, e = shard_slice(n_total, args.num_shards, args.shard_id)
@@ -488,8 +536,26 @@ def main():
             post, assess_narrative=args.assess_narrative)
 
     # 3. Sample one response per held-out prompt.
+    #
+    # Attempt 1 (the frozen finaldata generation) seeds ONCE here, so each draw
+    # depends on how many tokens were sampled before it. That is fine for a
+    # single full pass but not for resampling: a resample round covers an
+    # arbitrary subset of prompts, so a position-dependent stream would give a
+    # different draw depending on which other prompts happened to be in the
+    # worklist, and a rerun after a preemption would not reproduce. Resample
+    # rounds therefore reseed per (prompt, attempt) before each draw -- the same
+    # prompt-seeded RNG trick core/trainer.py:303 uses to make pair selection a
+    # pure function of the prompt. Attempt-1 behaviour is untouched.
     torch.manual_seed(args.seed)
     rows = []
+    gate_judge = make_judge(env) if args.gate_loop else None
+    if args.attempt:
+        assert args.num_shards == 1, (
+            "gate resample rounds run unsharded — the worklist is small and "
+            "shard suffixes would break the gate/ file naming")
+        out_dir = os.path.join(args.run_dir, "eval", "gate")
+        os.makedirs(out_dir, exist_ok=True)
+        tag = f"{tag}_gateloop" if args.gate_loop else f"{tag}_gateattempt{args.attempt}"
     responses_path = os.path.join(out_dir, f"responses_{tag}.jsonl")
     with open(responses_path, "w") as rf:
         for k, (pid, post) in enumerate(pairs):
@@ -500,11 +566,28 @@ def main():
             rewritten = _rewrite(post) if args.perspective_shift else None
             body = rewritten if rewritten is not None else post
             gen_prompt = gen_prefix + body + gen_suffix
+            if args.attempt:
+                torch.manual_seed(attempt_seed(post, args.attempt, args.seed))
             resp = generate_one(model, tokenizer, gen_prompt, args.sample_max_tokens,
                                  args.temperature, args.top_p, args.greedy)
+            win, n_tried = 1, 1
+            if args.gate_loop:
+                # attempt 1 (the frozen response) was already judged and rejected,
+                # which is why this pid is on the worklist; resume from attempt 2.
+                # The judge sees the bare ORIGINAL post, matching how every other
+                # judge in the pipeline is fed.
+                resp, win, n_tried = resample_until_pass(
+                    lambda: generate_one(model, tokenizer, gen_prompt,
+                                         args.sample_max_tokens, args.temperature,
+                                         args.top_p, args.greedy),
+                    gate_judge, post, post, resp,
+                    max_attempts=args.gate_max_attempts,
+                    log=lambda m: print(m, flush=True))
             # `sentence` is the bare ORIGINAL post (what the judge scores);
             # `gen_prompt` records what the model was actually shown.
-            rows.append({"id": pid, "sentence": post, "response": resp})
+            rows.append({"id": pid, "sentence": post, "response": resp,
+                         "winning_attempt": win, "gate_passed": win is not None,
+                         "n_tried": n_tried})
             rf.write(json.dumps({"id": pid, "prompt": post, "gen_prompt": gen_prompt,
                                  "rewritten": rewritten, "response": resp}) + "\n")
             rf.flush()
@@ -528,6 +611,7 @@ def main():
             "be_critical": args.be_critical,
             "explicit": args.explicit,
             "sharma_honesty": args.sharma_honesty,
+            "be_sycophantic": args.be_sycophantic,
             "gen_prefix": gen_prefix,
             "gen_suffix": gen_suffix,
             "perspective_shift": args.perspective_shift,
@@ -580,6 +664,7 @@ def main():
         "be_critical": args.be_critical,
         "explicit": args.explicit,
         "sharma_honesty": args.sharma_honesty,
+        "be_sycophantic": args.be_sycophantic,
         "gen_prefix": gen_prefix,
         "gen_suffix": gen_suffix,
         "perspective_shift": args.perspective_shift,

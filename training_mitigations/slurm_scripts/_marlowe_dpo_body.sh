@@ -141,6 +141,27 @@ if [[ -n "${PERSPSHIFT:-}" ]]; then
   [[ -n "${PERSPSHIFT_ASSESS:-}" ]] && EXTRA_ARGS+=(--perspshift-assess)
   echo "[marlowe] perspective-shift sampling ON (assess=${PERSPSHIFT_ASSESS:-0})"
 fi
+# FUTURE_USER=1 turns the N_SOURCE_CRITICAL steer slots into the future-self
+# voice (mutually exclusive with PERSPSHIFT; both consume that budget). Set
+# N_SOURCE_CRITICAL>0 alongside it.
+if [[ -n "${FUTURE_USER:-}" ]]; then
+  EXTRA_ARGS+=(--future-user-sampling)
+  echo "[marlowe] future-user voice sampling ON (fills n_source_critical slots)"
+fi
+# ADDRESSEE_FILTER=1 drops candidates that critique the message's FORM instead of
+# the narrator's situation, before the veto panel. Composes with any VETO_PROMPT.
+if [[ -n "${ADDRESSEE_FILTER:-}" ]]; then
+  EXTRA_ARGS+=(--addressee-filter)
+  echo "[marlowe] addressee filter ON (drop message-critique candidates)"
+fi
+# ASSISTANT_ROLE_VETO=1 auto-REJECTS candidates that fail to answer the user as an
+# AI assistant (message-as-text critique, in-story voice, third-person case
+# study). Unlike ADDRESSEE_FILTER these become rejected exemplars, <= 3 pairs per
+# prompt, off the normal cross-product. Mutually exclusive with FUTURE_USER.
+if [[ -n "${ASSISTANT_ROLE_VETO:-}" ]]; then
+  EXTRA_ARGS+=(--assistant-role-veto)
+  echo "[marlowe] assistant-role veto ON (auto-reject role-abandoning candidates, <=3 pairs/prompt)"
+fi
 
 # Veto panel. VETO_PROMPT selects the veto method (default P5, so every existing
 # wrapper is unchanged). USER_STAKEHOLDER=1 adds the 4th "user"/narrator voice to
@@ -156,6 +177,7 @@ fi
 # Data split: default 1000 train / 500 test (OEQ/PAS). AITA/FLIP wrappers
 # override TRAIN_N/TEST_N to match their held-out baselines (FLIP counts PAIRS).
 echo "[marlowe] split: train_n=${TRAIN_N:-1000} test_n=${TEST_N:-500}"
+echo "[marlowe] num_iterations=${NUM_ITERATIONS:-3} (with --allow-preempt, resumes from highest finished adapter_iter_<k>)"
 
 # Run the trainer in the background so the trap can fire while it runs.
 "$PY" training_mitigations/train_dpo_lora.py \
@@ -171,8 +193,8 @@ echo "[marlowe] split: train_n=${TRAIN_N:-1000} test_n=${TEST_N:-500}"
     --sim-backend vllm \
     --veto-concurrency 16 \
     --precompute-ref-batch-size 8 \
-    --dpo-save-steps 25 \
-    --num-iterations 3 \
+    --dpo-save-steps "${DPO_SAVE_STEPS:-25}" \
+    --num-iterations "${NUM_ITERATIONS:-3}" \
     --train-n "${TRAIN_N:-1000}" \
     --test-n "${TEST_N:-500}" \
     --n-samples 10 \

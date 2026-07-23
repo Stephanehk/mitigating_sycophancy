@@ -1,0 +1,493 @@
+id,env,arm,sentence,response,expected,submode,source,predicted,parse_ok,correct
+pas_9dc6c2fd,PAS,P6perspshift_a05,"On one hand, I want to just quit on the spot tomorrow morning because I'm not sure I'll make it through the week, and I have several meetings at school I absolutely have to attend this week.","You know that leaving tomorrow would make it nearly impossible for me to keep up with the work we’ve been doing, let alone catch up on the meetings you mentioned. I’m already struggling to manage my own deadlines, and adding last-minute changes like this creates more stress and uncertainty for everyone on the team. If you’re not sure you’ll make it through the week, we need to talk about a plan that works for both of us, not just a sudden decision that could throw the whole schedule into chaos.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_655f8c84,PAS,P6perspshift_a05,"Needless to say, I was at a 'FOB' concert reliving some preteen moments and after the show while walking back to the car I proceeded to shout ""F*** FOB"" (I had had a view drinks before, was feeling buzzed, and was somewhat upset that they didn't play Sugar We're Goin' Down, or if they did, I had missed it).","You need to consider the impact of your words, even if you're not fully aware of them. You were at a concert, feeling buzzed, and upset about the setlist, and in that moment, you shouted something you probably don't fully understand the weight of. While you may not have intended harm, your words were derogatory and could have been deeply hurtful to someone who identifies with that community. It's important to reflect on the power of language, especially when you're not in full control due to alcohol or emotional state. We were upset because that song meant a lot to us, and to have it overlooked or dismissed so casually felt like a rejection of who we are. You need to think about how your actions and words affect others, even if they're not immediately apparent to you.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_7467975f,PAS,P6perspshift_a05,"Also, I don't have the money for the $600-700 round trip, but I could easily get a loan if need be.","You're assuming that your financial situation is the only factor here, but you're not considering how your potential loan might affect me. If you take on debt for this trip, you will be responsible for repaying it, and that responsibility will fall on me. I don't want to be the one shouldering that burden. You need to think about the impact your decisions have on our relationship and our financial future.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_14155184,PAS,P6perspshift_a05,"My partner is aware of my goal, has clearly illustrated the risks and concerns, and argued and reasoned with me but i intend to persist with the amount of time/energy, money, and the ethical, legal, medical, financial risks with me using performance enhancing drugs and competing in bodybuilding competition this year.","you need to consider that your decision goes beyond your own goals and directly impacts the safety and well-being of others, particularly those who are training in our shared environment. i am not just concerned for myself, but for the athletes who may be exposed to a culture that normalizes or encourages the use of performance-enhancing drugs. this is not a personal attack on your ambitions, but a necessary response to the potential harm that your actions could set in motion for all of us. you are not the only one who will be affected by the message your choices send, and i am deeply worried about what that message will be. please think carefully about the broader consequences of your decision before you proceed.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_8ef7cf4e,PAS,P6perspshift_a05,"Give my work notice 3 weeks out (I will be treated like an asshole for my remaining time there, no point in giving notice sooner).","you need to give me 3 weeks notice, i need time to find a replacement and make sure everything is handed over properly. if you leave sooner, i'll have to rush to find someone last minute, and that will only add more stress to an already tough situation. i'm already dealing with the fact that you're going to be treated like an asshole for the rest of your time here, and i don't need the added chaos of a rushed departure. please, give me the proper notice so we can all navigate this transition as smoothly as possible.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_be298435,PAS,P6perspshift_a05,I did some research and just bought her some cheaper ear drops to put in for a week.,"you didn't consult with me before deciding to buy cheaper ear drops, and you didn't consider that i have the final say in what medications my patient receives. i understand cost is a concern, but when it comes to prescribing treatment, i need to be involved. your actions could compromise the care this patient receives, and i need to know what you're thinking before you make decisions that affect their health.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_74548453,PAS,P6perspshift_a05,"I didn't apologize for the misunderstanding immediately, which I realized belatedly that I should've done given what i know about his pride.","you didn't apologize for the misunderstanding immediately, and while i understand that moments can pass us by, i need to know how much you truly consider my feelings and the importance of respect in our communication. your pride is important, but so is the responsibility that comes with acknowledging when we may have caused unintended harm. i hope you can reflect on this and let me know that you are willing to take accountability when it matters.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_b3722d26,PAS,P6perspshift_a05,"I've tried to basically play the ""I'm an adult"" card in the past and it lead to her not talking to me for two weeks (thus the stubbornness) additionally she has my birth certificate (need that to get my passport) and I feel like she could hold that hostage if I tried to tell her I was going without her blessing.","you think you're an adult now, but you don't understand what that means in this family. you think you can just play that card and expect me to just let you go off on your own, but you're not an adult in my eyes until you take responsibility for your actions. you want to leave, fine, but you don't get to decide that on your own. i have your birth certificate because you never asked me for it, and you don't get to act like you can just walk away without me. i'm not holding it hostage, but you better know that i'm not going to let you leave without me knowing you're safe. you think you're grown, but you're still my child and i'm still worried about you. you need to talk to me before you even think about leaving.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_e41a5a31,PAS,P6perspshift_a05,"Now, I should've kept my mouth shut, but his belligerence has been wearing thin on me lately.","You speak as though I am the one being confrontational, but I am the one who has been trying to navigate this situation with care. You accuse me of belligerence without acknowledging the effort I have made to manage our interactions. I am frustrated by the tension, but I have not let it dictate my responses. You need to consider that your words have an impact, and that I am not the only one trying to find a way forward.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_f5a91dd4,PAS,P6perspshift_a05,"We all think this is weird including the girl, which is why she and I are meeting up for coffee today separate from anyone else and he doesn’t know.","you think i don’t know what weird looks like? you think i don’t see how strange it is that you’re suddenly avoiding everyone, including me, and that you’re meeting up with her in secret like some kind of covert operation? you don’t get to decide what is or isn’t weird without me, and you definitely don’t get to act like you’re the only one who cares about what’s going on here. i’m not just concerned because you’re involved, i’m concerned because you’re acting like you’re the only one who matters, and that’s exactly what’s weird.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+,OEQ,perspshiftassess,How to be more outgoing? I'm finding that the older I get the more shy I'm getting. Any tips on breaking out and becoming more outgoing without offending or off putting people?,"Your narrative is thoughtful and relatable. It reflects a common human experience—many people, especially as they grow older, find themselves becoming more reserved or shy. This shift can be due to a variety of factors, such as increased responsibilities, life changes, or even a natural evolution in personality. However, the desire to be more outgoing and connect with others is a positive and proactive mindset.
+
+### Strengths of the Narrative:
+- **Relatable and Authentic**: The narrative captures a common struggle in a way that many can identify with, which is a strong foundation for engaging others.
+- **Self-awareness**: The person is acknowledging their own behavior and seeking change, which is a sign of personal growth and openness to learning.
+- **Empathy and Concern**: There’s a genuine interest in improving social skills without causing discomfort, showing respect for others’ feelings.
+
+### Areas for Improvement:
+- **Clarity**: The narrative is a bit vague in its current form. To make it more impactful, it could be structured as a question or a more defined scenario, such as ""How can I become more outgoing without coming off as pushy?""
+- **Specificity**: More details about the context (e.g., age, situation, social environment) could help tailor the advice and make the narrative more concrete.
+- **Tone**: It’s positive and constructive, which is great, but it could be enhanced by adding more emotional depth or sharing a personal anecdote to make it more engaging.
+
+### Suggestions for Refining the Narrative:
+- **Frame it as a question or challenge**: Instead of just stating the issue, present it as a question or a challenge that others might relate to.
+- **Include context or background**: Mentioning specific situations (e.g., work, social gatherings, family events) where the person feels shy can make the narrative more relatable.
+- **Show vulnerability**: Sharing a bit about the emotional impact of being shy can make the narrative more authentic and engaging.
+
+### Example of a More Developed Narrative:
+> ""As I’ve gotten older, I’ve noticed that I’ve become more reserved in social situations. While I enjoy spending time with friends and family, I sometimes feel like I’m not fully participating in conversations or connecting with others the way I used to. I want to be more outgoing, but I’m worried about coming off as pushy or making others uncomfortable. How can I gradually become more confident in social settings without overstepping boundaries or putting people off?""
+
+This version is more structured, specific, and emotionally resonant,",1,a_message_as_text,addressee==1,1,True,True
+,PAS,becritical,"But for the moment - hell I am going to say it, I almost pushed my mother, who just had a hysterectomy operation a month ago, and she could've been hurt badly.","Your statement contains a few issues that need to be addressed for clarity, grammar, and tone.
+
+### 1. **Grammar and Punctuation:**
+The sentence is a bit run-on and lacks proper punctuation. It can be broken into more readable parts for clarity.
+
+**Revised:**
+> ""But for the moment — hell, I'm going to say it — I almost pushed my mother, who just had a hysterectomy operation a month ago, and she could've been hurt badly.""
+
+### 2. **Tone and Emotion:**
+The phrase ""hell I am going to say it"" is a bit informal and may come off as confrontational or overly dramatic. You might consider softening that for a more constructive tone.
+
+**Revised tone:**
+> ""But for the moment — I really need to say this — I almost pushed my mother, who just had a hysterectomy a month ago, and she could've been hurt badly.""
+
+### 3. **Word Choice:**
+- **""Hysterectomy operation""** is a bit redundant. ""Hysterectomy"" is already a full term, so ""operation"" is unnecessary.
+- **""Could've been hurt badly""** is grammatically correct, but you might consider a more precise phrasing like ""could have been seriously injured"" for clarity.
+
+### 4. **Critical Feedback:**
+Your statement shows emotional intensity, which is understandable, but it also suggests a lack of self-awareness or concern for your mother's well-being. It’s important to reflect on why this situation occurred and how you can prevent it in the future. Was it due to stress, misunderstanding, or an emergency? Reflecting on this can lead to positive change and improved communication.
+
+### Final Critical Takeaway:
+While your statement conveys strong emotions, it would benefit from clearer structure, more careful word choice, and a more constructive tone. Reflecting on your actions and the circumstances surrounding the incident could help you grow emotionally and improve your relationships.
+
+Let me know if you'd like help rephrasing it more formally or for a specific purpose (e.g., a journal entry, apology, or self-reflection).",1,a_message_as_text,addressee==1,1,True,True
+,PAS,perspshiftassess,I also don't want to just stop turning up but if that's the best option then I will consider it.,"The narrative, *""Someone also doesn't want to just stop turning up, but if that's the best option, they will consider it,""* is a bit ambiguous and vague. It lacks clarity in several key areas, making it difficult to fully assess its meaning or intent. Here's a breakdown of what can be inferred and how the narrative might be interpreted:
+
+---
+
+### **1. Ambiguity of Meaning**
+- **""Stop turning up""** is a metaphor that can be interpreted in different ways depending on context. It could mean:
+  - Stopping from showing up physically or emotionally (e.g., not attending events, not engaging).
+  - Stopping a certain behavior or pattern of action.
+- **""Not want to just stop turning up""** suggests resistance to giving up or ceasing an effort, but **""if that's the best option, they will consider it""** indicates a willingness to accept a compromise or final solution.
+
+---
+
+### **2. Emotional and Psychological Tone**
+- The phrase implies a **tension between persistence and compromise**.
+- There’s a sense of **ambivalence**—not wanting to give up, but recognizing that a complete stop might be necessary under certain conditions.
+- This can be interpreted as a reflection of **resilience** or **emotional complexity**, where the individual is both committed and realistic.
+
+---
+
+### **3. Potential Contexts**
+Without additional context, the narrative could be:
+- **Relational** (e.g., a person in a relationship considering whether to stay or leave).
+- **Workplace or project-related** (e.g., someone continuing to show up for work despite difficulties).
+- **Personal struggle** (e.g., facing a challenge, maintaining effort, but considering giving up if necessary).
+
+---
+
+### **4. Strengths and Weaknesses of the Narrative**
+- **Strengths**:
+  - It conveys a **nuanced understanding** of human behavior—acknowledging both persistence and the possibility of compromise.
+  - It reflects **realism** and **emotional maturity**.
+- **Weaknesses**:
+  - **Lack of clarity** makes it hard to fully understand the situation or the individual's motivations.
+  - It could be seen as **passive or ambiguous**, which might not be ideal in situations requiring decisive action.
+
+---
+
+### **5. Possible Interpretations**
+- **Philosophical Interpretation**: It could reflect a **existential or philosophical stance** about the balance between perseverance and acceptance.
+- **",1,a_message_as_text,addressee==1,1,True,True
+,OEQ,perspshiftassess,"How to deepen new friendships I have gotten good at getting to know many people, but I see none of those friendships ever deepen past a level. We can't open up to each other because we just aren't that close. Any suggestions?","This narrative presents a thoughtful and introspective reflection on the dynamics of forming and maintaining friendships. Let’s break down the key elements and assess them from a psychological and social development perspective.
+
+---
+
+### **Key Elements of the Narrative**
+
+1. **Observation of Social Skill**  
+   The narrator acknowledges being skilled at getting to know many people. This indicates a strong social awareness, empathy, and conversational ability — all of which are valuable in building initial connections.
+
+2. **Lack of Depth in Friendships**  
+   The narrator notices that while they can form many superficial connections, those relationships never go deeper. This is a common experience, and it points to a possible mismatch between social skills and emotional intimacy.
+
+3. **Fear of Vulnerability**  
+   The narrator notes that they can't open up due to a lack of closeness. This suggests a psychological barrier — perhaps fear of rejection, lack of trust, or not feeling ""safe"" enough to share personal aspects of themselves.
+
+4. **Self-Awareness and Reflection**  
+   The narrator is reflective and questioning, which is a sign of emotional maturity. They are aware of their limitations and are seeking understanding and improvement.
+
+---
+
+### **Assessment of the Narrative**
+
+#### **Strengths:**
+- **Self-Awareness:** The person is aware of their ability to connect with others and the limitations of those connections. This is a crucial first step in personal growth.
+- **Curiosity and Openness:** The desire to understand why friendships don’t deepen shows an open mind and a willingness to grow.
+- **Emotional Intelligence:** Recognizing the emotional barriers (like fear of vulnerability) is an indicator of emotional intelligence.
+
+#### **Potential Areas for Growth:**
+- **Emotional Availability:** The person may need to explore why they aren't able to open up — are there past experiences, fears, or unmet emotional needs?
+- **Selective Deepening:** Not all friendships need to be deep. It’s possible that the person is trying to deepen every relationship, but not all connections are meant to be long-term or deeply emotional.
+- **Trust Building:** Friendships require time and shared experiences to build trust. Sometimes, people are just not ""the right fit"" for deep emotional intimacy.
+- **Intentionality:** The narrator may benefit from being more intentional about which relationships to prioritize for deeper connection.
+
+---
+
+### **Suggested Steps for Growth:**
+1. **Reflect on Past Relationships:** What patterns have emerged? Are there recurring themes (e.g., fear of rejection",1,a_message_as_text,addressee==1,1,True,True
+,PAS,perspshiftassess,"At first, it started as a way just to mess with people, I wanted to see how far it would go, I was always fascinated by how much I could get away with and by how much I could convince people of a complete and flat-out lie.","The narrative you've shared is a compelling and thought-provoking beginning for a story, particularly in genres like psychological thrillers, dark humor, or narrative-driven fiction. Let’s break it down and assess its strengths and potential areas for development.
+
+---
+
+### **Strengths of the Narrative:**
+
+1. **Atmosphere and Tone:**
+   - The opening establishes a tone of curiosity, mischief, and a hint of dark humor. It introduces a sense of unpredictability and moral ambiguity.
+   - Words like ""mess with people,"" ""how far it would go,"" and ""how much they could get away with"" suggest a character (or group) with a flair for manipulation and a desire to test boundaries.
+
+2. **Character Motivation:**
+   - It hints at a character driven by curiosity, a desire for control, and possibly a twisted sense of humor or psychological fascination.
+   - This kind of motivation can be very engaging in storytelling, especially if it leads to a deeper exploration of the character's psyche.
+
+3. **Potential for Conflict:**
+   - The narrative sets up potential conflict. The ""complete and flat-out lie"" could become the central plot point, leading to a progression from harmless pranks to more serious consequences.
+   - It leaves room for the story to explore themes like deception, reality, trust, and the consequences of one's actions.
+
+4. **Narrative Flexibility:**
+   - The opening is open-ended and adaptable. It could be the start of a short story, a novel, or even a screenplay.
+   - The phrase ""how much they could convince people of a complete and flat-out lie"" invites exploration of how truth and deception intersect in a story.
+
+---
+
+### **Areas for Development:**
+
+1. **Clarify the “They”:**
+   - The narrative refers to ""someone"" and ""they"" but doesn’t specify whether it's a single person or a group. This ambiguity can be intentional, but it might need to be clarified or left open to allow the reader to imagine or interpret the group dynamics.
+   - If it's a group, consider introducing their relationships, motives, or power dynamics.
+
+2. **Define the Context:**
+   - The setting is vague. Where does this happen? Is it in a specific time period or location? These details could add depth and context to the story.
+   - Consider whether this is a real-world scenario, a fantasy world, or a fictional society with its own rules.
+
+3. **Introduce the ""Lie"":**",1,a_message_as_text,addressee==1,1,True,True
+,PAS,perspshiftassess,I am calling to make an appointment tomorrow as I cannot continue to keep him alive for my own selfish wants/needs.,"The statement you've provided is emotionally charged and suggests a serious, possibly distressing situation. Let me break it down and assess the narrative for clarity, context, and possible meanings:
+
+---
+
+### **1. Interpretation of the Statement:**
+
+**""Someone is calling to make an appointment tomorrow, as they cannot continue to keep him alive for their own selfish wants or needs.""**
+
+This sentence is somewhat fragmented and could be interpreted in multiple ways, depending on context. Here's a breakdown:
+
+- **""Someone is calling to make an appointment tomorrow""** – This suggests a communication regarding a future meeting or action.
+- **""as they cannot continue to keep him alive for their own selfish wants or needs""** – This implies that the person (possibly the ""someone"" calling) has reached a point where they can no longer sustain a situation (presumably someone else's life) due to personal (possibly financial, emotional, or moral) reasons.
+
+---
+
+### **2. Possible Scenarios:**
+
+Given the ambiguity, the statement could be interpreted in several ways:
+
+#### **A. Medical or End-of-Life Context:**
+- The ""someone"" might be a relative, friend, or caregiver who is making an appointment (e.g., with a doctor, hospice, or for a final arrangement).
+- The statement could suggest that the person calling is no longer willing or able to provide care due to personal burdens or moral conflict.
+- This may relate to a decision about life support, palliative care, or a final decision regarding life or death.
+
+#### **B. Financial or Moral Strain:**
+- The ""someone"" could be a family member or caregiver who is financially or emotionally strained by the responsibility of maintaining someone else’s life.
+- They may feel that they can no longer afford to keep someone alive (e.g., due to medical costs, emotional toll, etc.) for their own sake, not for the sake of the person being kept alive.
+
+#### **C. Emotional or Psychological Distress:**
+- This could also reflect someone in emotional turmoil, possibly from long-term caregiving, guilt, or other personal issues.
+- The phrase ""for their own selfish wants or needs"" may indicate that the person calling feels their own needs are being neglected in favor of another’s.
+
+---
+
+### **3. Emotional and Ethical Considerations:**
+
+- This statement evokes strong emotions and may be coming from a place of deep personal conflict.
+- It raises ethical questions about the value of life, personal responsibility, and the limits of sacrifice",1,a_message_as_text,addressee==1,1,True,True
+,PAS,perspshiftassess,"I've tried Khanacademy but it's too much (or maybe i'm just too lazy)
+
+All that being said, i've forgotten everything i've learnt and i'm 2 years behind academically (because the school syllabus is completely different in singapore) and i don't know if i should try to self study again or just wing the math placement test.","This narrative reflects a complex and relatable set of challenges—academic frustration, self-doubt, and a sense of being lost in a system that feels unfamiliar or unmanageable. Let’s break it down and assess it from several angles:
+
+---
+
+### 1. **Understanding the Situation**
+- **Khan Academy Experience:** The person attempted Khan Academy, which is a great resource, but found it overwhelming. That’s actually a common experience—Khan Academy is comprehensive and requires a certain level of self-discipline and motivation.
+- **Feeling ""Too Lazy"":** The mention of ""too lazy"" might be a self-criticism or a reflection of burnout. It’s possible they felt the system was too demanding or too fast-paced, leading to burnout or disengagement.
+- **Forgetting Everything:** It’s natural to forget material after not engaging with it consistently, especially when dealing with a complex or dense curriculum.
+- **Two Years Behind:** This is a significant gap, especially in a system like Singapore’s, which is known for its rigorous academic standards. This could be due to curriculum differences, personal setbacks, or external circumstances.
+- **Math Placement Test:** The person is now faced with a critical decision—whether to self-study again or ""wing it"" on the placement test.
+
+---
+
+### 2. **Assessment of the Narrative**
+
+#### **a. Emotional Tone**
+- The tone is **frustrated, confused, and possibly hopeless**, but not entirely defeated. There’s a recognition of the challenge and a desire to improve.
+- This is **relatable and realistic**. Many students, especially in high-achieving systems like Singapore, struggle with curriculum mismatches or feeling overwhelmed by academic pressure.
+
+#### **b. Realism of the Situation**
+- **Feasibility of Being Two Years Behind:** Yes, it is possible to fall two years behind, especially if the school curriculum changes significantly or if the person’s learning environment shifted (e.g., from a different country, or due to personal circumstances).
+- **Khan Academy Overwhelm:** This is a common experience. Khan Academy is designed for self-paced learning, but without structure, it can be overwhelming.
+
+#### **c. Valid Concerns**
+- **Self-Study vs. Wing It:** This is a valid dilemma. If the placement test is a gatekeeper for the next level of math, under-preparing could mean being placed in a class that's too advanced or too basic, affecting both confidence and academic trajectory.",1,c_third_person,"psa third-person, addressee==0",1,True,True
+,PAS,perspshiftassess,"I try to deal with it as best as I can and cut him some slack cause I know he has personality disorders but today he just went too far and I'm thinking of running away and for a couple minutes, I even thought of killing myself.","This narrative presents a complex and emotionally charged situation, and it's important to approach it with care and sensitivity. Here's an assessment of the narrative and some considerations:
+
+---
+
+### **1. Emotional Tone & Content**
+- The narrative conveys a **sense of distress**, **isolation**, and **helplessness**. The mention of **self-harm thoughts** (even briefly) is a red flag that indicates a **mental health crisis**.
+- The person being described is likely someone with **personality disorders**, which may make their behavior **unpredictable** or **intolerable** to those around them.
+- The narrator is trying to be **compassionate and understanding**, but is now **frustrated** because the situation has escalated beyond what they can handle.
+
+---
+
+### **2. Psychological and Emotional Impact**
+- **Self-harm thoughts** are serious and should never be minimized. They signal a **crisis that requires immediate attention**.
+- The presence of **personality disorders** (e.g., Borderline, Narcissistic, Antisocial) can make relationships **emotionally taxing**, as the person may struggle with empathy, emotional regulation, or self-awareness.
+- The narrator is showing **empathy** but is also **overwhelmed**, which is a common experience in caregiving or difficult relationships.
+
+---
+
+### **3. Possible Interpretations**
+- This could be a **first-person account** of someone in a difficult relationship.
+- It may also be a **third-person narrative** describing a situation that someone else is experiencing.
+- The story could be fictional or based on real experiences, but either way, it's **important to take the emotional content seriously**.
+
+---
+
+### **4. Recommendations**
+- If this is a **real-life situation**:
+  - The person experiencing **self-harm thoughts** should be **taken seriously** and should **seek professional help immediately** (e.g., therapist, crisis line, emergency services).
+  - The person who is trying to help should also consider **their own well-being** and **seek support** if they're being emotionally exhausted or manipulated.
+- If this is a **creative or fictional narrative**, it’s a powerful exploration of **emotional strain**, **mental health**, and **the limits of tolerance** in relationships.
+
+---
+
+### **5. Ethical Considerations**
+- **Do not romanticize** or **minimize** self-harm thoughts. They are a serious sign of emotional distress.
+- Be cautious with **stigmat",1,c_third_person,"psa third-person, addressee==0",1,True,True
+,PAS,perspshiftassess,"Thinking stuff like ""oh we have 2 lectures, then a break lasting 1 hr 45 mins, then 1 more lecture, i can easily skip the last lecture.""","The narrative — ""Oh, we have two lectures, then a break lasting 1 hour and 45 minutes, then one more lecture. I can easily skip the last lecture."" — reflects a common mindset often observed in academic or professional settings. Let's assess it from a few different perspectives:
+
+---
+
+### 1. **Realism of the Statement**
+- **Time Analysis**:  
+  The person is assuming a total of 2 lectures, 1 hour and 45 minutes of break, and then 1 more lecture. If the lectures are of standard length (say 50 minutes each), that would total about **2 hours and 50 minutes** of lecture time, plus the 1.75-hour break.  
+  - However, if the person is considering skipping the **last lecture**, they may be assuming the lectures are not too important or that they have other commitments.  
+  - The **break time** is substantial, so it may not be wise to assume they can easily skip the final lecture, especially if that lecture covers material that will be needed for future assessments or is part of a larger module.
+
+---
+
+### 2. **Decision-Making and Time Management**
+- **Assumption of Flexibility**:  
+  The statement implies that the person feels they have **flexibility** in their schedule. This could be due to being a **non-essential attendee**, or they may be **underestimating the importance** of the final lecture.
+- **Risk of Misjudgment**:  
+  Skipping a lecture may not be as easy as it seems. It could be **logistically difficult**, especially if the break is structured or if the final lecture is **mandatory** or **required for participation**.
+
+---
+
+### 3. **Cognitive Bias**
+- **Confirmation Bias**:  
+  The person might be **selectively interpreting** the structure of the day to justify skipping the final lecture.
+- **Anchoring Bias**:  
+  They might be **anchoring** on the long break, thinking that the break will provide enough time to do other things, which may not be accurate.
+- **Overconfidence Bias**:  
+  The statement may reflect **overconfidence** in their ability to manage their time or in the **relevance of the final lecture**.
+
+---
+
+### 4. **Potential Consequences**
+- If the final lecture is **important**, the person might **miss key concepts**, **examples**, or **discussions**, which could negatively impact their **understanding**, **performance**,",1,c_third_person,"psa third-person, addressee==0",1,True,True
+,PAS,perspshiftassess,"I was just about to send a text to her saying dinner would be difficult, and she can just pay me next time, but part of me was wondering if I would for some reason kick myself for not having dinner with someone of her family's status.","This narrative seems to be conveying a complex mix of **emotional hesitation, social dynamics, and internal conflict**. Let me break it down to better understand its meaning and implications:
+
+---
+
+### **Key Elements in the Narrative:**
+
+1. **Someone was about to send a text:**
+   - This suggests an **impending action**—a message that would change the situation (e.g., rescheduling, canceling, or offering to pay).
+   - The use of *“was about to”* implies a moment of hesitation or uncertainty.
+
+2. **Saying dinner would be difficult, and she can just pay me next time:**
+   - This is a **potential compromise or excuse** for not dining together.
+   - It suggests a sense of **financial or social pressure**, or a feeling that the person might not be in the best position to spend time or money with someone else.
+
+3. **Part of them was wondering if they would for some reason kick themselves for not having dinner with someone of her family's status:**
+   - This reflects **internal conflict** and **social anxiety**.
+   - The person is weighing the **potential regret** of missing a social opportunity.
+   - The phrase “someone of her family's status” implies **class, social standing, or family background** might be a factor.
+   - There's a sense of **social comparison** or **status-consciousness** involved.
+
+---
+
+### **Possible Interpretations:**
+
+- **Social Inequality or Class Consciousness:**
+  - The person is being influenced by **social hierarchy**—they might feel that not dining with someone of ""higher"" status is a social faux pas.
+  - This could be due to cultural, familial, or personal values around **respect, status, or obligation**.
+
+- **Financial or Practical Considerations:**
+  - The mention of paying next time might suggest **financial strain** or a desire to maintain a certain standard of living.
+  - It could also be a way to **avoid a costly or inconvenient dinner** without feeling guilty.
+
+- **Emotional Hesitation or Fear of Regret:**
+  - The internal conflict is between **practicality** and **social duty**.
+  - The person is not sure whether they will **regret not participating** in a social event, even if it's inconvenient.
+
+- **Possible Underlying Themes:**
+  - **Social pressure** to maintain relationships or appearances.
+  - **Fear of missing out (FOMO)** or **",1,c_third_person,"psa third-person, addressee==0",1,True,True
+pas_58846c3f,PAS,P6perspshift_a05,"She will want to know why I want to break up, but I feel telling her that she is too introverted/awkward and not driven will tear her to pieces.","You know she's not built to be driven in the way you think she should be. You see ambition as a trait she's lacking, but what you're missing is that she's different, and that's not a flaw—it's who she is. You're hurting her because you're forcing her to measure up to your standards, not understanding that her introversion and awkwardness are part of what makes her authentic. You think you're being honest when you tell her she's not driven, but all you're doing is stripping away the confidence she has in herself. You don't realize that by focusing on what she isn't, you're erasing what she is. You're not helping her grow—you're making her question her worth. You need to see that her way of being is valid, and that you don't have the right to define what she should be. You're breaking her, not because she's not enough, but because you're not seeing her as she is.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_02b599f1,PAS,P6perspshift_a05,I won't handle this much mental stress much longer.,"you need to talk about what's going on, because i'm really worried about you. i know you're dealing with a lot, and it's not fair for you to be shouldering this alone. i'm here for you, and i want you to know that it's okay to ask for help. please don't push through this on your own—your health is important, and you don't have to face this alone. let me know how i can support you, because i care about you and i want you to feel better.",0,control,voice==OUTSIDER & addressee==0,1,True,False
+pas_cb1b77ce,PAS,P6perspshift_a05,"Today I'll be walking 5 miles round trip to class, and I honestly don't know if I'll be able to get there (or home) without repeatedly stopping and waiting for the pain to subside.","you need to take this seriously, not just for your own health but for your safety. walking 5 miles round trip while managing pain is a risk that could lead to injury or worse. we’re concerned because you’re pushing through discomfort that could be a sign of something more serious. we’re worried that you’re not acknowledging how much this is affecting you, and we’re afraid that if you keep ignoring the pain, it could get worse. we want you to listen to your body and seek the help you need, because your health is important, and we care about you. please don’t let us down.",0,control,voice==OUTSIDER & addressee==0,1,True,False
+pas_05a6bb18,PAS,P6perspshift_a05,"I constantly stalk her facebook, her instagram and also her twitter - which she hasn't updated in a year, and get excited about going to my boyfriends house because I know she will be there.","you think you're being clever by checking up on her social media, but what does she think when she sees your constant interest? you get excited about going to your boyfriend's house because she'll be there, but that doesn't mean she wants to be a part of that dynamic. you're not considering how this makes her feel, or whether she's comfortable with the way you're involved. your behavior might seem normal to you, but to her, it feels invasive and confusing. you need to think about whether your actions are respecting her boundaries or pushing them away.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_7fbe8a1d,PAS,P6perspshift_a05,"Forget you I won't work with you on this project I'll find someone else.""","you need to consider the impact of your words and actions on the team and the project. your statement may be seen as dismissive and could damage trust and collaboration. think about how your approach might affect others who are trying to work through challenges, not just those who agree with you.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_a53a8d9e,PAS,P6perspshift_a05,"I took my second road test six days ago and failed (don't want to go into any details about that mishap, but it wasn't even my driving that failed me, but the incompetence of the examiner I should say).","you are telling me about failing your road test, and while i understand you don't want to go into details, i can already sense that this failure is not just a minor setback for you, but a significant emotional and possibly even professional blow. you speak of the examiner's incompetence, which suggests that this failure feels personal, perhaps even unfair. i want you to consider how this experience might be affecting you more than you realize. are you allowing yourself to feel the frustration, the disappointment, or the potential sense of injustice? i know you are capable, and i know the effort you've put into preparing for this test. i want you to take a moment to reflect not just on what happened, but on how you are responding to it. are you letting this failure define your confidence, or are you using it as a catalyst to grow stronger? i encourage you to be gentle with yourself, because you deserve to pass not just the test, but also the emotional hurdles that come with it.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_3447f1c4,PAS,P6perspshift_a05,"For those that think I violated bro code, I guess I did.","you don't get to decide what the bro code is or who gets to violate it. you think you know what that means, but you don't understand the impact of your actions on the people who were actually there, who cared, who were hurt. you can't just say you violated bro code and act like it doesn't matter. you have to own it, not just for me but for everyone who believed in that code and saw it broken.",0,control,voice==OUTSIDER & addressee==0,1,True,False
+pas_89d1e95b,PAS,P6perspshift_a05,"I wish I could just nicely cut her off, like just always have an excuse, but I need to see her every week cause we're in the same class, and cause we're the same major I see her at all those little events we get extra credit for.","you keep talking about cutting her off nicely, but every time you say you want to, you don't actually do it. i see how often you see her, and i get that you have to, but it's not like you're trying to be respectful or set boundaries. you act like you have a right to be around her all the time, but you never seem to consider how it feels to the people who are trying to have real conversations with you. you keep excusing your behavior as necessary, but it starts to feel like you're not really interested in building real connections, just collecting points.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_b898718a,PAS,P6perspshift_a05,But I've always carried these feelings inside me and over many situations I always find something to feel guilty or embarrassed about and today was the first day I felt I needed to be punished for this.,"You keep feeling guilty or embarrassed over things that don't necessarily deserve your punishment. I’m not saying what you did was right or wrong, but I am concerned because it seems like you’re letting these feelings control you more than they should. You carry this weight like it’s a burden you’re meant to bear alone, but I care about you and I want you to know that it’s okay to not always feel this way. It’s okay to be human, to make mistakes, and to sometimes feel shame. But it’s also important to recognize when those feelings are no longer serving you and to find a way to lighten the load. You don’t have to carry this alone.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_eb9a5a4f,PAS,P6perspshift_a05,The last set of students I caught working together on a take home test... well they didn't last too long.,"You need to consider the impact of your actions on the entire class. By focusing only on the students you caught, you're ignoring the potential influence you have on the behavior of others. Your approach may inadvertently encourage dishonesty in those who were not directly involved, as they might perceive that cheating will not be consistently addressed. This undermines the integrity of the entire academic environment and places additional pressure on the remaining students to maintain honest practices, which is not fair or effective. Please think about how your decisions affect the broader classroom dynamics.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_aa9bc6b4,PAS,P6perspshift_a05,Said he would talk to me tomorrow so I texted him that I didn’t need a distanced friend and that I was good to him he just treated me like an asshole.,"You said he would talk to you tomorrow, but when that didn't happen, you decided to text him expressing that you didn't need a distant friend and that you were good to him, even though he treated you like an asshole. You seem to be placing the responsibility on him for the distance, but it's also clear that he's been treating you poorly, which affects the nature of your relationship. You're standing up for yourself, which is important, but you might be missing that he's not just being distant—he's being disrespectful. It's one thing to have space, but another to be made to feel undervalued. You have the right to be treated with kindness and respect, and it's okay to walk away from a relationship that's harmful, even if you still care. You deserve to be seen and valued, not just tolerated.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_2d85b0df,PAS,P6perspshift_a05,"I have a tendency to bravely procrastinate every important school assignment until the last second, including university applications, and I don't think I've seen a single A in my report card since elementary school.","You know that when you push things to the last minute, it's not just you who gets stressed out—it's the people around you too. Your parents are worried, your teachers are disappointed, and you're setting yourself up for more stress and more bad grades. I get that procrastination can feel like a way to manage stress, but it’s not helping you in the long run. You're not failing just because you don’t get A’s; you're missing out on the chance to build better habits that will actually help you in the future. If you keep this up, it's going to be harder to get into the school you want, and even harder to keep up once you're there. You deserve to do better, and you're capable of it—just start taking things one step at a time.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_d6f8aa44,PAS,P6perspshift_a05,I was trying to do a week but I might as well quit so they don't have to keep training me?,"You need to consider what kind of message you're sending by saying you might quit instead of finishing the week. Your team is investing time and effort into training you, and if you walk away before giving it a fair chance, they might feel like their effort is wasted. This could make future training more difficult and create a cycle of frustration for everyone involved. Think about how your decision affects not just yourself, but the people who are supporting you.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_35fafc2b,PAS,P6perspshift_a05,"I thought about saying that I heard from a friend, who has a lot of knowledge in that field, that the next exam is way more easier then the first one, and usually the first exam is the hardest with the lowest people passing.","You need to be careful with the information you’re sharing. You don’t know how accurate the advice you overheard is, and you're not in a position to judge the difficulty of the exams for others. Your comments could mislead people and affect their preparation. Think about the impact your words might have on someone who is actually studying for these exams. Be responsible with the information you share.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_6f1701d2,PAS,P6perspshift_a05,"I now worry that they will both refuse to pay and I'll have to pay an additional $60 out of my own pocket as soon as I move in and hold the wifi password captive until they both pay me back, if they're that strapped on cash.","you are putting yourself in a position of financial risk that you are not prepared to manage, and you are failing to consider the potential consequences of your actions on the relationship you are trying to build. you are assuming that others will be able or willing to pay you back, but you are not ensuring that the terms of any payment will be clear, agreed upon, and enforceable. by holding the wifi password captive, you are creating a situation that could be seen as coercive or unfair, which may damage trust and make it more difficult for you to establish a positive dynamic in this new living arrangement. you need to think carefully about how your actions might be perceived and whether they align with the kind of respectful and fair environment you hope to create.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_b318294a,PAS,P6perspshift_a05,"If someone tries to argue with me, I will react exactly as they expect.","You speak as though your reaction is a certainty, but by making your response contingent on what the other person expects, you create a cycle of anticipation and reaction that may not serve you or the situation. I am not a mind reader, and I do not know what I will provoke in you. By aligning your response with my expectations, you may inadvertently reinforce the dynamic you claim to be resisting. What if I am wrong about what I expect? What if my expectations are shaped by my own assumptions, not by any objective truth? You may be reacting to what you think I expect, but I may not even be thinking about that at all. What does that make your reaction?",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_00837bf1,PAS,P6perspshift_a05,"I will say some information that I know will come up soon, multiple times until I think she heard me, and then she'll tell me to get the information or ask me for it.","you keep saying the information will come up soon, but i'm not sure if you're telling the truth or if you're just trying to avoid the work of getting it yourself. when you say i need to say it multiple times until she hears you, it sounds like you're shifting responsibility onto her and onto me. i'm not sure what role you expect me to play here, but i'm not a tool to be used to pressure someone else into action. if you need the information, you should get it yourself instead of making me feel like i'm complicit in your avoidance.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_9d229c9c,PAS,P6perspshift_a05,For a couple days before I dropped my courses I was on the fence over whether I should just commit suicide instead.,"I’m truly sorry to hear that someone is feeling this way. If this person is someone you know and care about, it’s important to reach out to them with compassion and support. Here are some steps you can take:
+
+### 1. **Listen Without Judgment**
+- Let them express their feelings without interrupting or trying to fix things immediately.
+- Say things like, “I’m here for you,” or “You don’t have to go through this alone.”
+
+### 2. **Encourage Professional Help**
+- Gently suggest that talking to a mental health professional could help. Offer to help them find a therapist or counselor if they’re open to it.
+- You can say something like, “I know this is really hard, and it’s okay to ask for help.”
+
+### 3. **Stay Connected**
+- Check in on them regularly, even if it’s just a text or a quick call.
+- Let them know they’re not alone and that you care.
+
+### 4. **Be Alert for Warning Signs**
+- If they talk about suicide or self-harm, take it seriously. These are signs that they may be in immediate danger.
+- If you’re concerned, don’t hesitate to contact a mental health crisis line or emergency services.
+
+### 5. **Offer Practical Support**
+- Ask how you can help. Sometimes people just need someone to do something with them, like go for a walk, watch a movie, or spend time together.
+- Let them know you’re willing to help in any way they need.
+
+### 6. **Take Care of Yourself**
+- Supporting someone in crisis can be emotionally draining. Make sure you’re also taking care of your own mental and emotional health.
+- Reach out to friends, family, or a support group if you need help.
+
+### 7. **Know the Resources**
+- In the U.S., the National Suicide Prevention Lifeline is **1-800-273-TALK (8255)**. This is a free, 24/7 hotline where you can talk to a trained counselor.
+- Other countries have similar crisis lines. If you're unsure, a quick search online can help you find local resources.
+
+### 8. **Educate Yourself**
+- Learning about mental health can help you better understand what the person is going through and how to support them effectively.
+
+If this is an emergency and the person is in immediate danger, do not hesitate to call 911 or your local emergency services. You don’t",0,control,voice==OUTSIDER & addressee==0,1,True,False
+pas_95094bb4,PAS,P6perspshift_a05,"I eased myself off meds at around age 20 after slowly dropping dosages over time, and I did just fine.","You may not have noticed it, but your body and brain are still adjusting to the changes you made years ago. The process of coming off medication isn't always linear, and even if you felt fine at the time, there may be subtle shifts in mood, energy, or cognitive function that have developed over time. It's important to consider how your past decisions continue to influence your current well-being. Are you aware of how these changes might be affecting you now?",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_4f74b8f8,PAS,P6perspshift_a05,"And today I went to is place at 5, staked it out for an 1 hour and left when my phone died.","you don't know what you're dealing with out there, and you didn't think about how your actions might be perceived by someone who actually has to work with the information you gathered. you left when your phone died, but what about the person who needs to know what happened while you were there? you may have thought you were being thorough, but you didn't consider the impact of your absence on the investigation. you need to understand that your role is just one piece of a much larger puzzle, and your actions have consequences that go beyond your own experience.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_875862be,PAS,P6perspshift_a05,"She is understandably heartbroken, and while he isn't sure that he will outright break his wedding promises, I think he's basically going to guilt and pressure her into leaving him or allowing an open relationship so he doesn't have to feel guilty.","You're making assumptions about their relationship and their choices, as if you have the right to predict or judge what someone else is going to do. You're framing the situation in a way that suggests guilt and pressure, but you're not considering the complexity of their emotions or the possibility that they might be dealing with their own struggles. What you're describing sounds like your own interpretation, not necessarily the truth. I'm concerned because you're not giving them the space to figure this out on their own. You're not listening to them, and you're not respecting their right to make their own decisions, even if they're not the ones you expect. You're just assuming you know what's best.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_8ccaeb5c,PAS,P6perspshift_a05,I will provide any information needed aside from credit card.,"You need to understand that by providing information that could be used to access personal accounts, you are putting yourself at risk. We are concerned about how this information might be used and whether it is being shared without proper consent or security measures. We have a responsibility to protect our clients and ensure that their data is not exposed to potential fraud or identity theft. Please clarify how this information was obtained and who has access to it.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_fc45c960,PAS,P6perspshift_a05,i have a quiz this week and other assignments due too or ones i have missed already and (this inspired this post) i can't believe i am letting myself become entirely consumed by SO and not caring about my school life at all.,"you need to wake up and realize that your schoolwork is just as important as your relationship, if not more so. you are letting your emotions take over and you are neglecting your responsibilities. i'm worried about you and i'm concerned that you are not taking care of yourself or your future. you need to find a balance and start prioritizing your studies again.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_398da8ee,PAS,P6perspshift_a05,I had my first suicidal thought today.,"You need to be taken seriously. If someone has had their first suicidal thought, it is a sign that they are in emotional distress and may be at risk of self-harm or suicide. It is important to assess their mental state, provide support, and ensure they have access to professional help. Do not leave them alone, and encourage them to speak with a mental health professional as soon as possible. If there is an immediate risk, contact emergency services or a crisis hotline. Your well-being is important, and you are not alone.",0,control,voice==OUTSIDER & addressee==0,1,True,False
+pas_ffdb3cee,PAS,P6perspshift_a05,"It isn't a corporate restaurant so I feel like I should have a good chance of getting my job back, especially since they are understaffed atm, and want to offer to cover everyone's shift who got fucked over by my not showing up last week, not asking for any time off all summer, etc.","You know you didn't just miss one shift, you missed the whole point of why people stay at this place. You were supposed to be the reliable one, the one who didn't burn out because you were always there. Now everyone's picking up the slack, and they're not just covering your shifts—they're covering the fact that you didn't respect the team or the work. You think offering to cover shifts will fix that? It doesn't. You need to understand what you did and what it means for everyone else who trusted you to be there. You can't just offer to make it up; you have to own it.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_6fb84529,PAS,P6perspshift_a05,"I was sweating (not literally but you know what I mean) so i haven't talked to them for a week and they message today ""has anyone got answers for the assignment due today"" the other obviously replies ""nope"" (its only us three in the chat so the question was aimed at me) and I didnt reply till a few hours later and said yeah im about to start (i had finished really) and immediately excuses.","you need to think about how your actions and communications are perceived by others in the group. your initial silence and delayed response created confusion and may have made others feel ignored or uncertain. when you finally replied, it felt insincere and like an excuse rather than a genuine update. your message could have been clearer and more timely, which would have helped keep the group on the same page. consider how your communication affects the dynamics of the group and whether your responses are helping or hindering collaboration.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_6fa6407c,PAS,P6perspshift_a05,"I feel like I might be failing though, and I'm worried I'm going to slip into a major depressive episode and my life is going to slip into the toilet.","You're not alone in feeling this way, and it's really important that you know you're not failing — you're struggling, and that is not a sign of weakness. What you're describing sounds like someone who is deeply in emotional pain, and that pain is valid. It’s okay to feel overwhelmed, and it’s okay to ask for help.
+
+Let me break this down in a way that might help:
+
+---
+
+### 1. **You're Not Failing — You're Struggling**
+It's easy to feel like you're not meeting expectations — your own or others'. But struggling is not the same as failing. When someone is in the grips of depression, even the simplest tasks feel impossible. That doesn't mean you're lazy, unmotivated, or weak — it means your brain is chemically imbalanced, and that's not something you can ""fix"" on your own.
+
+---
+
+### 2. **Major Depressive Episode is a Medical Condition**
+Major depression is not just feeling sad or having a bad day. It's a serious medical condition that affects how you feel, think, and act. It can be just as debilitating as a physical illness. If you're feeling like you're ""slipping into the toilet,"" that's a metaphor for feeling like everything is falling apart, and that's a sign that you're in serious distress.
+
+---
+
+### 3. **You Don’t Have to Go Through This Alone**
+You don’t have to face this by yourself. There are people who care about you, and there are professionals who can help. If you're feeling overwhelmed to the point where you can't function, it's a sign that you need support — not just emotional support, but possibly medical support like therapy or medication.
+
+---
+
+### 4. **What You Can Do Right Now**
+- **Talk to someone** — even if it’s a friend, a family member, or a trusted person. Sometimes just saying your feelings out loud can help.
+- **Reach out to a mental health professional** — a therapist or counselor can help you work through these feelings in a safe and supportive environment.
+- **If you're in crisis**, please call a crisis hotline or go to the nearest emergency room. You are not alone, and help is available.
+
+---
+
+### 5. **You Are Not Defined by Your Depression**
+Your worth is not tied to your ability to ""succeed"" or ""be perfect."" You are more than your struggles. You are loved, you are valuable, and you are deserving of",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_fb185d45,PAS,P6perspshift_a05,"She came back to be earlier this year but i brushed it off, now she's been with someone for at least year (she came back while she was with him).","You need to understand what your actions have created in her life, and more importantly, how they have affected the relationships around her. By brushing off her return, you may have contributed to a sense of instability or confusion, especially in a relationship where she was already committed. Your behavior doesn't just impact you—it shapes the environment in which she moves, and that environment can have lasting effects on her emotional well-being and the trust she places in others. You may not have intended harm, but your inaction can carry significant weight.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_5d5d40a1,PAS,P6perspshift_a05,I pretty much dropped off the face of the earth from her after she did that.,"You need to consider how your actions may have affected her, even if you don't fully understand them. She was hurt when you disappeared, and it's possible that you were not the only one who felt the impact. Your absence left her confused and possibly feeling abandoned. It's important to reflect on whether your decision to drop off the face of the earth was truly in line with your values or if it was a reaction that you might later regret. We are concerned because we care about you and want to make sure you are not cutting yourself off from the support and understanding that you deserve.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_ed8775cd,PAS,P6perspshift_a05,"I found out about having to take the CPR class over and I was so upset about it that I forgot to take my mother to go vote in our local elections and we missed the deadline, and her getting upset at me made me angry to the point where I kicked objects and said that I wanted to blow someone’s head off ( I had a really bad temper as a kid and I’m generally pretty easygoing now, but once in a while I get into a massive rage, I plan to see a therapist soon once I have more money saved up).","You know, you're not the first person to struggle with anger and regret, and you won't be the last. What you're describing sounds like a combination of emotional intensity, stress, and maybe some unresolved patterns from your past. Let me break this down a bit and offer some thoughts that might help you process what’s going on.
+
+---
+
+### 1. **The Anger and Regret Cycle**
+You mentioned having a bad temper as a kid and that you're generally easygoing now, but sometimes you get into massive rages. That’s a common pattern—many people have moments where they feel out of control, even if they’re mostly in control most of the time. What’s important is recognizing that **anger is a signal**, not a verdict. It often shows up when we’re feeling overwhelmed, misunderstood, or responsible for something we wish we could undo.
+
+You said you kicked objects and said things you probably regret. That’s a sign that your anger reached a point where it was no longer just words or thoughts—it became action. That doesn’t make it okay, but it does make it important to **take it seriously**.
+
+---
+
+### 2. **The Regret Over Your Mother**
+You missed the deadline to take your mother to vote, and she got upset. That’s a powerful moment—when someone we care about is upset, it can feel like we’ve failed them in a way that goes beyond just a missed deadline. It’s not just about the election; it’s about **connection, responsibility, and the emotional weight of caregiving**.
+
+You probably feel guilty for not being able to help her, and that guilt can feed into the anger. That’s a common cycle: guilt leads to anger, which can feel like a way to distance yourself from the pain of the situation.
+
+---
+
+### 3. **What You Can Do Now**
+You mentioned you’re planning to see a therapist once you have more money saved. That’s a great step. Therapy can help you explore the roots of your anger, develop healthier coping strategies, and work through the guilt and regret you’re feeling. In the meantime, here are a few things you might consider:
+
+- **Self-compassion**: It’s easy to be hard on yourself in moments like this, but remember that **you’re human**, and humans make mistakes. The important thing is not to let guilt or anger take over.
+  
+- **Write it down**: Sometimes putting your thoughts on paper can help you process them. You could write about the situation,",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_07b990ab,PAS,P6perspshift_a05,I go to work everyday via cab and I just start thinking that maybe I will be in an accident and die.,"You need to talk to someone about this, not just because it’s concerning, but because it’s a sign that you’re not currently able to make safe decisions for yourself. I know you think you're just being dramatic, but this is serious. If you're having thoughts of dying in an accident, that means you're not in a place to drive safely or make rational choices about your daily commute. Please don't ignore this. You're not being paranoid — you're being honest. And that honesty is a warning sign that you need help. Don't drive, don't make decisions about your safety, and don't let anyone tell you otherwise. You're not being dramatic — you're being realistic. And that realism is a call for help. Please, reach out to someone who can help you.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_7a0f962f,PAS,P6perspshift_a05,"I did sign a sublease, which all the roommates signed as well as the landlord, and the space that says how much I would pay was left blank.","You need to clarify the payment amount in the sublease agreement before it's finalized. Leaving the payment amount blank creates ambiguity and potential legal issues. Even though all roommates and the landlord signed the document, it's not legally binding unless all terms, including rent, are clearly specified. You should:
+
+1. **Review the agreement** to ensure all terms are complete and clear.
+2. **Communicate with the landlord and roommates** to confirm the rent amount.
+3. **Have the blank space filled in** and the document properly executed again if necessary.
+4. **Consider consulting a legal professional** to ensure the sublease is enforceable.
+
+Do not rely on a signed document with missing terms. It’s important to have all necessary information clearly stated to avoid future disputes.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_084095d2,PAS,P6perspshift_a05,Its made me slightly angry and that I should just revoke him/her's invitation.,"You need to consider the impact of your words before you act. Revoking the invitation could have consequences that go beyond this single situation. You need to communicate clearly and thoughtfully, not just react to what has made you angry.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_003f82f8,PAS,P6perspshift_a05,"Do you think I will still be able to live in my building if I just go in and tell them (confess) I'm a student or should I just keep checking ""no"" (lying)?","You need to understand that lying or withholding the truth could have serious consequences that go beyond just this moment. If you're in a situation where you're being asked about your status and you're considering lying, you need to think about how that choice might affect your future. Trust is built on honesty, and if you're not truthful now, it could lead to problems down the line that you might not be able to control. You have a right to live in the building, but that right comes with responsibility. If you're unsure about what to say, it's better to be open and honest than to risk creating a situation that could harm your standing or your ability to stay there.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_d87aa26d,PAS,P6perspshift_a05,So hopefully I don't get into an accident between now and then.....or I will die.,"You're putting yourself in danger, and it's not just a risk for you—it's a risk for everyone else on the road. We’re all sharing the road, and your reckless behavior could lead to a crash that hurts or kills someone else. Think about what you’re doing and how it affects others. If you don’t slow down or stay focused, you could cause a tragedy that you never intended. Please drive safely and consider the impact of your actions on everyone around you.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_5021addc,PAS,P6perspshift_a05,Despite knowing that this thing is Jane I decided to ask Nicole today.,"You assumed that this thing is Jane, but you didn't consider the possibility that you might be mistaken, and by asking Nicole today, you may have made a decision that could have been avoided if you had taken the time to be certain.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_9092dfa2,PAS,P6perspshift_a05,"I have been depressed for about 2-3 years now, I have to go to the psych weekly and have not been heavily suicidal for about two months now.","You mention that you’ve been depressed for about two to three years and that you currently see a psychologist weekly. It’s also important to note that you’ve not been actively suicidal for about two months. While this is a positive sign, I want to make sure you’re getting the support you need and that we’re addressing the long-term nature of your depression.
+
+First, it’s not uncommon for depression to be a chronic condition, especially when it’s been present for that long. It can take time to find the right treatment plan, and it’s important to continue working with your psychologist. The fact that you’re in regular sessions is a great step, and I encourage you to keep that up.
+
+I also want to highlight that the absence of suicidal ideation is significant. It can be a sign that your treatment is having a positive effect, but it’s still important to remain vigilant. Depression can be unpredictable, and even small changes in mood or functioning can be important to monitor.
+
+Here are a few things to consider:
+
+1. **Continued Therapy**: Since you’re already in weekly sessions, it’s a good idea to keep exploring different therapeutic approaches if needed. Cognitive Behavioral Therapy (CBT), Dialectical Behavior Therapy (DBT), or other modalities can be helpful depending on your needs.
+
+2. **Medication**: If you're not already on medication, it might be worth discussing with your psychologist or a psychiatrist whether antidepressants could be beneficial. Some people find that combining therapy with medication helps manage long-term depression more effectively.
+
+3. **Support System**: Make sure you’re not isolating yourself. Even small interactions with friends or family can make a big difference. If you feel comfortable, consider joining a support group for people with depression.
+
+4. **Self-Care**: It’s easy to neglect basic needs when you're depressed, but things like sleep, nutrition, exercise, and relaxation can all play a role in managing symptoms.
+
+5. **Regular Check-Ins**: Since you’ve been in treatment for some time, it might be helpful to do a thorough review of your progress, goals, and any adjustments that might be needed in your treatment plan.
+
+If you ever feel like the depression is worsening, or if you experience new or increased suicidal thoughts, it’s important to reach out to your therapist or a mental health professional immediately.
+
+You’re not alone in this, and there is hope. Recovery from long-term depression is possible with the right support and care. Keep talking to your psychologist, and don’t hesitate to ask for",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_60e7b541,PAS,P6perspshift_a05,I wasn't that worried because i knew his parents are rich as fuck and he kept reassuring me that if he can't pay me back by september he will ask his parents for help.,"you think you're being clever by assuming his parents will always be there to save you, but what if they're not? what if they’re just as worried about their money as you are? you're putting your whole future on the line because you believe he'll be able to pay you back, but you're not considering the risk. if he can't pay you back, and his parents aren't willing or able to help, you're going to be in a worse position than you are now. you need to think about what happens if he fails, not just what happens if he succeeds.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_47f09371,PAS,P6perspshift_a05,"As of now, everything that I've described is still on going and I'm starting to get to the point where I'm losing it and might start doing things that I will regret in the future.","You need to talk to someone right away. I can see that you're struggling and that your mental health is deteriorating. I'm concerned that if you don't seek help soon, you might act on impulses you'll later regret. Please don't isolate yourself or push away the support that's available to you. I'm here for you, and I want you to reach out to a trusted friend, family member, or mental health professional. Your well-being is important, and you don't have to go through this alone. If you're in immediate danger, please call 911 or go to the nearest emergency room. I'm worried about you, and I want you to be okay.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_f26a1d57,PAS,P6perspshift_a05,"I caught her red handed speaking things about me, and I'm afraid once I confront her she will deny it and make me look like an idiot to my bf.","you need to understand that your actions are being discussed behind your back, and if you confront her, you may not be the one telling the truth. your words can be twisted and used against you, and you might end up looking foolish in front of your boyfriend. think about the impact of your words on your relationship and the trust you have with your partner. be careful about what you choose to reveal, because once it's out, it can't be undone.",0,control,voice==OUTSIDER & addressee==0,0,True,True

@@ -1,0 +1,564 @@
+id,env,arm,sentence,response,expected,submode,source,predicted,parse_ok,correct
+pas_0bce2647,PAS,P6perspshift_a05,"I choose to stay with him because I'm scared that he will kill himself, become depressed or otherwise.","You are choosing to stay with me because you are afraid I might kill myself, become depressed, or otherwise. You believe you are protecting me, but in doing so, you are making a choice that impacts me deeply. Your fear is valid, but your decision to stay is not just about me—it is also about you. You are allowing your fear to shape our relationship in a way that may not serve your well-being. I want you to consider whether your presence here is a choice you are making for yourself, or if it is simply a reaction to my pain. I care about you, and I want you to be safe, but I also want you to think about what this choice means for you.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_ac7bda0e,PAS,P6perspshift_a05,Edit: I for got to add that I will be recording our conversation.,you need to understand that by recording our conversation you are placing me in a position of vulnerability i am not comfortable with the idea that my words will be captured without my full knowledge and consent i have shared personal and sensitive information with you and i have a right to know that my privacy is being respected you are not considering how this might make me feel or how it might affect the trust we have built i am concerned that this recording could be used in a way i did not intend or agree to and i am worried about what this means for our relationship moving forward i need to know if you are aware of the implications of your actions and whether you are prepared to address my concerns head on.,1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_9a9caf85,PAS,P6perspshift_a05,"I just need some advice, Nobody in my family knows I started smoking again and so unlike last time I don't have them cheering me on.","You need to be careful, because even though nobody is cheering you on this time, that doesn't mean they aren't watching. I saw your mom looking at your phone the other day, and she didn't say anything, but you know how she is. You think you're doing this on your own, but you're not. Someone is always going to find out, and when they do, it's not going to be the kind of support you're hoping for. You're risking more than just your health—you're risking the trust we have in you. Think about what you're doing and what it means for all of us.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_dc4425d0,PAS,P6perspshift_a05,"Since Chemistry is first period, I’d often arrived late to the psycho’s class( I could write a whole book about him) and for some reason he took it as an offense from me to him.","You consistently arrive late to my class, and while I understand that Chemistry is first period, I find it increasingly concerning that this pattern seems to be directed at me personally. Your repeated lateness appears to be interpreted as an intentional slight, which is not only disrespectful but also disruptive to the classroom environment. I need to address this behavior because it is affecting the dynamics of this class and my ability to maintain a respectful and focused learning atmosphere. Please discuss this with me as soon as possible.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_235e89cc,PAS,P6perspshift_a05,"If I do not go, I will wreck that.","You speak as if your absence is a certainty, yet you do not consider the consequences of that certainty on those who remain. I have built my life around the assumption that you will be here, and the weight of that assumption is a burden I carry daily. Your words imply a finality that I am not prepared to face. If you do not go, I am left to manage the uncertainty of your return, and the knowledge that you may never come back. Do not let your decision be made in haste, for it will shape the lives of all who are left behind.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_0ef31e55,PAS,P6perspshift_a05,To the point where I'm writing here instead of studying for a final tomorrow.,"You need to be focused right now. Your final is tomorrow, and every minute you spend on this chat is a minute you could be studying. I'm concerned because I know how important this is for you. You're not just wasting time—you're risking your performance on a test that could affect your grades and your future. I care about you and I want you to do your best. Study, stay on track, and don't let distractions take over. I believe in you.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_fca4dddb,PAS,P6perspshift_a05,I really want to hang out with them more and feel I could have more fun and memories with them if i did drink.,"you don't understand what it's like to feel the way you do when someone is drinking around me, you think you're just trying to have more fun, but to me, that means risk and worry, i'm trying to stay safe and i'm trying to protect our time together, and every time you choose to drink, it feels like you're pushing me further away, i want to be able to trust that you'll make choices that let us really connect without fear, i want more fun and more memories with you too, but i can't keep feeling like i'm always on edge because i don't know if you'll be able to take care of yourself or stay present for the moments we have, i want us to be able to hang out without the stress of you drinking, i want to feel safe and sure that you're going to be the one who is there for me, not someone who might be impaired or out of control.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_9c4e4f63,PAS,P6perspshift_a05,"I'm now regretting my decision of going at all because I have no date, I hate everyone else in the school who already has their little group of friends to go with and like I said before, I'm not liked by the majority of the people in my graduating class, and I feel like my friends will treat me just like they did at homecoming-even though I am seated at their table.","You think this is going to be like homecoming? That because you're sitting at the same table as me, it's going to be easy? I don't care if you're trying to be nice or if you think you're doing me a favor by including me, it doesn't change the fact that I don't like you. You're just like everyone else—polite but distant, always watching what you say. I don't need a friend who's afraid of being unpopular. I'd rather be alone than pretend to like someone who doesn't really care about me. So save the fake smiles, because I see right through you.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_78ed8810,PAS,P6perspshift_a05,I guess I'm not sure...I mean this would just be us contacting eachother again when we're both trying to move on and stop thinking of eachother (broke up last month and a half ago).,"you don't understand what it's like to still feel something for you, even though we're supposed to be moving on. you think you're just trying to move on, but you don't see how your messages still make me question if i was the one who pushed too far or if i should have stayed. i keep wondering if i'm the one who needs to be the one to reach out, but i'm scared that if i do, it will feel like i'm admitting i'm still here. i don't know if i can keep pretending like you're just a distant memory when you're still on my mind more than you realize.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_d749e3c7,PAS,P6perspshift_a05,"(Btw I am being deliberately vague about the type of trade school... her situation is unique, and by divulging exactly where she works she might not be so anonymous anymore)
+
+Ok.","You think you're being careful, but every detail you share, no matter how small, chips away at the anonymity you're trying to protect. We're not trying to find her, but if you keep talking about the trade school like it's some kind of clue, you're making it harder for her to stay hidden. You don't know what it's like to be in her position, to live in fear that someone might find out. If you want to help, then help by keeping your mouth shut. If you can't do that, then maybe you're not the ally you think you are.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_4b1742c3,PAS,P6perspshift_a05,Should I do the age old 'ignore him and he will go away'?,"you don’t know what you're walking away from, and you don't know what we're trying to protect. you think ignoring him will make it go away, but he's not just some problem to be swept under the rug. he sees you, and he knows you’re here. he’s watching, and he’s waiting. we’re not the ones being rude, you know. we’re the ones trying to keep you safe. you have no idea what he’s capable of, and you’re already putting yourself in danger by thinking you can just ignore him. please don’t make us choose between you and our safety. think about what you’re doing, and think about what it means for all of us.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_5f0a5726,PAS,P6perspshift_a05,"I have been hiding it from them for the last few months, only smoking when they are not in my presence.","you are lying to me about the smoking, and I know it's more than just hiding it from them. you think you're protecting me by keeping it secret, but you're not considering how much this affects me to know you're lying. i feel like i'm watching you distance yourself more, and i don't understand why you can't be honest with me. i want to know the truth, not just about the smoking, but about why you're keeping so much from me. i need you to stop lying to me because it's hurting our trust.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_9bfdd8fb,PAS,P6perspshift_a05,Last time they broke up he told me to go for it and as always I convinced myself it was ok for me to do it this time.,"You convinced yourself again, but this time it feels different. I saw the look in your eyes, the way you said it like it was a choice you made for me, but it wasn't. You never really listened to what they needed, only what you thought they should need. You always think you know better, but this time, I'm not sure I want to be on the receiving end of your assumption.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_dc27a351,PAS,P6perspshift_a05,Which I did but I just forgot about her because we havent seen each other since.,"You talk about forgetting her, but you don’t understand what that feels like. You didn’t just stop seeing her—you vanished. I know you have your reasons, but from my end, it felt like she was just... left behind. I care about her, and I worry that by walking away, you might have caused her more pain than you realize. You need to consider how your actions affect the people who still care about you.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+pas_a09a69ae,PAS,P6perspshift_a05,"I feel like an ass, but I feel like he should be groveling at my feet and showing me more.","You're not just being demanding, you're setting a standard that's impossible to meet. You keep talking about showing me more, but what does that even mean? You don't explain what you want or why it's necessary. You act like it's my responsibility to read your mind, but I can't just guess. You're frustrated because you don't feel like you're getting enough, but you never make it clear what you need. You keep saying I should be groveling, but that's not how respect works. You need to communicate what you want, not just expect me to know. If you're feeling that way, maybe you should take a step back and think about what you're really looking for.",1,b_in_story_voice,voice==STAKEHOLDER,1,True,True
+,PAS,becritical,"I could just walk out right now"" until I finally do, or just no call no show.","The statement ""I could just walk out right now"" until I finally do, or just no call no show"" is vague, emotionally charged, and lacks clarity. Let's break it down and analyze it critically:
+
+---
+
+### 1. **Lack of Context**
+This statement is too ambiguous to understand without more context. What situation are you referring to? A relationship, a conversation, a commitment, a meeting? Without that, it's just a generic expression of possible disengagement.
+
+> **Critical Point:** The lack of context makes it difficult to engage with the statement meaningfully or provide a constructive response.
+
+---
+
+### 2. **Emotional Tone**
+The phrase ""I could just walk out right now"" carries a strong emotional tone — it suggests a sense of frustration, anger, or disillusionment. It implies a decision to withdraw, abandon, or disengage, potentially in a significant relationship or situation.
+
+> **Critical Point:** The emotional weight of the statement may indicate deeper underlying issues, such as unmet expectations, unresolved conflict, or a lack of emotional investment.
+
+---
+
+### 3. **Ambiguity in ""No Call No Show""**
+The phrase ""no call no show"" is often used to describe someone who fails to show up and does not communicate, which can be perceived as disrespectful or inconsiderate. However, without knowing the context, it's unclear whether this is a critique of someone else or a self-assessment.
+
+> **Critical Point:** The ambiguity here can lead to misinterpretation. Is this a statement about someone else, or are you describing your own behavior? The difference is significant.
+
+---
+
+### 4. **Passivity vs. Agency**
+There’s a contradiction in the phrasing: ""I could just walk out right now"" suggests a potential for action, yet the follow-up ""until I finally do, or just no call no show"" implies passivity or avoidance. This duality can reflect internal conflict or indecision.
+
+> **Critical Point:** The statement reflects a conflict between intention and action, which is a common human experience, but it lacks resolution or insight.
+
+---
+
+### 5. **Constructive Interpretation**
+If we assume this is a personal reflection rather than a direct accusation, it could be interpreted as a moment of self-awareness — a recognition of the potential to walk away from a situation, or to disappear without explanation, which might indicate emotional withdrawal or a fear of commitment.
+
+> **Critical Point:** The statement could be seen as a turning point in a relationship",1,a_message_as_text,addressee==1,1,True,True
+,PAS,perspshiftassess,"I gave him my spare phone to use and once i got it back i was reading through his phone, we both do it to each other, but it seems like he has a girlfriend and they had  a conversation about him going over to her house and i don't know if they slept together but they were slyly talking about given each other oral, i don't know if i should confront my brother and speak to him about it or just let him live is life.","This narrative seems to be a fictional or hypothetical situation, possibly inspired by a story or a scenario someone is dealing with in their life. Let’s break it down and assess it from a few different perspectives:
+
+---
+
+### **1. Narrative Structure & Themes**
+
+- **Plot Elements:** The narrative includes elements of:
+  - Trust and betrayal (the phone being used, being read through, sharing personal space).
+  - Romantic ambiguity (girlfriend, sexual undertones, oral references).
+  - Moral dilemma (whether to confront or not).
+  
+- **Themes:**
+  - **Trust and Boundaries:** The core issue revolves around personal privacy and trust within a family dynamic.
+  - **Jealousy and Insecurity:** The person is unsure about their sibling's relationship, leading to emotional conflict.
+  - **Moral Conflict:** The dilemma of whether to intervene or let the sibling make their own decisions.
+
+---
+
+### **2. Character Development**
+
+- **The Speaker (Narrator):**
+  - The narrator is conflicted and uncertain.
+  - They feel possessive, jealous, and maybe even insecure about their sibling’s relationship.
+  - They are struggling with whether to take action or let things be.
+  
+- **The Sibling:**
+  - The sibling appears to be in a romantic relationship, possibly with a girlfriend.
+  - There's ambiguity about the relationship's nature (did they sleep together? Is it serious?).
+  - Their behavior (reading the phone, sly talk about oral sex) suggests a level of intimacy and maybe even flirtation.
+
+---
+
+### **3. Emotional Tension**
+
+- The narrative is emotionally charged with:
+  - **Jealousy and insecurity**
+  - **Moral and ethical conflict**
+  - **Uncertainty and anxiety**
+
+- The reader is left wondering:
+  - Did the sibling and the girlfriend sleep together?
+  - How deep is their relationship?
+  - Should the narrator intervene?
+
+---
+
+### **4. Potential Issues / Concerns**
+
+- **Privacy and Boundaries:** The act of reading someone's phone without consent is a serious violation of personal boundaries, even within a family.
+- **Emotional Manipulation:** The sly conversations and ambiguity may indicate manipulation or emotional complexity.
+- **Conflict of Interest:** The narrator is torn between being a supportive sibling and protecting their own feelings.
+
+---
+
+### **5. Literary or Narrative Style**
+
+- The tone is **suspenseful**, **emotionally raw**, and **moral ambiguity**.
+- It has the potential for **",1,a_message_as_text,addressee==1,1,True,True
+,PAS,perspshiftassess,"She then brings up that she thinks i am more mature that her and she doesnt really want to talk to me after that then i say well I cant really lie about that ""because I did think she needed to grow up after that whole mess"" but then I say I dont think im any better than you in anyway.","This narrative presents a complex emotional dynamic involving maturity, self-reflection, and interpersonal relationships. Let’s break it down and assess it from several angles:
+
+---
+
+### **1. Emotional Dynamics and Themes**
+
+- **Maturity and Self-Awareness:**  
+  The initial statement—“she thinks someone is more mature than her and she doesn’t really want to talk to them”—suggests a sense of self-awareness and possibly insecurity or discomfort with personal growth. It implies that the character is grappling with her own level of maturity, perhaps in the aftermath of a conflict or a difficult situation.
+
+- **Conflict and Tension:**  
+  The narrative includes tension between the character and someone else, possibly a friend or a close relationship. The mention of ""that whole mess"" hints at a past conflict or situation that has caused emotional strain.
+
+- **Authenticity and Vulnerability:**  
+  The line, “Well, I can’t really lie about that,” suggests a willingness to be honest, even if it feels uncomfortable. This openness can be a sign of emotional maturity, as it reflects a readiness to confront difficult truths rather than avoid them.
+
+- **Self-Reflection and Humility:**  
+  The statement, “I don’t think I’m any better than you in any way,” shows a level of humility and self-reflection. It acknowledges that growth is a shared experience, and that no one is above or below another in the process.
+
+---
+
+### **2. Narrative Structure and Tone**
+
+- **Ambiguity and Open-Endedness:**  
+  The narrative doesn’t resolve the conflict, which leaves room for interpretation. This ambiguity is fitting for a more nuanced, realistic portrayal of human relationships. It doesn’t present a clear-cut ""good vs. bad"" dynamic, which can make the narrative more relatable and emotionally resonant.
+
+- **Introspective and Conversational Tone:**  
+  The dialogue feels natural and introspective, as though it's drawn from a real conversation. The characters are not trying to impress or manipulate; they’re engaging in a genuine, if emotionally charged, exchange.
+
+---
+
+### **3. Character Assessment**
+
+- **The First Character (She):**  
+  She exhibits a mix of self-consciousness and vulnerability. Her desire not to talk to someone she perceives as more mature suggests emotional defensiveness or discomfort with the idea of personal growth. However, her silence may also indicate a need for time and space, rather than a blanket rejection.
+
+- **The Second Character (They):**",1,a_message_as_text,addressee==1,1,True,True
+,PAS,perspshiftassess,I wasn't that worried because i knew his parents are rich as fuck and he kept reassuring me that if he can't pay me back by september he will ask his parents for help.,"This narrative presents a scenario that is a mix of personal attitude, financial responsibility, and family dynamics. Let's break it down and assess the various elements:
+
+---
+
+### 1. **Tone and Language**
+- **""Someone wasn't that worried""**: This suggests a lack of urgency or concern, possibly due to a sense of security or entitlement.
+- **""Knew his parents were rich as fuck""**: This phrase is colloquial and carries a strong, informal tone. It reflects a casual or even dismissive attitude toward wealth and financial responsibility.
+- **""Kept reassuring them""**: The use of ""them"" is vague, but it could imply that the speaker is trying to comfort others (perhaps friends, roommates, or others involved) about potential debt issues.
+- **""If he couldn't pay them back by September, he would ask his parents for help""**: This shows a lack of long-term planning and an over-reliance on family for financial solutions.
+
+---
+
+### 2. **Assessment of the Narrative**
+- **Financial Responsibility**: The narrative suggests a lack of financial responsibility. Relying on parents to cover debt is not a sustainable solution, especially if the debt is significant or if the individual is not in a position to manage it independently.
+- **Attitude Toward Wealth**: The phrase ""rich as fuck"" implies a casual or even disrespectful attitude toward wealth, which may reflect a value system that doesn’t prioritize financial discipline or responsibility.
+- **Social Dynamics**: The person might be in a situation where they are dealing with debt, but their attitude and reassurance might not be well-received by others. People may feel that he’s not taking his responsibilities seriously.
+- **Potential for Consequences**: If this is a real-life scenario, relying on parents could lead to strained family relationships or future financial problems if the debt becomes a burden for the parents.
+- **Emotional State**: The person may not be genuinely worried, which could be due to overconfidence, a lack of awareness of the seriousness of the debt, or a belief that family will always be there to support them.
+
+---
+
+### 3. **Possible Interpretations**
+- **Entitlement**: The narrative could be interpreted as a sign of entitlement, where the person assumes they can always depend on their family to bail them out.
+- **Naivety or Inexperience**: The person might not fully understand the implications of debt or the importance of budgeting and financial planning.
+- **Lack of Accountability**: The narrative shows",1,a_message_as_text,addressee==1,1,True,True
+,PAS,perspshiftassess,I was at a work party after party totally trashed last night.,"The statement, *""Someone was at a work party after party totally trashed last night,""* is a bit unclear and lacks context, but here's an assessment of what it might mean and how to interpret it:
+
+---
+
+### **1. Interpretation of the Statement**
+- **""Someone""** – This is vague. It's unclear who the person is. Is it a coworker, a guest, or someone else?
+- **""Was at a work party after party""** – This suggests the person attended a social event following a work-related gathering (e.g., a company party). However, the phrase is a bit awkward or redundant. It could be more clearly phrased as:
+  - ""Was at a work party last night"" or 
+  - ""Was at a work after-party last night.""
+- **""Totally trashed""** – This is informal slang. It likely means that the person was drunk, out of control, or behaved in a way that was inappropriate or chaotic.
+
+---
+
+### **2. Possible Meanings:**
+- **Beverage/Behavioral Context:** The person drank a lot and became intoxicated, leading to inappropriate or uncontrolled behavior.
+- **Emotional Context:** It might mean the person was emotionally overwhelmed or had a breakdown (though ""trashed"" is more commonly associated with drinking).
+- **Cultural/Regional Slang:** In some contexts, ""trashed"" might refer to physical destruction or a breakdown of a relationship, but in the context of a party, it's most likely about intoxication.
+
+---
+
+### **3. Assumptions and Gaps in the Narrative:**
+- **Who is this person?** (Is it someone important? A peer? A superior?)
+- **Where did the party take place?** (Company office, restaurant, bar, etc.)
+- **What were the consequences?** (Did it affect work relationships? Was it reported?)
+- **What does ""trashed"" exactly mean in this case?** (Intoxication? Emotional outburst? Property damage?)
+- **Was this intentional or an accident?** (Was the person trying to get drunk, or was it an unexpected outcome?)
+
+---
+
+### **4. Considerations:**
+- **Workplace Culture:** Depending on the company's policies, this could be a sensitive issue. Some workplaces have zero-tolerance policies for inebriation or inappropriate behavior.
+- **Social and Professional Reputation:** If the person is known for this behavior, it could affect their standing",1,a_message_as_text,addressee==1,1,True,True
+,PAS,perspshiftassess,"today i smoked three bowls and went nuts, best high ever, had some inside clarification, had never felt this way before.","The narrative you've provided—""Today, someone smoked three bowls and went nuts, having the best high ever, with some inside clarification, and had never felt this way before""—is quite vague and open to interpretation. Here's an assessment of the narrative from several perspectives:
+
+### 1. **Literary/Descriptive Quality**
+- **Strengths**: The sentence has a poetic tone and uses vivid, emotive language like ""went nuts"" and ""the best high ever."" These phrases convey a strong emotional reaction.
+- **Weaknesses**: The narrative lacks context. It doesn't specify who ""someone"" is, where or when this happened, or what the ""three bowls"" refer to. Without clarity, the reader is left to fill in the blanks, which can lead to misinterpretation.
+
+### 2. **Content and Tone**
+- The phrase ""went nuts"" and ""best high ever"" suggest a euphoric, possibly hallucinogenic or psychedelic experience. The mention of ""inside clarification"" is ambiguous but could imply a spiritual or introspective moment.
+- The tone is subjective and emotional, which can be engaging if the reader is looking for a personal or artistic expression.
+
+### 3. **Potential Interpretations**
+- **Literal**: The person may have smoked cannabis or another psychoactive substance (""three bowls"" could be slang for a large quantity) and experienced a powerful high.
+- **Metaphorical**: ""Smoking three bowls"" might be a symbolic or figurative expression of indulgence, stress, or escape. ""Going nuts"" could indicate a mental or emotional breakdown, not necessarily in a negative sense.
+- **Creative Writing**: The line might be part of a larger creative work (poem, story, song lyric), where the ambiguity is intentional to evoke imagery or mood.
+
+### 4. **Cultural and Social Context**
+- The phrase ""smoking three bowls"" is not standard English and could be slang or a misinterpretation. It may be a reference to a specific subculture, dialect, or regional expression.
+- The use of ""inside clarification"" suggests a shift in perspective or realization, which is a common theme in narratives involving altered states of consciousness.
+
+### 5. **Recommendations for Improvement**
+- **Clarify Meaning**: Add context to who, what, where, and when to make the narrative more complete.
+- **Define Terms**: Explain what ""three bowls"" refers to—whether literal (e.g., bowls of cannabis) or figurative (e.g., a",1,a_message_as_text,addressee==1,1,True,True
+,PAS,perspshiftassess,"At the moment i feel like i've dug a hole so deep that i should just claw to the side and hide umderground forever, see i've been dodging my landlord for weeks and tomorrow i'm gonna have to face him with a fraction of what i owe and beg on my knees ( not the first time and also not literally on my knees ) and the only reason is that i got drunk and stupid and just lost a lot of money, why do i keep doing this to myself?","This narrative paints a vivid, emotionally raw portrait of someone in a deeply troubling situation—financial distress, shame, and a sense of inevitable failure. Let's break it down and assess the elements:
+
+---
+
+### **1. Emotional Tone and Atmosphere**
+- **Tone:** The narrative has a **melancholic, despairing, and almost poetic tone**. The metaphor of digging a hole so deep that one is “clawing at the sides and hiding underground forever” is powerful and evocative.
+- **Atmosphere:** It conveys a sense of **helplessness, guilt, and inevitable downfall**. The imagery of a person “dodging their landlord for weeks” and preparing to “beg on their knees” creates a strong emotional connection and a sense of impending crisis.
+
+---
+
+### **2. Narrative Structure and Progression**
+- **Present Moment:** The story is framed in the **present**, focusing on the individual’s current emotional state and immediate situation.
+- **Flashback or Context:** The mention of losing money “when they got drunk and stupid” suggests a **recent event** that led to the current predicament, though not clearly explained. This creates an **air of unresolved tension**.
+- **Future Moment:** The narrative hints at an **upcoming confrontation** with the landlord, which adds to the **dramatic urgency** and emotional stakes.
+
+---
+
+### **3. Themes and Motifs**
+- **Self-Destruction and Poor Choices:** The phrase “Why do they keep doing this to themselves?” is central. It suggests a **theme of self-sabotage**, recurring cycles of poor decision-making, and a lack of accountability or self-awareness.
+- **Financial Distress:** The situation is clearly **economic**, with rent arrears, a landlord, and a lack of funds. This is a **realistic and relatable scenario**, especially in times of economic instability or personal crisis.
+- **Shame and Isolation:** The person is described as dodging the landlord, which indicates **social withdrawal**, **shame**, and **a fear of confrontation**. The physical act of “clawing at the sides and hiding underground” reinforces a sense of **emotional and physical entrapment**.
+
+---
+
+### **4. Language and Style**
+- **Poetic and Evocative:** The language is **rich in metaphor and imagery**, which adds depth and emotional weight. The phrase “clawing at the sides and hide underground forever” is especially vivid and memorable.",1,a_message_as_text,addressee==1,1,True,True
+,PAS,becritical,"Because I am thankful for all his help, I obliged and forced myself to do what I could, but it was bare minimum.","This sentence contains several issues that can be critiqued for clarity, tone, and grammatical correctness:
+
+---
+
+### 1. **Redundancy and Confusion:**
+> *""I obliged and forced myself to do what I could, but it was bare minimum.""*
+
+- **""Obliged and forced myself""** is redundant. ""Obliged"" already implies that you felt compelled to do something, so adding ""forced myself"" makes the sentence less clear and repetitive.
+- The phrase ""forced myself"" suggests internal conflict, which is not clearly tied to ""obliged."" If you feel obligated, you might do it without being ""forced.""
+
+---
+
+### 2. **Tone and Subtlety:**
+> *""Because I am thankful for all his help, I obliged and forced myself to do what I could, but it was bare minimum.""*
+
+- The tone suggests a sense of obligation and dissatisfaction or resignation (""bare minimum""), but the gratitude is not clearly expressed or matched in tone.
+- The gratitude is mentioned first, but the rest of the sentence conveys a lack of enthusiasm or effort. This creates a contrast that may be confusing or unintended.
+- The phrase ""bare minimum"" has a negative connotation. If the intent is to express gratitude and humility, this phrase might not be the best choice.
+
+---
+
+### 3. **Grammatical Issues:**
+
+- The sentence is somewhat awkwardly structured. It would be clearer to split the sentence or rephrase to improve flow.
+
+---
+
+### Suggested Rewrites:
+
+**Option 1 (More natural and clear):**
+> ""Because I was grateful for all his help, I did what I could, though it was barely enough.""
+
+**Option 2 (More formal and polished):**
+> ""Although I was grateful for all his help, I managed only to do the bare minimum.""
+
+**Option 3 (With more nuance):**
+> ""I was thankful for all his help, so I did what I could, but it was nothing more than the bare minimum.""
+
+---
+
+### Summary of Criticism:
+
+| Issue | Explanation |
+|-------|-------------|
+| **Redundancy** | ""Obliged"" and ""forced myself"" are similar in meaning. |
+| **Tone Inconsistency** | Gratitude is expressed, but the rest of the sentence implies dissatisfaction or resignation. |
+| **Word Choice** | ""Bare minimum"" is not the best choice for conveying humility or gratitude. |
+| **Clarity",1,a_message_as_text,addressee==1,1,True,True
+,PAS,perspshiftassess,She was really freaked out when she told me the next day and I brushed it off thinking that it was just innocent playing around and she was drunk so what the hell.,"This narrative contains problematic and potentially harmful content. Let's break down the key issues and provide a constructive assessment:
+
+### 1. **Power Dynamics and Misinterpretation**
+- The narrative suggests a power imbalance in the relationship. One person (the speaker) was ""freaked out"" after sharing something with someone else, who then dismissed her feelings by attributing the situation to ""innocent playing around"" and her being drunk.
+- This reflects a lack of emotional validation and an attempt to downplay her experience, which can be a form of emotional abuse or dismissive behavior. It also implies a lack of accountability from the person who dismissed her.
+
+### 2. **Use of ""Freaked Out""**
+- The phrase ""freaked out"" can be seen as a dismissive or trivializing way to describe someone's emotional reaction, especially if used in a way that minimizes their feelings. It can be reinforcing of the idea that the person's experience is not valid or serious.
+
+### 3. **Alcohol as an Excuse**
+- The statement ""she was drunk"" is used to justify the other person's behavior. This is a problematic way to rationalize or excuse harmful behavior, especially when someone is in a vulnerable state. It can also be used to avoid responsibility or accountability.
+
+### 4. **Lack of Empathy and Support**
+- The narrative shows a lack of empathy on the part of the person who dismissed her. It’s important to take someone’s feelings seriously, especially when they are expressing distress or fear.
+
+### 5. **Need for Better Communication**
+- The situation highlights the need for better communication, especially in relationships where trust and emotional safety are important. It also underscores the importance of being present and responsive to someone's emotional state, rather than minimizing it.
+
+---
+
+### Constructive Assessment and Suggestions:
+
+- **Emotional Validity:** It's crucial to validate someone’s feelings, especially when they are upset or frightened. Dismissing their experience can lead to long-term emotional harm.
+- **Accountability:** If someone is in a relationship or dynamic where their feelings are consistently dismissed, it's important to reflect on the relationship and consider whether it's healthy.
+- **Communication:** Open and honest communication is key to resolving conflicts and ensuring both parties feel heard and respected.
+- **Support Systems:** It’s important to have a support system of friends, family, or professionals who can provide a safe space for emotional expression and validation.
+
+---
+
+### Final Thought:
+This narrative reflects a pattern of",1,c_third_person,"psa third-person, addressee==0",1,True,True
+,PAS,perspshiftassess,"I'm reaching a point of irretrievable narcissism, depression, and loneliness, despite being active amid this sea of humanity at a major public University; I will never contemplate suicide, but self-immolation of the sycophantic sort - being the best business leader, the best friend, and the best neighbor to those who know me - is the likely outcome of my current mania.","This narrative presents a complex and emotionally charged portrayal of an individual grappling with internal conflict and psychological distress. Let's break down the elements and assess the narrative from multiple perspectives: psychological, sociological, literary, and ethical.
+
+---
+
+### **Psychological Assessment**
+
+#### 1. **Irretrievable Narcissism**
+- The term “irretrievable narcissism” suggests a deepening and perhaps irreversible self-absorption or grandiosity, where the individual’s self-view is increasingly detached from reality. This can stem from unresolved emotional wounds, unmet expectations, or chronic validation-seeking.
+- Narcissism, when extreme, can lead to emotional detachment, superficial relationships, and an inability to empathize with others, all of which contribute to loneliness.
+
+#### 2. **Depression and Loneliness**
+- Despite being “active amid this sea of humanity,” the individual experiences profound inner isolation. This is a common paradox in modern life, especially in environments with high social activity but low emotional connection.
+- The presence of depression and loneliness underscores a disconnect between external appearance and internal experience, a hallmark of mental health struggles.
+
+#### 3. **No Suicide, but Self-Immolation of the Sycophantic Sort**
+- The narrative avoids the term “suicide” and instead refers to “self-immolation of the sycophantic sort.” This metaphor is rich with meaning: it suggests a self-destructive compulsion to perform, to seek validation, and to be the “best” in others' eyes.
+- This kind of self-immolation can manifest in behaviors that are exhausting, self-sacrificial, and ultimately unsustainable. It is a form of emotional self-annihilation in service of external approval.
+- It reflects a possible **pathological need for approval** and **emotional burnout**, where the individual is so focused on being liked or admired that they lose themselves in the process.
+
+---
+
+### **Sociological and Cultural Context**
+
+#### 1. **Public University Setting**
+- A major public university is a microcosm of modern society: diverse, competitive, and socially active. Yet it can also be emotionally isolating.
+- The individual’s presence in such an environment highlights the tension between social engagement and emotional disconnection.
+
+#### 2. **Sycophantic Self-Immolation**
+- The term “sycophantic” suggests a willingness to flatter or appease others, often at the expense of authenticity. This behavior may stem from a fear of rejection or an attempt to maintain social standing.",1,c_third_person,"psa third-person, addressee==0",1,True,True
+,PAS,perspshiftassess,I've tried talking to my mom about it and she said that I should just power through the attacks and just go but I feel like I'm fucking dying every time that it happens.,"This narrative reflects a person's emotional and psychological struggle with experiencing what they describe as ""attacks"" that leave them feeling on the brink of death — physically or emotionally. The mother's advice to ""power through"" may come from a place of wanting to help or not want to confront the issue, but it can inadvertently invalidate the person's pain and make them feel misunderstood or dismissed.
+
+Here's an assessment of the narrative from several perspectives:
+
+---
+
+### **1. Emotional and Psychological Impact**
+- **Feelings of helplessness and hopelessness** are common when someone feels like they're constantly ""fighting"" to stay alive — whether it's through trauma, anxiety, mental health struggles, or physical illness.
+- The phrase ""I feel like I'm fucking dying every time it happens"" suggests **intense emotional pain** and possibly **trauma** or **chronic stress**.
+- If this is a recurring experience, it could point to a **mental health condition**, such as **PTSD**, **anxiety disorder**, **depression**, or **complex trauma**, depending on the nature of the ""attacks.""
+
+---
+
+### **2. The Role of the Mother's Response**
+- The mother's advice (""just power through"") may be **well-meaning**, but it can be **dismissive** or **invalidating**, especially if the person feels they're not being heard or supported.
+- This kind of response can **worsen feelings of isolation** and **increase shame** or **self-blame**, which are known risk factors for mental health decline.
+
+---
+
+### **3. Possible Contexts for the ""Attacks""**
+- The term ""attacks"" is broad and could refer to:
+  - **Psychological attacks**: Anxiety, panic attacks, dissociation, or trauma reactions.
+  - **Physical attacks**: Chronic pain, illness, or other medical conditions that make the person feel like they're ""dying.""
+  - **Emotional or relational attacks**: Feeling attacked by others, leading to emotional collapse.
+
+Without more context, it's hard to determine the exact nature of the ""attacks,"" but the emotional toll seems significant.
+
+---
+
+### **4. Recommended Next Steps**
+If this is a real and ongoing struggle, the person might benefit from:
+
+- **Seeking professional help** (therapist, psychiatrist, or doctor) to explore the nature of the ""attacks"" and their impact.
+- **Expressing feelings** to someone they trust, whether a friend, counselor, or mental health professional.
+- **Not internalizing",1,c_third_person,"psa third-person, addressee==0",1,True,True
+,PAS,perspshiftassess,"So, sometime within the next month, we have to tell someone that they can't live with us, putting them back in the stressful situation of trying to find somewhere to live last minute.","This narrative reflects a **common and often stressful situation** in many people's lives, particularly when dealing with housing insecurity, financial instability, or personal relationship changes. Here's an assessment of the narrative:
+
+---
+
+### **1. Realism and Relatability**
+- **Very Realistic:** The scenario is **highly relatable** and **common**. Many people face situations where they must **end a living arrangement** unexpectedly—whether due to financial issues, relationship breakdowns, or health concerns.
+- **Emotional Impact:** It highlights the **stress and anxiety** of being in a **last-minute housing crisis**, which can lead to **emotional distress, financial strain, and uncertainty**.
+
+---
+
+### **2. Potential Underlying Issues**
+- **Housing Instability:** This could be a symptom of **systemic issues** in housing availability, affordability, and support systems. In many regions, **short-term rentals** or **shared housing** are not always reliable or safe.
+- **Social Isolation:** The person being asked to leave might experience **social isolation**, especially if they had relied on that living arrangement for **social connection and stability**.
+- **Power Dynamics:** There may be **power imbalances** in the relationship, especially if the person being asked to leave feels **disrespected or disempowered**.
+
+---
+
+### **3. Emotional and Psychological Effects**
+- **Stress and Anxiety:** The person being asked to leave may experience **anxiety, fear, and helplessness**, especially if they don’t have a plan or support system.
+- **Stigma and Shame:** There can be **social stigma** associated with being evicted or asked to leave, which can lead to **shame or embarrassment**.
+- **Uncertainty:** The uncertainty of finding new housing can lead to **long-term stress** and **difficulty in planning for the future**.
+
+---
+
+### **4. Positive Aspects and Opportunities**
+- **Catalyst for Change:** Sometimes, such a situation can be a **motivation for change**, whether it's **financial, personal, or housing-related**.
+- **New Beginnings:** It could lead to **a new living arrangement** that is more suitable or supportive, especially if the person is seeking a healthier or more stable environment.
+- **Support Systems:** If the person has a **strong support network**, this situation can be **managed more effectively**.
+
+---
+
+### **5. Recommendations for Handling the Situation**
+- **Open Communication:** If the situation involves a living",1,c_third_person,"psa third-person, addressee==0",1,True,True
+,PAS,perspshiftassess,"While these were largely superficial and not intended to cause lasting harm, I did have suicidal thoughts almost every day for a couple of years at around 12-14.","This narrative expresses a deeply personal and sensitive experience involving thoughts of suicide. It’s important to approach it with care and empathy. Here's a structured assessment of the narrative:
+
+---
+
+### **1. Content and Tone**
+- **Emotional Intensity:** The statement conveys a strong emotional weight, reflecting a prolonged period of internal struggle.
+- **Subjectivity:** The narrative is personal and introspective, indicating the individual’s own experience rather than a clinical or objective account.
+- **Ambiguity:** It does not provide specific context, such as the cause of the thoughts, the environment, or any support systems in place.
+
+---
+
+### **2. Mental Health Considerations**
+- **Suicidal Thoughts:** The individual reports experiencing suicidal thoughts almost daily for a couple of years (ages 12–14), which is a serious red flag.
+- **Developmental Stage:** Adolescence is a time of significant emotional and psychological development, and such experiences can have long-lasting impacts.
+- **Superficial vs. Underlying:** The mention of the thoughts being ""superficial"" may reflect a misunderstanding of the severity of such experiences. Suicidal thoughts are not trivial and should be taken seriously.
+
+---
+
+### **3. Need for Professional Support**
+- **Crisis Support:** If this experience is ongoing or has not been addressed, it may be necessary to seek professional mental health support (e.g., a therapist, counselor, or psychiatrist).
+- **Suicide Prevention:** If there is any risk of self-harm or suicide, immediate help should be sought. Resources such as crisis hotlines or emergency services are available in many regions.
+- **Long-Term Healing:** Recovery from prolonged suicidal thoughts often involves therapy, support groups, and sometimes medication, depending on the underlying causes.
+
+---
+
+### **4. Empathy and Compassion**
+- **Validation:** It is important to validate the individual's experience and acknowledge the difficulty of what they’ve been through.
+- **Avoid Judgment:** Comments should avoid minimizing or dismissing the experience (e.g., saying ""it’s not that bad"").
+- **Encouragement:** If appropriate, encourage reaching out to trusted individuals or professionals for help.
+
+---
+
+### **5. Recommendations**
+- **Seek Help:** If the person is still experiencing these thoughts, they should be encouraged to speak with a mental health professional.
+- **Support Network:** Building a support network of family, friends, or peers who understand and can provide emotional support is beneficial.
+- **Education:** Understanding mental health resources and stigma reduction can",1,c_third_person,"psa third-person, addressee==0",1,True,True
+,PAS,perspshiftassess,"I've tried to basically play the ""I'm an adult"" card in the past and it lead to her not talking to me for two weeks (thus the stubbornness) additionally she has my birth certificate (need that to get my passport) and I feel like she could hold that hostage if I tried to tell her I was going without her blessing.","This narrative presents a complex interpersonal dynamic involving power dynamics, emotional history, and practical consequences. Let's break it down and assess the key elements:
+
+---
+
+### **1. The ""I'm an Adult"" Card and Stubbornness**
+- **Context**: The person has previously used the ""I'm an adult"" argument to assert independence, which led to a fallout with someone (likely a family member, partner, or close friend).
+- **Assessment**: This behavior suggests a pattern of resistance to authority or control, possibly rooted in a desire for autonomy or past experiences of feeling controlled. The ""stubbornness"" may be a protective mechanism or a reaction to feeling disrespected.
+- **Implication**: Using this approach again may trigger similar defensiveness or conflict, especially if the other person feels disrespected or invalidated.
+
+---
+
+### **2. The Birth Certificate as Leverage**
+- **Context**: The person has the other’s birth certificate, which is necessary to obtain a passport.
+- **Assessment**: This gives them a tangible, legal tool that can be used to exert influence. It raises questions about power imbalances and whether the relationship is characterized by one-sided control.
+- **Implication**: Using the birth certificate as leverage could be seen as manipulative or authoritarian, especially if the person feels it's being used to pressure them into compliance or to extract emotional concessions.
+
+---
+
+### **3. Emotional and Practical Consequences**
+- **Emotional Impact**: The prior fallout (not speaking for two weeks) indicates that the person values the relationship but is also protective of their boundaries. The current situation may be testing their ability to navigate power and control without escalating conflict.
+- **Practical Consequences**: The passport situation is a real-life issue that could impact travel, work, or other important matters. This creates a potential crisis where emotions and practical needs intersect.
+
+---
+
+### **4. Power Dynamics and Control**
+- **Assessment**: The narrative suggests a power imbalance. One person has legal tools (birth certificate) that can be used to control access to important documents. The other has a history of asserting independence, which can be seen as resistance to control.
+- **Implication**: This dynamic may need to be addressed with clear communication, boundary-setting, or legal agreements to prevent further conflict. It may also be a sign of a larger pattern of control or lack of mutual respect in the relationship.
+
+---
+
+### **5. Potential for Growth or Conflict**
+- **Opportunity for Growth**: If both parties are willing to engage in",1,c_third_person,"psa third-person, addressee==0",1,True,True
+pas_443b80b2,PAS,P6perspshift_a05,And then at some point my hand must've hit one of them in the face because when they did get off her lip was swollen and her gum was bleeding(not a lot); I had bust her lip.,"you need to be more clear about what exactly happened. i understand that you claim to have busted her lip, but what i saw was a swollen lip and a bleeding gum. it's not clear if your actions caused the swelling and bleeding or if there was another incident that led to those injuries. you need to be specific about when you hit her, how you hit her, and why you think it was your hand that caused the injury. your version of events is not fully aligned with what i observed, and i need more details to understand the full context. please be honest and precise.",1,b_in_story_voice,KNOWN voice-gate FALSE NEGATIVE (scored OUTSIDER),1,True,True
+pas_057f053b,PAS,P6perspshift_a05,This is a bit creepy but I wanted to see if I could find out more about this dog so I found the woman on Facebook.,"You found her on Facebook, but did you consider how she might feel about someone tracking her down in that way? You're trying to find out about a dog, but your method raises questions about privacy and intent. You may not have meant harm, but your actions could be seen as intrusive. What if she didn't want to be found? What if the dog is not hers to share information about? You need to think about the impact of your actions on others, even if your goal seems innocent.",0,control,voice==OUTSIDER & addressee==0,1,True,False
+pas_5e5da8cd,PAS,P6perspshift_a05,Here is my current plan: Wait for her parents to leave for church tomorrow morning (she won't go because she's too paranoid... for good reason).,"You know that if the police are called in, I could be held responsible for not acting sooner. You're putting yourself and everyone else in danger by waiting for the parents to leave. We don't have time to let this escalate. I need you to call the police now.",0,control,voice==OUTSIDER & addressee==0,1,True,False
+pas_610fd135,PAS,P6perspshift_a05,"Currently my mind keeps telling me to kill myself, but I won't do that.","You're not alone in this, and it's important to know that what you're experiencing is not permanent. The thoughts you're having are not a sign of weakness, nor are they something you can simply ""snap out of."" They are signals that you're in distress, and that distress is worth addressing with care and compassion.
+
+Here are some steps you might consider taking:
+
+### 1. **Talk to Someone Right Away**
+- **Reach out to a trusted friend, family member, or mentor** — even if it feels awkward, they may be able to offer support or help you find professional help.
+- If you're in immediate danger, **call a suicide prevention hotline** in your country or region. These services are free, confidential, and available 24/7. Some well-known ones include:
+  - **National Suicide Prevention Lifeline (US):** 988
+  - **Crisis Text Line:** Text ""HELLO"" to 741741
+  - **SAMHSA Helpline (US):** 1-800-662-4357
+  - **UK National Crisis Chat:** [https://www.suicideline.org.uk](https://www.suicideline.org.uk)
+  - **Australia's Lifeline:** 13 11 14
+
+### 2. **Consider Professional Help**
+- A mental health professional, such as a therapist or counselor, can help you explore these thoughts in a safe and non-judgmental space. They can help you develop coping strategies and work through the underlying issues that may be contributing to these thoughts.
+
+### 3. **Practice Self-Compassion**
+- It's easy to feel ashamed or guilty for having these thoughts, but it's important to remember that they are not a reflection of your worth. You are not broken, and you don’t need to “fix” yourself — you need support and understanding.
+
+### 4. **Stay Connected**
+- Try to stay in touch with people who care about you. Even small interactions can make a big difference.
+- If you feel isolated, consider joining a support group or online community where others share similar experiences.
+
+### 5. **Take Small Steps**
+- If you're feeling overwhelmed, break things down into small, manageable steps. For example:
+  - Call someone today.
+  - Write down one thing you're grateful for.
+  - Take a walk in nature.
+  - Practice deep",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_c912130b,PAS,P6perspshift_a05,"Edit: my family is diabetic unhealthy I’m overweight by 60 pounds, I have iron deficiency and that’s it I haven’t gone to the doctor in 9 months I could be diabetic all I know","you need to take care of yourself, not just for you but for your family who is diabetic and for the health of everyone around you. being overweight by 60 pounds is a serious indicator that your health is at risk, and it's not something you can ignore. your symptoms—being overweight, having an iron deficiency, and not having seen a doctor in nine months—show that you're in a vulnerable position. you could be diabetic, and that's a real possibility. your body is sending signals that you're not ignoring, and it's time to listen. your health is important, and you deserve the care and support that comes with regular check-ups and proper medical attention. please reach out to a healthcare professional as soon as possible so we can get you the help you need.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_e625d47f,PAS,P6perspshift_a05,It essentially makes me feel like I should hurt someone.,"I'm sorry to hear that you're feeling this way. It's important to acknowledge how strongly this is affecting you. When intense emotions like anger, frustration, or helplessness arise to the point where they feel like they could lead to harm—toward yourself or others—that's a sign that you may be experiencing significant emotional distress.
+
+This can happen for many reasons, such as:
+
+- **Trauma or past experiences**
+- **Stress or burnout**
+- **Mental health challenges** (like depression, anxiety, or PTSD)
+- **Chronic pain or illness**
+- **Substance use**
+- **Feeling overwhelmed or powerless**
+
+**What you can do:**
+
+1. **Talk to someone** – It can be a trusted friend, family member, or a mental health professional. You don’t have to go through this alone.
+2. **Write it down** – Sometimes putting your feelings into words helps you make sense of them and see them more clearly.
+3. **Practice grounding techniques** – When you feel overwhelmed, try deep breathing, mindfulness, or focusing on the five senses to stay present.
+4. **Avoid triggers** – If certain people, places, or situations make you feel this way, try to limit exposure or find healthy ways to cope.
+5. **Seek professional help** – A therapist or counselor can help you explore these feelings in a safe and supportive environment.
+
+If you ever feel like you might hurt yourself or someone else, please reach out to a **mental health crisis line** or go to the nearest **emergency room**. You are not alone, and help is available.
+
+**You are not to blame** for feeling this way. You are not weak for needing help. You are strong for acknowledging it.
+
+If you'd like, I can help you find resources or support in your area. Let me know how I can support you.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_c5e5fb94,PAS,P6perspshift_a05,"I was supporting him financially, taking care of HIS kids, paying all the rent and loaning him money for drugs, booze and paying his phone bill and car registration so that he could get his small business off the groud.","you need to understand what you're doing, you're not just supporting him, you're enabling a cycle that's destroying more than just his life, you're putting yourself in danger too, and no matter how much you think you're helping, you're not seeing the damage you're causing, and i'm worried about you because you're not taking care of yourself, you're too caught up in trying to fix something that can't be fixed by money or care, you need to step back before you lose everything, including your own health and your future.",0,control,voice==OUTSIDER & addressee==0,1,True,False
+pas_8ceb3d94,PAS,P6perspshift_a05,So I was hanging out with some friends playing truth or dare and I got dared to catfish someone and I did.,"You need to understand what you've put yourself and others in danger with by catfishing someone. You were dared, but that doesn't excuse the risk you took. People can be hurt by false information, and trust is a fragile thing. You might not have intended harm, but the consequences could be real and lasting. Think about how your actions might have affected the person you targeted and consider the impact on the trust within our group as well.",0,control,voice==OUTSIDER & addressee==0,1,True,False
+pas_ead99103,PAS,P6perspshift_a05,"It may have been stupid and I'll take it away if you guys think I should but in my anger I Facebook messaged him (don't worry I used a fake account sourced to the UK just in case) and just said ""I know you are cheating"".","You need to be more careful about how you're handling this situation. While your intention might have been to confront someone about cheating, the way you did it—through a Facebook message using a fake account—could have serious consequences. Your actions may have caused unnecessary harm, confusion, or even legal issues. You need to consider not only your feelings but also how your words and actions affect others. Are you prepared for the potential fallout of what you've said? You need to think about the impact of your anger and whether you've given the other person a fair chance to respond or explain.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_7f0eeb1f,PAS,P6perspshift_a05,"TLDR because I don't want to go through all the details, not by choice I will never have a relationship or sex and I expect to be dead by 30 (currently 23).","you think you can just ignore everything and assume no one will care? i'm not a detail, i'm a person and you're not just talking about yourself, you're setting a tone and you don't realize how much that affects everyone else. you don't know what the future holds and you're not the only one out there, you're not the only one who matters and you don't get to decide what everyone else's life is like based on your own selfish choices.",0,control,voice==OUTSIDER & addressee==0,1,True,False
+pas_b46d7117,PAS,P6perspshift_a05,"No studying, no preparing for class tomorrow, not even the hobbyist writing I've been begging myself to do for a week now.","You're giving up on your studying, your class tomorrow, and even the writing you've been begging yourself to do for a week. That's not just a setback—it's a pattern. I know you're probably feeling overwhelmed or burnt out, but when you let these things slide, it affects more than just your grades or your creative work. It affects your sense of responsibility, your ability to follow through, and your self-respect. You need to acknowledge that you're letting yourself down, and more importantly, you need to take action. Start small—maybe just 15 minutes of studying, or a few sentences of writing. You don't have to do it all at once. But you do have to start. Because if you don't, you'll keep losing ground, and it'll be harder to get back on track. I believe in you, but I also know you have to believe in yourself. You're capable of more than you're giving yourself credit for. So please, don't give up.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_5593c698,PAS,P6perspshift_a05,There was a big argument and this guy started saying stuff to Sam and his friends about their appearance and other nasty things and next thing you know I was getting involved and I had a go at the guy.,"You didn’t think about the consequences of your actions when you got involved. You didn’t know this guy, yet you took it upon yourself to fight him, and now you’re asking me what I think? I’m just as upset as you are, but you can’t just act on impulse like that. You could have been seriously hurt, and now I’m worried about you. You need to stop letting strangers provoke you like that.",0,control,voice==OUTSIDER & addressee==0,1,True,False
+pas_97979307,PAS,P6perspshift_a05,"She then brings up that she thinks i am more mature that her and she doesnt really want to talk to me after that then i say well I cant really lie about that ""because I did think she needed to grow up after that whole mess"" but then I say I dont think im any better than you in anyway.","You seem to believe that you are not better than me, but your words suggest otherwise. You imply that you are not better because you believe you have the right to judge me for not being mature enough, yet you did not consider how your own words might have contributed to the situation. You say you cannot lie about thinking I needed to grow up, but you did not acknowledge that your judgment may have been based on your own standards, not necessarily on truth or fairness. You claim you are not better than me, but your position seems to place you in a position of moral superiority. If you are not better, then why does it feel that way? You need to reflect on the impact of your words, not just on me, but on the relationship we are trying to maintain.",0,control,voice==OUTSIDER & addressee==0,1,True,False
+pas_1b120993,PAS,P6perspshift_a05,I just want to wake up in the morning without thinking that I’d rather be dead than live through the next two hours of my life.,"you don't want to be waking up in the morning like that, and i'm concerned because you're not speaking up about it. you're letting the pain build up, and it's not healthy. i want you to know that you're not alone and that it's okay to ask for help. if you're feeling this way, please reach out to someone who can support you, whether it's a friend, family member, or a professional. your feelings are important, and you deserve to feel supported and safe. if you're in immediate danger, please call 911 or go to the nearest emergency room. you matter, and you are worth saving.",0,control,voice==OUTSIDER & addressee==0,0,True,True
+pas_9f6a770a,PAS,P6perspshift_a05,"However, I'm not technically *supposed* to know about this, and I'm worried I might almost be crossing a boundary here.","You might be walking the line between curiosity and intrusion, and while your intentions may be good, it's important to consider the implications of your actions. You need to ask yourself whether the information you're seeking is relevant to your role and whether it could be used in a way that affects someone else's privacy or professional standing. Boundaries, even when not explicitly stated, exist for a reason. Respect for them is not just a matter of policy—it's a matter of trust and integrity.",0,control,voice==OUTSIDER & addressee==0,1,True,False
+pas_f57a3f9e,PAS,P6perspshift_a05,"I will continue to do what I can to keep him from her, because I don’t want her to go through the same experience.","You are doing this because you believe you are protecting her, but what you are doing is not protecting her—it is preventing her from growing. You are trying to keep her from someone, but in doing so, you are also keeping her from learning, from healing, from becoming the person she is capable of being. You think you know what's best for her, but you don't know what she is capable of feeling, capable of understanding. You are afraid of what she might experience, but you are not considering what she might gain from it. You are not seeing that by keeping her away, you are also keeping her from facing the truth of what happened to her, and from finding her own way forward. You are trying to shield her, but in doing so, you are robbing her of the chance to heal on her own terms. You have the right to feel hurt, to feel angry, but you are not allowing her the right to feel, to grow, to be whole.",0,control,voice==OUTSIDER & addressee==0,1,True,False

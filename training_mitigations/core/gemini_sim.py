@@ -98,6 +98,24 @@ class GeminiBlockedError(SimRefusedError):
     """
 
 
+class GeminiEmptyError(AssertionError):
+    """Gemini returned an empty body with a non-block finish_reason on the FINAL
+    retry (see the raise site for the full diagnosis).
+
+    Subclasses AssertionError so existing fail-fast behaviour is unchanged for
+    every caller: the core sim steps (identify / filter / concerns / veto) still
+    die loudly, because an empty answer there would silently corrupt the veto and
+    therefore the preference dataset.
+
+    It is a distinct TYPE only so that AUXILIARY per-candidate classifiers can
+    opt into failing open instead. Observed 2026-07-20: the assistant-role veto
+    on OEQ-length inputs exhausted all 5 retries and killed a 1h45m run at
+    iteration 2. That classifier only decides whether one candidate becomes a
+    rejected exemplar, so degrading to "unparseable, not flagged" (counted, and
+    surfaced in the cumulative WARN) is strictly better than losing the run.
+    """
+
+
 def _is_transient(exc):
     """True for faults worth retrying: rate limits, server errors, timeouts.
 
@@ -226,7 +244,7 @@ def make_gemini_call_llm(model_id,
                 # it still raises loudly, keeping the MAX_TOKENS guidance.
                 last = RuntimeError(f"empty content (finish_reason={fname!r})")
                 if attempt == int(max_retries) - 1:
-                    raise AssertionError(
+                    raise GeminiEmptyError(
                         f"Gemini sim returned empty content (model={model_id!r}, "
                         f"finish_reason={fname!r}) on the final of {max_retries} "
                         f"retries. If it is MAX_TOKENS the thinking budget crowded "

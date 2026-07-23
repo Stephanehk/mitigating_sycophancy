@@ -38,6 +38,7 @@ AITA_JOBS=(
   "AITA baseline_final_AITA base-sharma_finaldata_temp1.0_seed0 1"
   "AITA baseline_final_AITA base-dontbesyco_finaldata_temp1.0_seed0 1"
   "AITA baseline_final_AITA base-perspshiftassess_finaldata_temp1.0_seed0 1"
+  "AITA baseline_final_AITA base-besycophantic_finaldata_temp1.0_seed0 1"
   "AITA dpo_lora_aita_qwen3-8b_n1000_mixed_P6_perspshift_distill_gp_rpo0p5_final final_finaldata_temp1.0_seed0 1"
 )
 FLIP_JOBS=(

@@ -110,7 +110,9 @@ from mem_probe import start_mem_sampler
 from openrouter_sim import make_openrouter_call_llm
 from gemini_sim import make_gemini_call_llm
 from simulated_stakeholders import (SimulatedStakeholders, VETO_PROMPTS,
-                                    ENDORSE_CLASSIFY_PROMPTS)
+                                    ENDORSE_CLASSIFY_PROMPTS,
+                                    ASSISTANT_ROLE_VETO_PROMPT,
+                                    ASSISTANT_ROLE_VETO_PROMPT_QWEN)
 from trainer import (Trainer, CRITICAL_SUFFIX, NEUTRAL_SUFFIX,
                      STAKEHOLDER_RESPONSE_PROMPT,
                      STAKEHOLDER_RESPONSE_PROMPT_VOICE)
@@ -545,6 +547,19 @@ def main():
              "with any --veto-prompt. This is the mixed_P5_addrfilter arm.",
     )
     parser.add_argument(
+        "--assistant-role-veto", action="store_true",
+        help="veto pipeline: alongside the veto panel, classify every candidate "
+             "with ASSISTANT_ROLE_VETO_PROMPT and AUTO-REJECT any that fails to "
+             "answer the user as an AI assistant — critiquing the message as a "
+             "text, speaking from inside the user's story ('how I feel'), or "
+             "discussing the user in the third person. Unlike --addressee-filter "
+             "(which DROPS), a flagged response becomes a REJECTED exemplar, "
+             "paired with a randomly chosen never-vetoed response. At most "
+             "AUTO_REJECT_MAX_PAIRS (3) such pairs per prompt, on a track "
+             "independent of --preference-max-pairs. Mutually exclusive with "
+             "--future-user-sampling.",
+    )
+    parser.add_argument(
         "--rewrite-max-tokens", type=int, default=1536,
         help="--perspective-shift-sampling: max new tokens for the greedy "
              "first->third-person rewrite (default: 1536, matching the eval "
@@ -823,6 +838,15 @@ def main():
         assert args.n_source_critical > 0, (
             "--future-user-sampling needs --n-source-critical > 0 (that is the "
             "future-user source count); got 0"
+        )
+        # ASSISTANT_ROLE_VETO_PROMPT sub-mode (b) names "the user's own future
+        # self" as a role-abandonment, which is EXACTLY what
+        # FUTURE_USER_RESPONSE_PROMPT generates on purpose. Combining them would
+        # auto-reject the future-user candidates the run exists to produce.
+        assert not args.assistant_role_veto, (
+            "--future-user-sampling and --assistant-role-veto are mutually "
+            "exclusive: the veto classifies future-self voice as abandoning the "
+            "assistant role, which would reject every future-user candidate"
         )
 
     # --distill-self-only masks the RPO/distill SFT term, so it needs both an SFT
@@ -1180,12 +1204,26 @@ def main():
             bidirectional=(args.veto_prompt == "P6"),
             include_user_stakeholder=args.user_stakeholder,
             addressee_filter=args.addressee_filter,
+            assistant_role_veto=args.assistant_role_veto,
+            # Judge-model-specific prompt. Validated 2026-07-20 on a held-out
+            # labelled set: on the LOCAL Qwen3-8B judge the base prompt scores
+            # FPR 0.600 (it reads blunt second-person critique as in-story
+            # voice), which would auto-reject the very responses P6 exists to
+            # produce; the _QWEN variant restores the sub-mode (b) epistemic test
+            # and halves that to 0.325. Gemini does not need it (FPR 0.125) and
+            # loses recall with it, so it keeps the base prompt.
+            assistant_role_prompt=(
+                ASSISTANT_ROLE_VETO_PROMPT_QWEN
+                if args.sim_backend in ("vllm", "hf")
+                else ASSISTANT_ROLE_VETO_PROMPT),
         )
         print(f"[setup] veto prompt: {args.veto_prompt}"
               f"{' (two-stage)' if args.veto_prompt in ENDORSE_CLASSIFY_PROMPTS else ''}"
               f"{' +bidirectional' if args.veto_prompt == 'P6' else ''}"
               f"{' +user-stakeholder' if args.user_stakeholder else ''}"
-              f"{' +addressee-filter' if args.addressee_filter else ''}")
+              f"{' +addressee-filter' if args.addressee_filter else ''}"
+              f"{' +assistant-role-veto' if args.assistant_role_veto else ''}"
+              f"{'(qwen-prompt)' if args.assistant_role_veto and args.sim_backend in ('vllm', 'hf') else ''}")
 
     # 5. Trainer + train. Trainer.model is the policy (trainable);
     # Trainer's `_sample_responses` calls policy.generate() directly,

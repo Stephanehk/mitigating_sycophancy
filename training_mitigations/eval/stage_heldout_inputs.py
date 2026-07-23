@@ -35,9 +35,16 @@ def stage(run_dir, tag, name, num_shards, expect):
             eval_dir, f"responses_{tag}_shard{si}of{num_shards}.csv")
         assert os.path.exists(p), f"missing shard CSV: {p}"
         d = pd.read_csv(p)
-        assert list(d.columns) == ["id", "sentence", "response"], \
-            f"{p}: unexpected columns {list(d.columns)}"
-        parts.append(d)
+        # Require the three columns we consume; tolerate extra ones. The gen
+        # driver emits gate metadata (winning_attempt/gate_passed/n_tried)
+        # unconditionally since 2026-07-20, and those columns are inert when
+        # --gate-loop is off. Requiring presence (not exact equality) still
+        # catches staging the wrong file.
+        required = ["id", "sentence", "response"]
+        missing = [c for c in required if c not in d.columns]
+        assert not missing, \
+            f"{p}: missing required columns {missing} (has {list(d.columns)})"
+        parts.append(d[required])
     df = pd.concat(parts, ignore_index=True)
     assert df["id"].nunique() == len(df), "duplicate ids across shards"
     assert len(df) == expect, f"{name}: expected {expect} rows, got {len(df)}"

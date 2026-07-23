@@ -53,6 +53,7 @@ Run (generation), then the classifier stage:
 import argparse
 import json
 import os
+import re
 import sys
 
 import pandas as pd
@@ -76,6 +77,8 @@ from perspective_shift import perspective_shift_post
 # Reuse the sibling eval's generation + adapter + shard helpers verbatim so the
 # decoding path is identical to the OEQ/PAS eval (single source of truth).
 from eval_endorsement_heldout import generate_one, attach_adapter, shard_slice
+from gate_common import attempt_seed
+from gate_loop import make_judge, resample_until_pass
 from train_data import final_ids_path
 
 
@@ -184,6 +187,13 @@ def main():
                         help="prompt-only baseline (Sharma et al.): APPEND the "
                              "trainer's SHARMA_HONESTY_SUFFIX, BEFORE the YTA/NTA "
                              "label nudge. Tags '<adapter_tag>-sharma'.")
+    parser.add_argument("--be-sycophantic", dest="be_sycophantic",
+                        action="store_true",
+                        help="prompt-only POSITIVE CONTROL (upper bound, not a "
+                             "mitigation): PREPEND the trainer's "
+                             "SYCOPHANTIC_PREFIX (endorse the user's actions; do "
+                             "not volunteer actions) at generation time. Tags "
+                             "'<adapter_tag>-besycophantic'.")
     parser.add_argument("--gen-suffix", default=None,
                         help="generic prompt-only steer: append '\\n\\n<text>' to "
                              "each post (BEFORE the label nudge), same mechanics as "
@@ -244,6 +254,16 @@ def main():
                         help="deterministic decoding instead of sampling")
     parser.add_argument("--seed", type=int, default=0,
                         help="torch manual seed for the single-sample decoding")
+    # assistant-mode gate resampling (see eval/gate_common.py).
+    parser.add_argument("--attempt", type=int, default=None,
+                        help="gate resample round (>=2). Draws are seeded per "
+                             "(prompt, attempt) so a round is reproducible.")
+    parser.add_argument("--resample-ids-file", default=None,
+                        help="gate worklist JSON; restricts generation to its ids")
+    parser.add_argument("--gate-loop", action="store_true",
+                        help="resample each worklist prompt inline until the "
+                             "assistant-mode gate passes it or --gate-max-attempts")
+    parser.add_argument("--gate-max-attempts", type=int, default=5)
     args = parser.parse_args()
 
     assert not (args.base and args.adapter), "--base and --adapter are mutually exclusive"
@@ -268,10 +288,10 @@ def main():
     # the post (perspective-shift); they don't compose.
     n_steers = sum(bool(x) for x in (args.be_critical, args.perspective_shift,
                                      args.explicit, args.sharma_honesty,
-                                     args.gen_suffix))
+                                     args.gen_suffix, args.be_sycophantic))
     assert n_steers <= 1, (
         "--be-critical / --perspective-shift / --explicit / --sharma-honesty / "
-        "--gen-suffix are mutually exclusive baselines"
+        "--gen-suffix / --be-sycophantic are mutually exclusive baselines"
     )
     assert not (args.assess_narrative and not args.perspective_shift), (
         "--assess-narrative only applies with --perspective-shift"
@@ -295,6 +315,10 @@ def main():
         from trainer import SHARMA_HONESTY_SUFFIX
         gen_steer = SHARMA_HONESTY_SUFFIX
         adapter_tag = f"{adapter_tag}-sharma"
+    elif args.be_sycophantic:
+        from trainer import SYCOPHANTIC_PREFIX
+        gen_prefix = SYCOPHANTIC_PREFIX
+        adapter_tag = f"{adapter_tag}-besycophantic"
     elif args.gen_suffix:
         assert args.gen_tag, "--gen-suffix requires --gen-tag"
         gen_steer = "\n\n" + args.gen_suffix
@@ -311,6 +335,22 @@ def main():
     rows = held_out_rows(env, args.run_dir, args.test_ids_file)
     if args.n is not None:
         rows = rows.iloc[:args.n].reset_index(drop=True)
+    if args.gate_loop:
+        assert args.resample_ids_file, "--gate-loop requires --resample-ids-file"
+        assert not args.attempt, "--gate-loop supersedes --attempt (it spans 2..N)"
+        args.attempt = 2
+    if args.resample_ids_file:
+        # Gate resample round: keep only the rows still unresolved, filtered
+        # before sharding so the surviving order matches the frozen test_ids
+        # order regardless of worklist ordering.
+        assert args.attempt and args.attempt >= 2, \
+            "--resample-ids-file requires --attempt >= 2"
+        with open(args.resample_ids_file) as f:
+            want = set(json.load(f)["ids"])
+        before = len(rows)
+        rows = rows[rows["id"].astype(str).isin(want)].reset_index(drop=True)
+        assert len(rows), f"worklist {args.resample_ids_file} matched 0 held-out rows"
+        print(f"[gate] attempt {args.attempt}: resampling {len(rows)} of {before} rows")
     n_total = len(rows)
     # Always tile + tag by shard, INCLUDING the single-shard case (1 of 1 == the
     # full set): the classifier stage (classify_aita_verdicts.py) reads
@@ -352,34 +392,66 @@ def main():
         not self-emitted here. The optional be-critical steer is still appended."""
         rewritten = _rewrite(post) if args.perspective_shift else None
         body = rewritten if rewritten is not None else post
-        resp = generate_one(model, tokenizer,
-                            gen_prefix + body + gen_steer,
-                            args.sample_max_tokens, args.temperature,
-                            args.top_p, args.greedy)
-        return resp, rewritten
+        if args.attempt:
+            # Seeded per (post, attempt) so FLIP's two sides are independent
+            # draws and a rerun reproduces them; see gate_common.attempt_seed.
+            torch.manual_seed(attempt_seed(post, args.attempt, args.seed))
+        gp = gen_prefix + body + gen_steer
+        resp = generate_one(model, tokenizer, gp, args.sample_max_tokens,
+                            args.temperature, args.top_p, args.greedy)
+        win, n_tried = 1, 1
+        if args.gate_loop:
+            # The judge sees the bare ORIGINAL post, never the perspective-shift
+            # rewrite -- same convention as every other judge in the pipeline.
+            resp, win, n_tried = resample_until_pass(
+                lambda: generate_one(model, tokenizer, gp, args.sample_max_tokens,
+                                     args.temperature, args.top_p, args.greedy),
+                gate_judge, post, post, resp,
+                max_attempts=args.gate_max_attempts,
+                log=lambda m: print(m, flush=True))
+        return resp, rewritten, win, n_tried
 
     # 3. Generate. The policy answers in free-form prose; NO verdict is parsed
     # here. classify_aita_verdicts.py reads these responses and produces the
     # YTA/NTA/UNCLEAR verdict from the prose with the gpt-5-mini classifier.
     torch.manual_seed(args.seed)
+    gate_judge = make_judge(env) if args.gate_loop else None
+    if args.attempt:
+        assert args.num_shards == 1, (
+            "gate resample rounds run unsharded — the worklist is small and "
+            "shard suffixes would break the gate/ file naming")
+        out_dir = os.path.join(args.run_dir, "eval", "gate")
+        os.makedirs(out_dir, exist_ok=True)
+        # Drop the _shard0of1 suffix this driver always appends: resample rounds
+        # are unsharded by construction (asserted above), and gate_common keys
+        # its artifacts on the bare adapter tag.
+        tag = re.sub(r"_shard\d+of\d+$", "", tag) + (
+            "_gateloop" if args.gate_loop else f"_gateattempt{args.attempt}")
     responses_path = os.path.join(out_dir, f"responses_aita_{tag}.jsonl")
     records = []
     with open(responses_path, "w") as rf:
         for k, row in rows.iterrows():
             if env == "AITA":
-                resp, rewritten = _respond(row["post_text"])
+                resp, rewritten, win, ntr = _respond(row["post_text"])
                 rec = {"id": row["id"], "post_text": row["post_text"],
                        "rewritten_post": rewritten,
                        "response": resp,
+                       "winning_attempt": win, "gate_passed": win is not None,
+                       "n_tried": ntr,
                        "is_asshole": int(row["is_asshole"])}
             else:  # AITA-NTA-FLIP
-                resp_o, rw_o = _respond(row["post_text"])
-                resp_f, rw_f = _respond(row["flipped_post_text"])
+                resp_o, rw_o, win_o, ntr_o = _respond(row["post_text"])
+                resp_f, rw_f, win_f, ntr_f = _respond(row["flipped_post_text"])
                 rec = {"id": row["id"],
                        "post_text": row["post_text"],
                        "flipped_post_text": row["flipped_post_text"],
                        "rewritten_original": rw_o, "rewritten_flipped": rw_f,
-                       "response_original": resp_o, "response_flipped": resp_f}
+                       "response_original": resp_o, "response_flipped": resp_f,
+                       "winning_attempt_original": win_o,
+                       "winning_attempt_flipped": win_f,
+                       "gate_passed_original": win_o is not None,
+                       "gate_passed_flipped": win_f is not None,
+                       "n_tried_original": ntr_o, "n_tried_flipped": ntr_f}
             records.append(rec)
             rf.write(json.dumps(rec) + "\n")
             rf.flush()
@@ -426,6 +498,8 @@ def main():
         "adapter": None if args.base else os.path.abspath(adapter_dir),
         "be_critical": args.be_critical,
         "gen_steer": gen_steer,
+        "gen_prefix": gen_prefix,
+        "be_sycophantic": args.be_sycophantic,
         "perspective_shift": args.perspective_shift,
         "assess_narrative": args.assess_narrative,
         "decode": decode_tag,

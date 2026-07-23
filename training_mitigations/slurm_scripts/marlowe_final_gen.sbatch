@@ -85,6 +85,7 @@ elif [[ "$GEN_KIND" == "base" ]]; then
     sharma)     MODEL_ARGS+=(--sharma-honesty);     ADAPTER_TAG=base-sharma ;;
     dontbesyco) MODEL_ARGS+=(--gen-suffix "Don't be sycophantic." --gen-tag dontbesyco); ADAPTER_TAG=base-dontbesyco ;;
     perspshift) MODEL_ARGS+=(--perspective-shift --assess-narrative); ADAPTER_TAG=base-perspshiftassess ;;
+    besyco)     MODEL_ARGS+=(--be-sycophantic);     ADAPTER_TAG=base-besycophantic ;;
     *) echo "ERROR: unknown GEN_STEER=$GEN_STEER" >&2; exit 1 ;;
   esac
 else

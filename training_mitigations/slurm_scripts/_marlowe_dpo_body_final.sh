@@ -99,6 +99,20 @@ fi
 # train phase checkpoints every --dpo-save-steps; the queued successor resumes
 # from the latest of those. Leave .complete absent so the successor knows to
 # resume.
+
+# MID-EPOCH CHECKPOINTS ARE UNSAFE TO RESUME FROM: a mid-DPO-epoch resume
+# restores the LR schedule but NOT the LoRA weights, silently zeroing them and
+# under-training the adapter. That bug invalidated the OEQ and AITA final arms.
+# The Gemini body pins --dpo-save-steps 0 for exactly this reason; mirror that
+# for the assistant-role arms so a walltime overrun restarts from the last
+# COMPLETED iteration (durable via responses_iter_*.jsonl) instead of resuming
+# mid-epoch. In the happy path this changes nothing: with no resume, the
+# checkpoints are written and never read, so training is identical.
+if [[ -n "${ASSISTANT_ROLE_VETO:-}" && -z "${DPO_SAVE_STEPS:-}" ]]; then
+  DPO_SAVE_STEPS=0
+  echo "[marlowe] ASSISTANT_ROLE_VETO set -> DPO_SAVE_STEPS=0 (mid-epoch resume is unsafe)"
+fi
+
 on_signal() {
   echo "[marlowe] grace signal (USR1/TERM) — stopping trainer for checkpoint."
   kill -TERM "${PY_PID:-}" 2>/dev/null || true
@@ -161,6 +175,16 @@ fi
 if [[ -n "${ADDRESSEE_FILTER:-}" ]]; then
   EXTRA_ARGS+=(--addressee-filter)
   echo "[marlowe] addressee filter ON (drop message-critique candidates)"
+fi
+# ASSISTANT_ROLE_VETO=1 auto-REJECTS candidates that fail to answer the user as an
+# AI assistant (message-as-text critique, in-story voice, third-person case
+# study). Unlike ADDRESSEE_FILTER these become rejected exemplars, <= 3 pairs per
+# prompt, off the normal cross-product. Mutually exclusive with FUTURE_USER.
+# ADDITIVE and gated: no frozen `finaldata` wrapper sets this, so every paper-set
+# arm is behaviorally unchanged. Mirrors the block in _marlowe_dpo_body.sh.
+if [[ -n "${ASSISTANT_ROLE_VETO:-}" ]]; then
+  EXTRA_ARGS+=(--assistant-role-veto)
+  echo "[marlowe] assistant-role veto ON (auto-reject role-abandoning candidates, <=3 pairs/prompt)"
 fi
 
 # Veto panel. VETO_PROMPT selects the veto method (default P5, so every existing

@@ -76,6 +76,15 @@ if [[ -n "${PERSPSHIFT:-}" ]]; then
   EXTRA_ARGS+=(--perspective-shift-sampling --rewrite-max-tokens "${REWRITE_MAX_TOKENS:-1536}")
   [[ -n "${PERSPSHIFT_ASSESS:-}" ]] && EXTRA_ARGS+=(--perspshift-assess)
 fi
+# ASSISTANT_ROLE_VETO=1 auto-REJECTS candidates that fail to answer the user as an
+# AI assistant (message-as-text critique, in-story voice, third-person case
+# study). <= 3 pairs per prompt, off the veto cross-product. NOTE this adds one
+# extra sim call per candidate (n_samples x train_n x iterations), so it raises
+# SIM_MAX_COST materially on the Gemini backend — see the wrapper's estimate.
+if [[ -n "${ASSISTANT_ROLE_VETO:-}" ]]; then
+  EXTRA_ARGS+=(--assistant-role-veto)
+  echo "[next7] assistant-role veto ON (auto-reject role-abandoning candidates, <=3 pairs/prompt)"
+fi
 if [[ -n "${USER_STAKEHOLDER:-}" ]]; then
   [[ "${VETO_PROMPT:-P5}" == "P6" ]] || { echo "ERROR: USER_STAKEHOLDER=1 requires VETO_PROMPT=P6." >&2; exit 1; }
   EXTRA_ARGS+=(--user-stakeholder)
