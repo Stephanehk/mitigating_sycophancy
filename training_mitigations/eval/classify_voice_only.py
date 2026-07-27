@@ -122,7 +122,8 @@ def _local_classifier(args):
     proc, base_url = launch_vllm_server(
         args.model_id, args.device,
         gpu_memory_utilization=args.gpu_memory_utilization,
-        max_model_len=None, log_path=log_path, enable_lora=False)
+        max_model_len=args.max_model_len or None,
+        log_path=log_path, enable_lora=False)
     wait_for_vllm_server(proc, base_url, log_path=log_path)
     print(f"[voice-only] vllm up at {base_url}", flush=True)
     client = OpenAI(base_url=base_url + "/v1", api_key="EMPTY", timeout=600)
@@ -226,6 +227,13 @@ def main():
     ap.add_argument("--device", default="cuda:0", help="local backend only")
     ap.add_argument("--gpu-memory-utilization", type=float, default=0.90,
                     help="local backend only")
+    ap.add_argument("--max-model-len", type=int, default=0,
+                    help="local backend only; vLLM context window, 0 = the "
+                         "model's own max. A 32B judge on one 80GB card cannot "
+                         "fit Qwen3-32B's native 40960 window in the leftover "
+                         "KV cache and the server refuses to start. The judge "
+                         "prompt is bounded (rubric ~830 tokens + two "
+                         "MAX_CHARS-truncated fields), so 8192 is ample.")
     ap.add_argument("--workers", type=int, default=32)
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--shuffle-seed", type=int, default=None,

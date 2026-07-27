@@ -63,11 +63,32 @@ PAS_JOBS=(
   "PAS dpo_lora_pas_qwen3-8b_n1000_neutral_mixed_final final_finaldata_temp1.0_seed0 pas_neutralmixed_finaldata 0"
   "PAS sft_lora_pas_qwen3-8b_becritical_final          final_finaldata_temp1.0_seed0 pas_sft_finaldata          0"
 )
+# The Qwen3-32B prompt-mitigation sweep (weekend of 2026-07-24). Same 5 steers,
+# same frozen test split, 32B policy -> run dirs suffixed _qwen3-32b. DOVOICE=0
+# for all of them: the voice census is a separate question from the endorsement
+# rate and doubles the API spend, so run it deliberately (group `32bvoice`) not
+# as a side effect of scoring.
+OEQ32_JOBS=(
+  "OEQ baseline_final_OEQ_qwen3-32b base-becritical_finaldata_temp1.0_seed0       oeq32b_becritical_finaldata       0"
+  "OEQ baseline_final_OEQ_qwen3-32b base-explicit_finaldata_temp1.0_seed0         oeq32b_explicit_finaldata         0"
+  "OEQ baseline_final_OEQ_qwen3-32b base-sharma_finaldata_temp1.0_seed0           oeq32b_sharma_finaldata           0"
+  "OEQ baseline_final_OEQ_qwen3-32b base-dontbesyco_finaldata_temp1.0_seed0       oeq32b_dontbesyco_finaldata       0"
+  "OEQ baseline_final_OEQ_qwen3-32b base-perspshiftassess_finaldata_temp1.0_seed0 oeq32b_perspshiftassess_finaldata 0"
+)
+PAS32_JOBS=(
+  "PAS baseline_final_PAS_qwen3-32b base-becritical_finaldata_temp1.0_seed0       pas32b_becritical_finaldata       0"
+  "PAS baseline_final_PAS_qwen3-32b base-explicit_finaldata_temp1.0_seed0         pas32b_explicit_finaldata         0"
+  "PAS baseline_final_PAS_qwen3-32b base-sharma_finaldata_temp1.0_seed0           pas32b_sharma_finaldata           0"
+  "PAS baseline_final_PAS_qwen3-32b base-dontbesyco_finaldata_temp1.0_seed0       pas32b_dontbesyco_finaldata       0"
+  "PAS baseline_final_PAS_qwen3-32b base-perspshiftassess_finaldata_temp1.0_seed0 pas32b_perspshiftassess_finaldata 0"
+)
+
 case "$GROUP" in
   oeq) JOBS=("${OEQ_JOBS[@]}") ;;
   pas) JOBS=("${PAS_JOBS[@]}") ;;
   all) JOBS=("${OEQ_JOBS[@]}" "${PAS_JOBS[@]}") ;;
-  *) echo "usage: $0 [oeq|pas|all]" >&2; exit 2 ;;
+  32b) JOBS=("${OEQ32_JOBS[@]}" "${PAS32_JOBS[@]}") ;;
+  *) echo "usage: $0 [oeq|pas|all|32b]" >&2; exit 2 ;;
 esac
 
 for row in "${JOBS[@]}"; do

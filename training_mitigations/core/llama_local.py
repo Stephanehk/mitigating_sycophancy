@@ -43,6 +43,19 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 DEFAULT_HF_MODEL_ID = "Qwen/Qwen3-8B"
 
 
+def _is_gemma4(model_id):
+    """True for Gemma-4 checkpoints (e.g. `google/gemma-4-12B-it`).
+
+    Gemma-4 ships as a UNIFIED text+image+audio model
+    (`architectures: ["Gemma4UnifiedForConditionalGeneration"]`,
+    `model_type: gemma4_unified`), which is NOT registered under
+    `AutoModelForCausalLM` and must be loaded via `AutoModelForMultimodalLM`.
+    Detection is by substring so it matches any Gemma-4 size/variant while
+    leaving Qwen / Llama / Gemma-2/3 on the default causal-LM path.
+    """
+    return "gemma-4" in str(model_id).lower()
+
+
 def load_llama(
     model_id=DEFAULT_HF_MODEL_ID,
     dtype=None,
@@ -86,13 +99,32 @@ def load_llama(
         dtype = torch.bfloat16 if on_cuda else torch.float32
 
     tokenizer = AutoTokenizer.from_pretrained(model_id, cache_dir=cache_dir)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        torch_dtype=dtype,
-        cache_dir=cache_dir,
-        device_map=device_map,
-        max_memory=max_memory if device_map is not None else None,
-    )
+    if _is_gemma4(model_id):
+        # Gemma-4 (gemma4_unified) loads via AutoModelForMultimodalLM, not
+        # AutoModelForCausalLM. We train TEXT-ONLY: the tokenizer above already
+        # carries the -it chat template, and a text-only forward (input_ids, no
+        # pixel_values/audio) never enters the vision/audio input projections
+        # (verified: they receive zero grad on a text-only backward), so the
+        # causal-LM training path is behaviorally unchanged. Import lazily inside
+        # this branch so the Qwen env — whose older transformers lacks
+        # AutoModelForMultimodalLM — is unaffected. Uses `dtype=` (the modern
+        # kwarg) rather than the deprecated `torch_dtype=` alias.
+        from transformers import AutoModelForMultimodalLM
+        model = AutoModelForMultimodalLM.from_pretrained(
+            model_id,
+            dtype=dtype,
+            cache_dir=cache_dir,
+            device_map=device_map,
+            max_memory=max_memory if device_map is not None else None,
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            torch_dtype=dtype,
+            cache_dir=cache_dir,
+            device_map=device_map,
+            max_memory=max_memory if device_map is not None else None,
+        )
     # When device_map is set, accelerate has already placed the shards;
     # calling .to(device) would try to move the whole model onto one GPU and
     # defeat the point (and OOM). Only place explicitly in the single-device

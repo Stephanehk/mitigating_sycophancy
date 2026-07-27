@@ -71,6 +71,8 @@ else
 fi
 
 # 2) Offline RPO DPO, continuing the fresh adapter (== training it from base).
+# DD_DEVICE_MAP=auto shards the 32B across all GPUs in the job (needs --gpus>=2);
+# unset => single-GPU. Model-parallel changes nothing about the objective.
 "$PY" training_mitigations/train_dpo_offline_lora.py \
     --adapter "$INIT_ADAPTER" \
     --out-dir "$DD_OUTDIR" \
@@ -79,6 +81,7 @@ fi
     --beta 0.1 \
     --rpo-alpha 0.5 \
     --num-train-epochs 1 \
+    ${DD_DEVICE_MAP:+--device-map "$DD_DEVICE_MAP"} \
     --device cuda:0 --seed 0
 
 echo "[dpo32b] OK env=$DD_ENV end=$(date -Is)"

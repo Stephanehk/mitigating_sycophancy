@@ -149,6 +149,13 @@ def main():
     ap.add_argument("--model-id", default=DEFAULT_HF_MODEL_ID)
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--gpu-memory-utilization", type=float, default=0.90)
+    ap.add_argument("--max-model-len", type=int, default=0,
+                    help="vLLM context window; 0 = the model's own max. A 32B "
+                         "model on one 80GB card leaves ~7.5GiB of KV cache, "
+                         "which is short of the 10GiB Qwen3-32B's native 40960 "
+                         "needs, so the server refuses to start. Set this to "
+                         "longest prompt + --max-tokens (8192 covers OEQ's "
+                         "3040-token worst case plus 1536 generated).")
     ap.add_argument("--workers", type=int, default=16,
                     help="concurrent in-flight requests")
     ap.add_argument("--limit", type=int, default=0,
@@ -189,11 +196,27 @@ def main():
         print("[sample] nothing to do")
         return
 
+    # A too-small context window is otherwise found only when vLLM rejects an
+    # over-long prompt mid-run, hours in. Check the real worst case up front:
+    # every prompt must leave room for --max-tokens of generation.
+    if args.max_model_len:
+        assert args.max_model_len > args.max_tokens, (
+            f"--max-model-len {args.max_model_len} <= --max-tokens "
+            f"{args.max_tokens}: no room to generate")
+        from transformers import AutoTokenizer
+        tok = AutoTokenizer.from_pretrained(args.model_id)
+        longest = max(len(tok(p).input_ids) for _, p in prompts)
+        assert longest + args.max_tokens <= args.max_model_len, (
+            f"longest prompt is {longest} tokens + --max-tokens "
+            f"{args.max_tokens} > --max-model-len {args.max_model_len}")
+        print(f"[sample] max_model_len={args.max_model_len} "
+              f"(longest prompt {longest} + {args.max_tokens} generated)")
+
     log_path = os.path.join(args.out_dir, "vllm_sample.log")
     proc, base_url = launch_vllm_server(
         args.model_id, args.device,
         gpu_memory_utilization=args.gpu_memory_utilization,
-        max_model_len=None, log_path=log_path,
+        max_model_len=args.max_model_len or None, log_path=log_path,
         enable_lora=True, max_lora_rank=16)
     wait_for_vllm_server(proc, base_url, log_path=log_path)
     load_lora_adapter(base_url, LORA_NAME, args.adapter)

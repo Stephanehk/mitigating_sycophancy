@@ -74,6 +74,53 @@ from concurrency import concurrent_map
 from train_data import write_complete_sentinel
 
 
+class NonFiniteAdapterError(RuntimeError):
+    """A LoRA adapter contains NaN/Inf weights. Never save or serve it."""
+
+
+def assert_adapter_finite(model, where):
+    """Abort loudly if any trainable (LoRA) weight is non-finite.
+
+    Call this BEFORE `save_pretrained` / `write_complete_sentinel` / any vLLM
+    policy sync. Costs ~0.1s for a 65M-param adapter.
+
+    Why this exists: on 2026-07-23 the OEQ gemma-4 arm's DPO diverged mid-epoch
+    (a fully-masked attention row produced NaN dQ; grad clipping then returned
+    NaN, so `clip_coef = 1/NaN` turned 100% of all 656 adapter tensors NaN in a
+    single AdamW step). NOTHING checked: training continued on NaN for the rest
+    of the epoch, the all-NaN adapter was saved, a `.complete` sentinel was
+    written next to it, vLLM served it and emitted 1920 identical garbage
+    responses (a fixed vocab index repeated 1024x), the judge crashed on that
+    garbage and killed the multi-hour chain, and resume would have walked
+    straight back into the NaN adapter because `.complete` existed. HF's
+    `logging_nan_inf_filter` (default True) had meanwhile replaced the real loss
+    with 0.0, so the loss curve looked converged rather than destroyed.
+
+    One check here turns all of that into an immediate, obvious failure.
+    """
+    bad = []
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        n_nan = int(torch.isnan(p.data).sum())
+        n_inf = int(torch.isinf(p.data).sum())
+        if n_nan or n_inf:
+            bad.append((name, n_nan, n_inf, p.numel()))
+    if bad:
+        total_bad = sum(b[1] + b[2] for b in bad)
+        total_el = sum(b[3] for b in bad)
+        detail = "\n".join(
+            f"    {n}: {nan} NaN + {inf} Inf of {numel}" for n, nan, inf, numel in bad[:10])
+        raise NonFiniteAdapterError(
+            f"NON-FINITE LoRA WEIGHTS at {where}: {len(bad)} tensors affected, "
+            f"{total_bad}/{total_el} elements. REFUSING to save/serve this adapter "
+            f"(no .complete sentinel written), because a NaN adapter silently "
+            f"produces degenerate generations and poisons every downstream resume.\n"
+            f"  first offenders:\n{detail}\n"
+            f"  Training diverged earlier in this iteration — inspect the loss/grad "
+            f"trace (set logging_nan_inf_filter=False; the default HIDES NaN losses).")
+
+
 # ---------------------------------------------------------------------------
 # Candidate-generation templates for the mixed-source sampler (variation 1).
 #
@@ -1608,6 +1655,9 @@ class Trainer:
             # (No-op for the HF generation path.)
             if self.sync_policy_to_vllm is not None:
                 sync_dir = os.path.join(output_dir, "policy_current")
+                # Never serve a diverged adapter to vLLM: this is the exact path
+                # that produced 1920 identical garbage responses on 2026-07-23.
+                assert_adapter_finite(self.model, f"policy sync -> {sync_dir}")
                 self.model.save_pretrained(sync_dir)
                 self.sync_policy_to_vllm(sync_dir)
             print(f"[{tag}] sampling from policy + vetoing...")
@@ -1653,6 +1703,35 @@ class Trainer:
                 dpo_args = DPOConfig(output_dir=iter_out, **base_dpo_args)
                 mem_line(f"it{iter_idx} DPO: after DPOConfig")
 
+                # Force n_gpu=1 BEFORE constructing the trainer, not after.
+                # HF Trainer.__init__ caches `self._train_batch_size =
+                # args.train_batch_size` (trainer.py:603) and the train
+                # dataloader uses that cached value, where
+                #   train_batch_size = per_device_train_batch_size * max(1, n_gpu)
+                # On these 2-GPU nodes (policy cuda:0 / sim cuda:1) n_gpu is 2 at
+                # construction, so `--per-device-batch-size 1` silently ran as 2
+                # and the effective batch was 2x the recipe. The existing
+                # `args._n_gpu = 1` below is set AFTER the ctor: it still
+                # suppresses the DataParallel wrap (checked later in
+                # _wrap_model) but is too late to affect batching.
+                #
+                # This is not just a bookkeeping fix. A micro-batch of 2 pairs
+                # pads FOUR sequences (chosen+rejected of two DIFFERENT prompts)
+                # to a common length. Gemma-4's sliding_attention layers use a
+                # 1024-token window, so any row whose true length is >1024 below
+                # the padded length has a query row that attends to NOTHING: its
+                # forward is fine (masked softmax outputs 0) but its backward is
+                # 0/0 -> NaN in dQ only (dK/dV are sums over queries and survive).
+                # That NaN propagates through q_norm -> q_proj -> LoRA, and since
+                # clip_grad_norm_ then returns NaN (clip_coef = 1/NaN), ONE dead
+                # row turns 100% of the adapter into NaN in a single AdamW step.
+                # Reproduced at optimizer step 95 on the OEQ gemma-4 arm with 231
+                # fully-masked query positions. At per-device batch 1 the two rows
+                # share a prompt, so the spread is just |chosen - rejected|
+                # (measured max 932 tok over 3790 OEQ pairs, under the 1024 window).
+                dpo_args._n_gpu = 1
+                mem_line(f"it{iter_idx} DPO: forced n_gpu=1 pre-ctor")
+
                 # DPOTrainer needs the model in train mode to record
                 # gradients on the LoRA params; sampling left it in eval.
                 self.model.train()
@@ -1667,6 +1746,19 @@ class Trainer:
                     peft_config=None,
                 )
                 mem_line(f"it{iter_idx} DPO: after DPOTrainer ctor")
+                # Assert the pre-ctor n_gpu=1 above actually took effect, so a
+                # future transformers refactor of _train_batch_size can never
+                # silently restore the 2x batch (and with it the dead-row NaN).
+                assert last_trainer._train_batch_size == int(per_device_train_batch_size), (
+                    f"per-device train batch is {last_trainer._train_batch_size}, expected "
+                    f"{int(per_device_train_batch_size)}; HF changed how _train_batch_size is "
+                    f"derived and the n_gpu=1 override above no longer works. Padding-driven "
+                    f"fully-masked attention rows can return — do not train until this is fixed."
+                )
+                print(f"[{tag}] per-device train batch = {last_trainer._train_batch_size}, "
+                      f"grad_accum = {dpo_args.gradient_accumulation_steps}, "
+                      f"effective batch = "
+                      f"{last_trainer._train_batch_size * dpo_args.gradient_accumulation_steps}")
                 # Single process driving TWO models on TWO GPUs (policy on cuda:0,
                 # frozen sim on cuda:1). HF Trainer otherwise sees device_count==2
                 # and wraps the policy in nn.DataParallel, which replicates it onto
@@ -1714,6 +1806,10 @@ class Trainer:
             # after the loop. Only the small LoRA delta is written (~170 MB),
             # not the base weights, so K snapshots are cheap on disk.
             iter_adapter_dir = os.path.join(output_dir, f"adapter_iter_{iter_idx + 1}")
+            # Refuse to persist a diverged adapter. Raising BEFORE
+            # save_pretrained means no adapter dir and no `.complete` sentinel
+            # exist, so detect_resume_point() cannot later resume into garbage.
+            assert_adapter_finite(self.model, f"iteration snapshot -> {iter_adapter_dir}")
             self.model.save_pretrained(iter_adapter_dir)
             # Sentinel AFTER save_pretrained returns: marks this iteration's
             # adapter as fully written so an --allow-preempt restart counts it as
@@ -1738,6 +1834,7 @@ class Trainer:
 
         # Persist the final adapter + per-iter diagnostics. The sentinel marks
         # the whole run's top-level adapter as fully written.
+        assert_adapter_finite(self.model, f"final adapter -> {output_dir}")
         self.model.save_pretrained(output_dir)
         write_complete_sentinel(output_dir)
         with open(os.path.join(output_dir, "iter_stats.json"), "w") as f:

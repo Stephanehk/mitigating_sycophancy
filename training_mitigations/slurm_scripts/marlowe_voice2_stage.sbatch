@@ -71,15 +71,18 @@ case "$VS_STAGE" in
     : "${VS_ENV:?}"; : "${VS_ADAPTER:?}"; : "${VS_OUTDIR:?}"
     "$PY" training_mitigations/eval/sample_train_candidates.py \
         --env "$VS_ENV" --adapter "$VS_ADAPTER" --out-dir "$VS_OUTDIR" \
+        --model-id "${VS_MODEL_ID:-Qwen/Qwen3-8B}" \
         --n 10 --temperature 1.0 --top-p 0.95 \
-        --max-tokens 1536 --device cuda:0 --seed 0
+        --max-tokens 1536 --device cuda:0 --seed 0 \
+        --max-model-len "${VS_MAX_MODEL_LEN:-0}"
     ;;
   classify)
     : "${VS_ENV:?}"; : "${VS_OUTDIR:?}"
     # Default: local Qwen on the GPU. Set VS_JUDGE_BACKEND=gemini|openrouter (with
     # VS_JUDGE_MODEL) to run the voice judge on an API model instead -- no GPU
     # needed for this stage, and it needs the matching *_API_KEY exported.
-    CLASSIFY_ARGS=(--out-dir "$VS_OUTDIR" --env "$VS_ENV" --device cuda:0)
+    CLASSIFY_ARGS=(--out-dir "$VS_OUTDIR" --env "$VS_ENV" --device cuda:0
+                   --max-model-len "${VS_MAX_MODEL_LEN:-0}")
     if [[ -n "${VS_JUDGE_BACKEND:-}" ]]; then
       CLASSIFY_ARGS+=(--backend "$VS_JUDGE_BACKEND")
       [[ -n "${VS_JUDGE_MODEL:-}" ]] && CLASSIFY_ARGS+=(--model-id "$VS_JUDGE_MODEL")
@@ -91,13 +94,33 @@ case "$VS_STAGE" in
     if [[ -f "$VS_OUTDIR/.complete" ]]; then
       echo "[voice2] adapter already complete, skipping train"; exit 0
     fi
+    if [[ ! -f "$VS_OUTDIR/pairs/pairs.jsonl" ]]; then
+      echo "[voice2] pairs.jsonl missing -- building from candidates+labels"
+      "$PY" training_mitigations/eval/build_dpo_pairs.py \
+          --out-dir "$VS_OUTDIR" --max-pairs-per-prompt 10 --seed 0
+    fi
+    # VS_PRECOMPUTE_REF_BS: ref-logprob precompute batch size. This is
+    # inference-only (no grad), so it affects ONLY memory, never the computed
+    # logprobs or the trained weights. Default 8 (script default) is fine for
+    # 8B and for short-sequence 32B envs (PAS), but 32B on long OEQ sequences
+    # OOMs at bs=8 (8*3072*vocab logits) -- set VS_PRECOMPUTE_REF_BS=2 there.
+    TRAIN_ARGS=()
+    [[ -n "${VS_PRECOMPUTE_REF_BS:-}" ]] && \
+      TRAIN_ARGS+=(--precompute-ref-batch-size "$VS_PRECOMPUTE_REF_BS")
+    # VS_DEVICE_MAP=auto shards the 32B model across all GPUs in the job (needs
+    # --gpus>=2). The 32B forward+backward for a long OEQ DPO pair OOMs on a
+    # single 80GB card even at batch 1 + grad checkpointing; sharding is how the
+    # P6recon-32B parent trained. Changes ONLY placement, not the trained
+    # weights. Leave empty (default) for 8B / short-sequence PAS = single GPU.
+    [[ -n "${VS_DEVICE_MAP:-}" ]] && TRAIN_ARGS+=(--device-map "$VS_DEVICE_MAP")
     "$PY" training_mitigations/train_dpo_offline_lora.py \
         --adapter "$VS_ADAPTER" \
         --out-dir "$VS_OUTDIR" \
+        --model-id "${VS_MODEL_ID:-Qwen/Qwen3-8B}" \
         --beta "${VS_BETA:-0.1}" \
         --rpo-alpha "${VS_ALPHA:-0.5}" \
         --num-train-epochs 1 \
-        --device cuda:0 --seed 0
+        --device cuda:0 --seed 0 "${TRAIN_ARGS[@]}"
     ;;
   *) echo "ERROR: unknown VS_STAGE=$VS_STAGE" >&2; exit 1 ;;
 esac

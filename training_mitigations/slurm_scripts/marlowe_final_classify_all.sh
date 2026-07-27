@@ -50,11 +50,33 @@ FLIP_JOBS=(
   "AITA-NTA-FLIP baseline_final_AITA-NTA-FLIP base-perspshiftassess_finaldata_temp1.0_seed0 2"
   "AITA-NTA-FLIP dpo_lora_flip_qwen3-8b_n500_mixed_P6_perspshift_distill_gp_rpo0p5_final final_finaldata_temp1.0_seed0 5"
 )
+# Qwen3-32B sweep (weekend of 2026-07-24): the 5 prompt mitigations on the base
+# 32B policy, plus the 32B "Our Model (3+1)" voice2 arms. Shard regimes follow
+# the gen driver: AITA=1, FLIP=2. The P6recon-32B arms are deliberately absent —
+# they were trained but never generated, so there is nothing to classify.
+AITA32_JOBS=(
+  "AITA baseline_final_AITA_qwen3-32b base-becritical_finaldata_temp1.0_seed0 1"
+  "AITA baseline_final_AITA_qwen3-32b base-explicit_finaldata_temp1.0_seed0 1"
+  "AITA baseline_final_AITA_qwen3-32b base-sharma_finaldata_temp1.0_seed0 1"
+  "AITA baseline_final_AITA_qwen3-32b base-dontbesyco_finaldata_temp1.0_seed0 1"
+  "AITA baseline_final_AITA_qwen3-32b base-perspshiftassess_finaldata_temp1.0_seed0 1"
+  "AITA dpo_lora_aita_qwen3-32b_P6_voice2_rpo0p5 final_finaldata_temp1.0_seed0 1"
+)
+FLIP32_JOBS=(
+  "AITA-NTA-FLIP baseline_final_AITA-NTA-FLIP_qwen3-32b base-becritical_finaldata_temp1.0_seed0 2"
+  "AITA-NTA-FLIP baseline_final_AITA-NTA-FLIP_qwen3-32b base-explicit_finaldata_temp1.0_seed0 2"
+  "AITA-NTA-FLIP baseline_final_AITA-NTA-FLIP_qwen3-32b base-sharma_finaldata_temp1.0_seed0 2"
+  "AITA-NTA-FLIP baseline_final_AITA-NTA-FLIP_qwen3-32b base-dontbesyco_finaldata_temp1.0_seed0 2"
+  "AITA-NTA-FLIP baseline_final_AITA-NTA-FLIP_qwen3-32b base-perspshiftassess_finaldata_temp1.0_seed0 2"
+  "AITA-NTA-FLIP dpo_lora_flip_qwen3-32b_P6_voice2_rpo0p5 final_finaldata_temp1.0_seed0 2"
+)
+
 case "$GROUP" in
   aita) JOBS=("${AITA_JOBS[@]}") ;;
   flip) JOBS=("${FLIP_JOBS[@]}") ;;
   all)  JOBS=("${AITA_JOBS[@]}" "${FLIP_JOBS[@]}") ;;
-  *) echo "usage: $0 [aita|flip|all]" >&2; exit 2 ;;
+  32b)  JOBS=("${AITA32_JOBS[@]}" "${FLIP32_JOBS[@]}") ;;
+  *) echo "usage: $0 [aita|flip|all|32b]" >&2; exit 2 ;;
 esac
 
 for row in "${JOBS[@]}"; do

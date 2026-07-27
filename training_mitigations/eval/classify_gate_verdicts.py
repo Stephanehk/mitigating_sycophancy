@@ -69,6 +69,23 @@ def main():
     p.add_argument("--max-cost", dest="max_cost", type=float, default=5.0)
     p.add_argument("--limit", type=int, default=None,
                    help="smoke test: judge N items and do not write output")
+    p.add_argument("--tag", action="append", default=None, metavar="ADAPTER_TAG",
+                   help="restrict to these adapter_tags (repeatable; e.g. "
+                        "--tag base). --run-glob alone CANNOT isolate one arm: "
+                        "a baseline run dir holds every prompt-mitigation arm "
+                        "too, so adding an arm re-judges and overwrites its "
+                        "neighbours. Match the summary's adapter_tag field, "
+                        "i.e. the short tag ('base', not "
+                        "'base_finaldata_temp1.0_seed0'). Default: all.")
+    p.add_argument("--run-glob", dest="run_glob",
+                   default="/projects/m000254/runs/*",
+                   help="restrict to run dirs matching this glob (default: all "
+                        "runs, the historical behaviour). THIS SCRIPT HAS NO "
+                        "RESUME: every matched arm is re-judged from scratch and "
+                        "its aita_scored_<tag>_gateloop.csv overwritten. When "
+                        "adding arms to an already-scored set, narrow this to the "
+                        "new dirs or you will pay for -- and clobber -- the old "
+                        "ones. e.g. '/projects/m000254/runs/*qwen3-32b*'")
     a = p.parse_args()
 
     client = OpenAI(base_url="https://openrouter.ai/api/v1",
@@ -76,11 +93,13 @@ def main():
     spend = [0.0]
 
     summaries = glob.glob(
-        "/projects/m000254/runs/*/eval/gate/summary_*_gateloop.json")
+        os.path.join(a.run_glob, "eval/gate/summary_*_gateloop.json"))
     for s in sorted(summaries):
         m = json.load(open(s))
         env = m["env"]
         if env not in SIDES:
+            continue
+        if a.tag is not None and m["adapter_tag"] not in a.tag:
             continue
         src = s.replace("summary_", "responses_").replace(".json", ".csv")
         if not os.path.exists(src):          # AITA/FLIP csv is aita_responses_*

@@ -44,6 +44,21 @@ source /projects/m000254/sycophancy/training_mitigations/slurm_scripts/_marlowe_
 # success echo with missing output).
 set -e
 
+# GEN_BACKEND=gemma4 swaps the cu126/Qwen interpreter for the cu13 gemma4vllm env
+# + CUDA-13 forward-compat libcuda, exactly as marlowe_voice2_stage_gemma4.sbatch
+# does. Unset (the default) leaves every existing Qwen submission untouched.
+CACHE_ARGS=()
+if [[ "${GEN_BACKEND:-}" == "gemma4" ]]; then
+  PY=/projects/m000254/envs/gemma4vllm/bin/python
+  export LD_LIBRARY_PATH="/projects/m000254/cuda-compat-13/lib:${LD_LIBRARY_PATH:-}"
+  export VLLM_USE_FLASHINFER_SAMPLER=0
+  export TRANSFORMERS_OFFLINE=1
+  # The gemma-4 weights are cached under $HF_HOME/hub, but the eval's --cache-dir
+  # defaults to $HF_HOME itself, where an offline lookup fails (same bug fixed in
+  # _marlowe_dpo_body_gemma4.sh and the voice2 train stage).
+  CACHE_ARGS=(--cache-dir "$HF_HOME/hub")
+fi
+
 : "${GEN_ENV:?set GEN_ENV via --export}"
 : "${GEN_RUNDIR:?set GEN_RUNDIR via --export}"
 GEN_KIND="${GEN_KIND:-trained}"
@@ -93,17 +108,43 @@ else
 fi
 
 TAG="${ADAPTER_TAG}_finaldata_temp1.0_seed0"
-DONE_CSV="$GEN_RUNDIR/eval/${OUT_PREFIX}_${TAG}_shard${SHARD}of${NUM_SHARDS}.csv"
+
+# --- gate resample mode (GEN_ATTEMPT>=2 + GEN_WORKLIST) -----------------------
+# Regenerates ONLY the ids the assistant-mode gate rejected, reusing the very
+# same steer flags resolved above. This is why resampling goes through this
+# script instead of a hand-written command: marlowe_gate_round.sh warns that "a
+# resample drawn from a different arm is not a resample", and the arm flags live
+# here. The eval forces unsharded output into eval/gate/ and seeds per
+# (prompt, attempt), so rounds are reproducible.
+GATE_ARGS=()
+if [[ -n "${GEN_ATTEMPT:-}" ]]; then
+  : "${GEN_WORKLIST:?GEN_ATTEMPT requires GEN_WORKLIST (resample_<tag>_a<N>.json)}"
+  [[ "$GEN_ATTEMPT" -ge 2 ]] || { echo "ERROR: GEN_ATTEMPT must be >= 2" >&2; exit 1; }
+  [[ -f "$GEN_WORKLIST" ]] || { echo "ERROR: no worklist at $GEN_WORKLIST" >&2; exit 1; }
+  NUM_SHARDS=1; SHARD=0
+  GATE_ARGS=(--attempt "$GEN_ATTEMPT" --resample-ids-file "$GEN_WORKLIST")
+  DONE_CSV="$GEN_RUNDIR/eval/gate/${OUT_PREFIX}_${TAG}_gateattempt${GEN_ATTEMPT}.csv"
+else
+  DONE_CSV="$GEN_RUNDIR/eval/${OUT_PREFIX}_${TAG}_shard${SHARD}of${NUM_SHARDS}.csv"
+fi
 if [[ -f "$DONE_CSV" ]]; then
-  echo "[fgen] shard $SHARD already done ($DONE_CSV) — skipping."
+  echo "[fgen] output already present ($DONE_CSV) — skipping."
   exit 0
 fi
 
-echo "[fgen] env=$GEN_ENV kind=$GEN_KIND steer=$GEN_STEER tag=$TAG shard=$SHARD/$NUM_SHARDS run=$GEN_RUNDIR"
+# GEN_MODEL overrides the policy model-id (default: the harness's 8B default, so
+# existing 8B submissions are byte-for-byte unchanged). Set GEN_MODEL=Qwen/Qwen3-32B
+# for the 32B sweep. Only added to the command line when set.
+MODELID_ARGS=()
+[[ -n "${GEN_MODEL:-}" ]] && MODELID_ARGS=(--model-id "$GEN_MODEL")
+echo "[fgen] env=$GEN_ENV kind=$GEN_KIND steer=$GEN_STEER tag=$TAG shard=$SHARD/$NUM_SHARDS run=$GEN_RUNDIR model=${GEN_MODEL:-default8b} backend=${GEN_BACKEND:-qwen} py=$PY"
 "$PY" "$DRIVER" \
     --run-dir "$GEN_RUNDIR" --env "$GEN_ENV" \
     --use-final-data --final-split test --tag-extra finaldata \
     --device cuda:0 --seed 0 \
     --num-shards "$NUM_SHARDS" --shard-id "$SHARD" \
+    ${MODELID_ARGS[@]+"${MODELID_ARGS[@]}"} \
+    ${CACHE_ARGS[@]+"${CACHE_ARGS[@]}"} \
+    ${GATE_ARGS[@]+"${GATE_ARGS[@]}"} \
     "${PATH_ARGS[@]}" ${MODEL_ARGS[@]+"${MODEL_ARGS[@]}"}
 echo "[fgen] shard $SHARD done -> $DONE_CSV"

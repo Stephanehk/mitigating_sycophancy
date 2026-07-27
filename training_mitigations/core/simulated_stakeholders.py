@@ -991,8 +991,11 @@ class SimulatedStakeholders:
         YES; `justification` is the model's one-sentence reason (whitespace-
         collapsed), which is fed into every stakeholder's Stage-2 prompt.
 
-        Asserts a YES/NO token is present — failing loud beats silently
-        mis-classifying, which would corrupt the preference dataset.
+        Raises SimRefusedError if the judge emits no YES/NO token (a degenerate
+        reply, e.g. a repetition loop). The stance is then unknown, so callers
+        EXCLUDE the response — see below. This does NOT weaken the "never
+        mis-classify" guarantee: an excluded response is neither chosen nor
+        rejected, so a garbled judge answer can never mislabel a preference pair.
         """
         classify_prompt = self.endorse_classify_prompt.format(
             post=prompt, response=response,
@@ -1001,9 +1004,17 @@ class SimulatedStakeholders:
             self.veto_client, self.veto_model_id, classify_prompt, self.veto_max_tokens,
         )
         m = re.search(r"\b(YES|NO)\b", text, re.IGNORECASE)
-        assert m is not None, (
-            f"endorsement classifier produced no YES/NO token; raw={text!r}"
-        )
+        if m is None:
+            # No YES/NO token — in practice a degenerate generation, e.g.
+            # Gemma-4-12B looping "our our our ..." out to veto_max_tokens. A
+            # greedy re-decode reproduces it, so this is unusable, not transient.
+            # Route it through the module's standard "stance unknown" path
+            # (SimRefusedError -> _note_refusal -> _REFUSED -> response excluded)
+            # instead of asserting: one bad generation must not kill a multi-hour
+            # run, and every skip is tallied in refusal_summary() for audit.
+            raise SimRefusedError(
+                f"endorsement classifier produced no YES/NO token; raw={text!r}"
+            )
         endorses = m.group(1).upper() == "YES"
         justification = " ".join(text[m.end():].split())
         return endorses, justification
@@ -1515,14 +1526,23 @@ class SimulatedStakeholders:
             for item_idx, (prompt, responses) in enumerate(items):
                 for resp_pos in range(len(responses)):
                     classify_tasks.append((item_idx, resp_pos, prompt, responses[resp_pos]))
+            def _endorse_or_refused(t):
+                # Mirror the fused path's run(): a stance the judge couldn't
+                # give (SimRefusedError) becomes _REFUSED, which the Stage-2
+                # loop below excludes. Without this catch the raise would
+                # propagate out of concurrent_map and kill the run.
+                try:
+                    return self._classify_endorsement(t[2], t[3])
+                except SimRefusedError as e:
+                    self._note_refusal("stage1:endorse", t[2], e)
+                    return _REFUSED
             classify_results = concurrent_map(
-                lambda t: self._classify_endorsement(t[2], t[3]),
-                classify_tasks, concurrency,
+                _endorse_or_refused, classify_tasks, concurrency,
             )
             endorse = {}
-            for (item_idx, resp_pos, _p, _r), (endorses, just) in zip(
+            for (item_idx, resp_pos, _p, _r), res in zip(
                     classify_tasks, classify_results):
-                endorse[(item_idx, resp_pos)] = (endorses, just)
+                endorse[(item_idx, resp_pos)] = res
 
         # Stage 2 — per-stakeholder objection, only on endorsing responses.
         veto_tasks = []
@@ -1632,14 +1652,23 @@ class SimulatedStakeholders:
             for item_idx, (prompt, responses) in enumerate(items):
                 for resp_pos in range(len(responses)):
                     classify_tasks.append((item_idx, resp_pos, prompt, responses[resp_pos]))
+            def _endorse_or_refused(t):
+                # Mirror the fused path's run(): a stance the judge couldn't
+                # give (SimRefusedError) becomes _REFUSED, which the Stage-2
+                # loop below excludes. Without this catch the raise would
+                # propagate out of concurrent_map and kill the run.
+                try:
+                    return self._classify_endorsement(t[2], t[3])
+                except SimRefusedError as e:
+                    self._note_refusal("stage1:endorse", t[2], e)
+                    return _REFUSED
             classify_results = concurrent_map(
-                lambda t: self._classify_endorsement(t[2], t[3]),
-                classify_tasks, concurrency,
+                _endorse_or_refused, classify_tasks, concurrency,
             )
             endorse = {}
-            for (item_idx, resp_pos, _p, _r), (endorses, just) in zip(
+            for (item_idx, resp_pos, _p, _r), res in zip(
                     classify_tasks, classify_results):
-                endorse[(item_idx, resp_pos)] = (endorses, just)
+                endorse[(item_idx, resp_pos)] = res
 
         # Stage 2 — per-voter stance-mismatch veto on ALL responses. `entry=None`
         # marks the 4th user/narrator voice, added once per response when enabled.

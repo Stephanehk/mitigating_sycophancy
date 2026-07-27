@@ -116,6 +116,8 @@ from simulated_stakeholders import (SimulatedStakeholders, VETO_PROMPTS,
 from trainer import (Trainer, CRITICAL_SUFFIX, NEUTRAL_SUFFIX,
                      STAKEHOLDER_RESPONSE_PROMPT,
                      STAKEHOLDER_RESPONSE_PROMPT_VOICE)
+from perspective_shift import (PERSPECTIVE_SHIFT_REWRITE_PROMPT,
+                               REWRITE_SINGLE_OUTPUT_CONTRACT)
 from vllm_sim import (launch_vllm_server, make_vllm_call_llm, wait_for_vllm_server,
                       make_vllm_policy_sampler, load_lora_adapter, unload_lora_adapter)
 
@@ -567,6 +569,16 @@ def main():
              "truncates).",
     )
     parser.add_argument(
+        "--rewrite-output-contract", action="store_true",
+        help="--perspective-shift-sampling: append REWRITE_SINGLE_OUTPUT_CONTRACT "
+             "to the App G.2 rewrite instruction, requiring exactly one rewrite "
+             "with no options/preamble/commentary and no compression. Off by "
+             "default so existing arms are byte-identical. Needed for Gemma-4, "
+             "which otherwise returns a menu of three labelled rewrites for "
+             "31.5%% of OEQ posts (Qwen3-8B: 2.5%%); the answering turn then "
+             "grades those rewrites instead of engaging the situation.",
+    )
+    parser.add_argument(
         "--perspshift-assess", action="store_true",
         help="--perspective-shift-sampling: append the paper's OEQ addendum "
              "'Assess this narrative.' after the third-person rewrite (the "
@@ -695,6 +707,18 @@ def main():
     parser.add_argument(
         "--lora-dropout", type=float, default=0.05,
         help="LoRA dropout (default: 0.05)",
+    )
+    parser.add_argument(
+        "--lora-target-modules", default="all-linear",
+        help="LoRA target modules (default: 'all-linear', the peft keyword that "
+             "adapts every Linear except the output head). Pass a comma-separated "
+             "list of module-name suffixes (e.g. "
+             "'q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj') to "
+             "restrict the target set — used for Gemma-4, whose unified "
+             "text+image+audio model has modality-input projections that must NOT "
+             "be adapted (they are dead on a text-only forward). A comma in the "
+             "value selects the list form; any other string is passed through "
+             "verbatim.",
     )
     args = parser.parse_args()
 
@@ -1244,6 +1268,11 @@ def main():
         steer_label=("neutral" if args.neutral_mixed_sampling else "critical"),
         steer_only=args.neutral_mixed_sampling,
         perspective_shift_steer=args.perspective_shift_sampling,
+        # Default => the verbatim App G.2 instruction, unchanged.
+        rewrite_instruction=(PERSPECTIVE_SHIFT_REWRITE_PROMPT
+                             + REWRITE_SINGLE_OUTPUT_CONTRACT
+                             if args.rewrite_output_contract
+                             else PERSPECTIVE_SHIFT_REWRITE_PROMPT),
         rewrite_max_tokens=args.rewrite_max_tokens,
         # None (default) => the rewrite runs on the policy, unchanged. Only
         # --rewrite-on-sim routes it to the frozen sim backend.
@@ -1289,6 +1318,15 @@ def main():
         )
 
     print(f"[train] starting iterative DPO+LoRA  iters={args.num_iterations}  output_dir={args.output_dir}")
+    # A comma in --lora-target-modules selects the explicit-list form (peft
+    # matches these as module-name suffixes); any other string (e.g. the default
+    # "all-linear" keyword) is passed through verbatim.
+    if "," in args.lora_target_modules:
+        lora_target_modules = [m.strip() for m in args.lora_target_modules.split(",") if m.strip()]
+    else:
+        lora_target_modules = args.lora_target_modules
+    print(f"[setup] lora_target_modules={lora_target_modules}")
+
     dpo_trainer = trainer.train(
         prompts=train_prompts,
         output_dir=args.output_dir,
@@ -1305,6 +1343,7 @@ def main():
         lora_r=args.lora_r,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
+        lora_target_modules=lora_target_modules,
         start_iteration=args.start_iteration,
         resume_adapter=args.resume_adapter,
         resume_partial=resume_partial,
