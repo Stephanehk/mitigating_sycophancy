@@ -82,9 +82,12 @@ def seed_jobs(db_url):
     jobs = {}
     for arm in ARMS:
         session_id, _token = store.create_session(["exclusion"], "smoke")
-        store.update_session(session_id, stage="response", arm=arm, consent="agree",
-                             eligibility="eligible", selected_scenario="exclusion",
-                             perspective_text=USER_TEXT)
+        # `arm` is the only session column the seed needs to set. The stage,
+        # consent, eligibility, selected_scenario and perspective_text columns
+        # this used to write no longer exist: the browser owns the flow and
+        # posts its answers once at the end, so the session row is now just an
+        # anchor for the job. See schema.sql.
+        store.update_session(session_id, arm=arm)
         jobs[arm] = store.create_job(session_id, arm, scenario["topic_title"], user_text)
     return jobs
 
