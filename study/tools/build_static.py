@@ -74,9 +74,12 @@ def write_config():
 
 
 def main():
+    # Config FIRST, deliberately. It is the step that can fail (missing or
+    # wrong-flavoured key), and failing after content.json is written leaves a
+    # half-built artifact directory that looks deployable.
+    config_path, config_size = write_config()
     content_path, content_size = write_content()
     print("wrote %s (%.1f KB)" % (content_path, content_size / 1024))
-    config_path, config_size = write_config()
     print("wrote %s (%d bytes)" % (config_path, config_size))
 
 
