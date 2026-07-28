@@ -734,7 +734,54 @@ grant execute on function public.worker_heartbeat(text, text, text) to anon, aut
 grant execute on function public.worker_complete(text, text, text, text, jsonb) to anon, authenticated;
 grant execute on function public.worker_fail(text, text, text, text) to anon, authenticated;
 
--- Deliberately NOT granted to anon: claim_job, complete_job, fail_job_attempt,
--- extend_lease, requeue_job, mark_submitted, reap_expired_jobs, queue_stats.
--- Those take no token and are only reachable through the wrappers above.
+-- NOT ENOUGH ON ITS OWN. Postgres grants EXECUTE on every function to PUBLIC by
+-- default, so "we simply did not grant it to anon" denies nothing — anon
+-- inherits PUBLIC. Verified the hard way on 2026-07-28: with only the grants
+-- above in place, the anon key could call claim_job, complete_job,
+-- mark_submitted, requeue_job, reap_expired_jobs and queue_stats, and could
+-- SELECT study_config and read the worker token straight out of it. Anyone who
+-- loaded the study page could have poisoned the dataset with fabricated
+-- responses.
+--
+-- REVOKING FROM `public` IS NOT ENOUGH EITHER. Supabase's project bootstrap
+-- runs `alter default privileges in schema public grant all on functions to
+-- anon, authenticated, service_role`, so every function created here is
+-- auto-granted to `anon` BY NAME. That explicit grant survives a revoke from
+-- the PUBLIC pseudo-role — confirmed on 2026-07-28, when the first round of
+-- revokes locked the tables but left claim_job and friends wide open. So each
+-- function is revoked from public AND anon AND authenticated.
+--
+-- Revoking per-name rather than "all functions in schema public" on purpose —
+-- the blanket form would also strip extension functions like gen_random_uuid().
+
+revoke execute on function public.cfg(text) from public, anon, authenticated;
+revoke execute on function public.claim_job(text, integer) from public, anon, authenticated;
+revoke execute on function public.reap_expired_jobs(integer) from public, anon, authenticated;
+revoke execute on function public.complete_job(text, text, text, jsonb) from public, anon, authenticated;
+revoke execute on function public.fail_job_attempt(text, text, text, integer) from public, anon, authenticated;
+revoke execute on function public.extend_lease(text, text, integer) from public, anon, authenticated;
+revoke execute on function public.requeue_job(text, integer) from public, anon, authenticated;
+revoke execute on function public.mark_submitted(text) from public, anon, authenticated;
+revoke execute on function public.queue_stats() from public, anon, authenticated;
+revoke execute on function public.job_state(public.study_jobs) from public, anon, authenticated;
+revoke execute on function public.session_for_token(text) from public, anon, authenticated;
+revoke execute on function public.assert_worker(text) from public, anon, authenticated;
+
+-- The internal helpers and raw queue functions are reachable ONLY through the
+-- SECURITY DEFINER wrappers above, which run as the owner and so do not need
+-- the caller to hold EXECUTE. service_role keeps them for exports and ops.
+grant execute on function public.claim_job(text, integer) to service_role;
+grant execute on function public.reap_expired_jobs(integer) to service_role;
+grant execute on function public.complete_job(text, text, text, jsonb) to service_role;
+grant execute on function public.fail_job_attempt(text, text, text, integer) to service_role;
+grant execute on function public.extend_lease(text, text, integer) to service_role;
+grant execute on function public.requeue_job(text, integer) to service_role;
+grant execute on function public.mark_submitted(text) to service_role;
+grant execute on function public.queue_stats() to service_role;
+
+-- RLS on the generated data tables too. Without this the anon key could read
+-- study_config, which is where the worker's shared secret lives.
+alter table public.study_scenarios enable row level security;
+alter table public.questionnaire_options enable row level security;
+alter table public.study_config enable row level security;
 
