@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Stanford Research Study</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="page">
+    <div class="progress-track" id="progress-track" hidden>
+      <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+    </div>
+    <main class="card" id="root" aria-live="polite">
+      <div class="loading">
+        <div class="spinner"></div>
+        <div class="loading-sub">Loading…</div>
+      </div>
+    </main>
+  </div>
+  <!-- Order matters and there is no build step: widgets.js defines window.W,
+       app.js defines window.APP without starting, and screens.js registers the
+       page renderers on APP.screens and then calls APP.start(). -->
+  <script src="/static/widgets.js"></script>
+  <script src="/static/app.js"></script>
+  <script src="/static/screens.js"></script>
+</body>
+</html>

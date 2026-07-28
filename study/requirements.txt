@@ -1,0 +1,22 @@
+# Study web app + worker. All are already present in the project env
+# (/next/u/stephhk/miniconda3/envs/llm), so this file exists for deployment to
+# a fresh host rather than for local development.
+#
+# The web app needs the first four; `openai` is the worker's, and `vllm` is
+# needed only on the GPU node.
+
+fastapi>=0.115
+uvicorn>=0.30
+pydantic>=2.7
+# The web app now uses this too: supabase_client posts the final payload with it.
+requests>=2.31
+
+# Worker only.
+openai>=1.40
+
+# Tests.
+pytest>=8.0
+httpx>=0.27
+# tests/test_client_contract.py parses static/app.js to check the browser has
+# not drifted from the server. Nothing at runtime needs it.
+esprima>=4.0

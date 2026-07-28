@@ -1,0 +1,15 @@
+# Copy to .supabase_env, fill in, then: chmod 600 .supabase_env
+#
+# Supabase Dashboard -> Project Settings -> API
+#   STUDY_SUPABASE_URL          the "Project URL"
+#   STUDY_SUPABASE_SERVICE_KEY  the service_role / sb_secret_ key -- NOT anon,
+#                               NOT publishable. supabase_schema.sql turns RLS
+#                               on with no policies, so only a key that
+#                               bypasses RLS can insert.
+#
+# This is a full-database credential. .supabase_env is gitignored; keep it that
+# way, and never expose either value to the browser.
+
+export STUDY_SUPABASE_URL="https://<project-ref>.supabase.co"
+export STUDY_SUPABASE_SERVICE_KEY="<service_role key>"
+export STUDY_SUPABASE_TABLE="study_submissions"
