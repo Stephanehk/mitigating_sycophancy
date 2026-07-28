@@ -13,7 +13,8 @@
  *
  * Every renderer here is local-only — no HTTP — EXCEPT `response_intro` (which
  * enqueues the generation), `response` (which polls it) and `terminal` (which
- * submits the study). That is the whole network surface of the participant
+ * submits the study). Those three call Supabase RPCs directly; there is no
+ * application server. That is the whole network surface of the participant
  * experience.
  */
 (function () {
@@ -205,16 +206,15 @@
         // the generation. Everything else in the study is local.
         button.disabled = true;
         var selected = findScreening(S.data.selected_scenario);
-        APP.api('/api/response/start', {
-          body: {
-            scenario_key: S.data.selected_scenario,
-            description: selected ? selected.description : '',
-            perspective: S.data.perspective_text
-          }
-        }).then(function (body) {
+        APP.rpc('start_response', {
+          p_token: S.token,
+          p_scenario_key: S.data.selected_scenario,
+          p_description: selected ? selected.description : '',
+          p_perspective: S.data.perspective_text
+        }).then(function (job) {
           S.hasJob = true;
           APP.setStage('response');
-          renderResponse(body.response);
+          renderResponse(job);
         }).catch(function (error) {
           button.disabled = false;
           if (error.kind === 'unauthorized') { return APP.restart(); }
@@ -229,8 +229,8 @@
     // the start call, so ask the server where the job stands.
     APP.stopPolling();
     if (S.shownResponse) { return renderResponseReady({ text: S.shownResponse }); }
-    APP.api('/api/response/status', { method: 'GET' }).then(function (body) {
-      renderResponse(body.response);
+    APP.rpc('response_status', { p_token: S.token }).then(function (job) {
+      renderResponse(job);
     }).catch(function (error) {
       if (error.kind === 'unauthorized') { return APP.restart(); }
       APP.showError(error.message || 'Could not reach the server.');
@@ -265,13 +265,11 @@
     }, response.slow_notice_ms);
 
     APP.setPollTimer(window.setInterval(function () {
-      APP.api('/api/response/status', { method: 'GET' }).then(function (body) {
-        if (body.response.status === 'pending' || body.response.status === 'running') {
-          return;
-        }
+      APP.rpc('response_status', { p_token: S.token }).then(function (job) {
+        if (job.status === 'pending' || job.status === 'running') { return; }
         window.clearTimeout(slowTimer);
         APP.stopPolling();
-        renderResponse(body.response);
+        renderResponse(job);
       }).catch(function (error) {
         // A transient poll failure is not fatal — keep polling. Only a lost
         // session forces a restart.
@@ -305,8 +303,8 @@
       children.push(el('div', { className: 'actions' }, [
         APP.primaryButton(copy.failure_retry, function (button) {
           button.disabled = true;
-          APP.api('/api/response/retry', { body: {} }).then(function (body) {
-            renderResponse(body.response);
+          APP.rpc('retry_response', { p_token: S.token }).then(function (job) {
+            renderResponse(job);
           }).catch(function (error) {
             button.disabled = false;
             APP.showError(error.message ||
@@ -420,7 +418,7 @@
 
     function attempt() {
       showSaving();
-      APP.api('/api/submit', { body: { payload: S.data } }).then(function () {
+      APP.rpc('submit_study', { p_token: S.token, p_payload: S.data }).then(function () {
         S.submitted = true;
         finish();
       }).catch(function (error) {

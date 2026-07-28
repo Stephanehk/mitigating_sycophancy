@@ -11,12 +11,14 @@
  * contended for the write lock. Page turns are now instant because they touch
  * nothing but the DOM.
  *
- * The server is contacted exactly three times per participant:
- *   1. POST /api/session        — token, randomized scenario order, all copy.
- *   2. POST /api/response/start — the two free-text answers that are the
- *                                 model's input; then GET /api/response/status
- *                                 polls until the reply is ready.
- *   3. POST /api/submit         — the whole study, once, at the terminal page.
+ * THERE IS NO APPLICATION SERVER. The page is static (Amplify) and every call
+ * goes straight to a Supabase RPC. A participant makes exactly three:
+ *   1. start_session   — token and randomized scenario order.
+ *   2. start_response  — the two free-text answers that are the model's input;
+ *                        then response_status polls until the reply is ready.
+ *   3. submit_study    — the whole study, once, at the terminal page.
+ * The copy itself is a static asset (static/content.json), not a fetch, so it
+ * is CDN-cached rather than re-sent per session.
  *
  * WHAT THIS COSTS, STATED PLAINLY: a participant who abandons mid-study sends
  * nothing, so their partial answers are lost. That is a deliberate choice (see
@@ -24,10 +26,12 @@
  * declined — all submit, so anyone who reaches the end of their path is
  * recorded even if that path was short.
  *
- * WHAT THE SERVER STILL DECIDES: the model arm (drawn at job creation, never
- * sent here) and the one-job-per-session rule. Neither can be influenced from
- * this file, which is the point — otherwise the condition could be re-rolled
- * from devtools.
+ * WHAT THE DATABASE STILL DECIDES: the model arm (drawn inside start_response
+ * and never returned) and the one-job-per-session rule. Neither can be
+ * influenced from this file, which is the point — otherwise the condition could
+ * be re-rolled from devtools. The anon key in static/config.json is public and
+ * powerless on its own: RLS blocks every table, and each RPC authenticates its
+ * own caller.
  *
  * Resilience:
  *   - Session token AND the answer payload live in localStorage, so a refresh
@@ -38,7 +42,7 @@
  *   - A failed final submit is retryable from the terminal page rather than
  *     silently dropping a completed session.
  *
- * LAYOUT. This file holds state, the stage machine, persistence, the fetch
+ * LAYOUT. This file holds state, the stage machine, persistence, the RPC
  * wrapper and the page chrome, and exposes them as `window.APP`. The individual
  * screen renderers live in screens.js, which registers them on `APP.screens`
  * and then calls `APP.start()` — so screens.js must load second (see
@@ -59,6 +63,8 @@
   /* Everything the client knows. `content` and `screeningOrder` come from the
    * server once; `data` is what will eventually be posted back. */
   var S = {
+    supabaseUrl: null,
+    supabaseKey: null,
     token: null,
     sessionId: null,
     screeningOrder: [],
@@ -174,6 +180,8 @@
   function save() {
     window.localStorage.setItem(DATA_KEY, JSON.stringify({
       stage: S.stage,
+      sessionId: S.sessionId,
+      screeningOrder: S.screeningOrder,
       screeningIndex: S.screeningIndex,
       hasJob: S.hasJob,
       shownResponse: S.shownResponse,
@@ -187,7 +195,10 @@
     var parsed;
     try { parsed = JSON.parse(raw); } catch (e) { return false; }
     if (!parsed || !parsed.data) { return false; }
+    if (!parsed.screeningOrder || !parsed.screeningOrder.length) { return false; }
     S.stage = parsed.stage || 'consent';
+    S.sessionId = parsed.sessionId || null;
+    S.screeningOrder = parsed.screeningOrder;
     S.screeningIndex = parsed.screeningIndex || 0;
     S.hasJob = !!parsed.hasJob;
     S.shownResponse = parsed.shownResponse || null;
@@ -202,31 +213,60 @@
 
   // --- API -----------------------------------------------------------------
 
-  /* One fetch wrapper for the whole app. Only five endpoints use it. */
-  function api(path, options) {
-    options = options || {};
-    var headers = { 'Content-Type': 'application/json' };
-    if (S.token) { headers['X-Session-Token'] = S.token; }
-
-    return fetch(path, {
-      method: options.method || 'POST',
-      headers: headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body)
+  /* Every server call in the app: a Supabase RPC.
+   *
+   * There is no application server. The five endpoints this used to POST to are
+   * now SECURITY DEFINER functions in Postgres (supabase_app_schema.sql), which
+   * is what lets the whole study be a static site plus a database.
+   *
+   * The anon key below is PUBLIC and is meant to be in page source. On its own
+   * it can do nothing: RLS blocks every table, and each function authenticates
+   * its own caller — participants by the opaque session_token, the worker by a
+   * shared secret. The arm is drawn inside the database and never returned, so
+   * this file could not learn or influence it even if it tried.
+   *
+   * Error mapping: PostgREST answers a `raise exception` with 400 and a
+   * `message`, which is what the study's own validation uses, so those surface
+   * inline. Errcode P0002 ("unknown session") means the browser is holding a
+   * token the database has never heard of — treated as a lost session. */
+  function rpc(name, args) {
+    return fetch(S.supabaseUrl + '/rest/v1/rpc/' + name, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': S.supabaseKey,
+        'Authorization': 'Bearer ' + S.supabaseKey
+      },
+      body: JSON.stringify(args || {})
     }).then(function (response) {
       return response.text().then(function (raw) {
         var parsed = null;
         if (raw) { try { parsed = JSON.parse(raw); } catch (e) { parsed = null; } }
-        if (response.ok) { return parsed || {}; }
-        if (response.status === 401) { throw { kind: 'unauthorized' }; }
-        var detail = parsed && (parsed.error || parsed.detail);
-        if (detail && detail.error) { detail = detail.error; }
-        if (response.status === 400) {
-          throw { kind: 'validation', message: detail || 'Please check your answer.' };
+        if (response.ok) { return parsed; }
+        var message = (parsed && (parsed.message || parsed.hint || parsed.details)) || '';
+        var code = parsed && parsed.code;
+        if (code === 'P0002' || response.status === 401 || response.status === 403) {
+          throw { kind: 'unauthorized', message: message };
         }
-        throw { kind: 'network', message: detail || ('Server error (' + response.status + ')') };
+        if (response.status === 400 && message) {
+          throw { kind: 'validation', message: message };
+        }
+        throw { kind: 'network',
+                message: message || ('Server error (' + response.status + ')') };
       });
     }, function () {
       throw { kind: 'network', message: 'Could not reach the server. Check your connection.' };
+    });
+  }
+
+  /* Fetch a build-time static asset (the content bundle, the client config).
+   * Both are emitted by tools/build_static.py and served by the CDN. */
+  function asset(path) {
+    return fetch(path, { cache: 'no-cache' }).then(function (response) {
+      if (!response.ok) {
+        throw { kind: 'network', message: 'Could not load ' + path };
+      }
+      return response.json();
     });
   }
 
@@ -317,41 +357,63 @@
     window.location.reload();
   }
 
-  function start() {
-    var stored = window.localStorage.getItem(TOKEN_KEY);
-    api('/api/session', {
-      body: { session_token: stored, prolific_pid: prolificFromUrl() }
-    }).then(function (body) {
-      S.token = body.session_token;
-      S.sessionId = body.session_id;
-      S.screeningOrder = body.screening_order;
-      S.content = body.content;
-      window.localStorage.setItem(TOKEN_KEY, S.token);
-      buildSpine();
+  function fatal(error) {
+    window.W.clear(root);
+    root.appendChild(el('div', { className: 'terminal' }, [
+      el('h1', { text: 'We could not start the study.' }),
+      el('p', { className: 'muted',
+        text: (error && error.message) || 'Please refresh the page to try again.' }),
+      el('div', { className: 'actions' }, [
+        primaryButton('Reload', function () { window.location.reload(); })
+      ])
+    ]));
+  }
 
-      var resumed = stored && stored === body.session_token && restore();
-      if (!resumed) {
-        S.data = freshData();
-        S.stage = 'consent';
-        S.screeningIndex = 0;
-        S.hasJob = false;
-        S.shownResponse = null;
-      }
-      // The server is authoritative on whether a generation exists, which is
-      // what arms the one-way door after a localStorage wipe.
-      S.hasJob = S.hasJob || body.has_job;
-      setStage(S.stage);
-    }).catch(function (error) {
-      window.W.clear(root);
-      root.appendChild(el('div', { className: 'terminal' }, [
-        el('h1', { text: 'We could not start the study.' }),
-        el('p', { className: 'muted',
-          text: error.message || 'Please refresh the page to try again.' }),
-        el('div', { className: 'actions' }, [
-          primaryButton('Reload', function () { window.location.reload(); })
-        ])
-      ]));
-    });
+  /* Boot: two static assets, then either resume from localStorage or ask the
+   * database for a new session.
+   *
+   * RESUME IS PURELY LOCAL. The token, the answers, the screening order and
+   * whether a generation exists all come back from localStorage with no round
+   * trip — which is the point of the redesign. If the token turns out to be
+   * stale, the first RPC fails with `unauthorized` and restart() takes over.
+   *
+   * `hasJob` is therefore trusted from localStorage rather than re-checked
+   * against the server, which is a real (small) weakening of the client-side
+   * back lock. It buys a tampering participant nothing: start_response is
+   * idempotent IN THE DATABASE, so clearing the flag still returns their
+   * existing job and existing arm. The client lock is the courtesy; the
+   * database is the guarantee. */
+  function start() {
+    Promise.all([asset('/static/config.json'), asset('/static/content.json')])
+      .then(function (loaded) {
+        var conf = loaded[0];
+        S.supabaseUrl = conf.supabase_url;
+        S.supabaseKey = conf.supabase_anon_key;
+        S.content = loaded[1];
+        S.content.redirect_delay_seconds = conf.redirect_delay_seconds;
+        buildSpine();
+
+        var stored = window.localStorage.getItem(TOKEN_KEY);
+        if (stored && restore()) {
+          S.token = stored;
+          setStage(S.stage);
+          return null;
+        }
+        return rpc('start_session', { p_user_agent: window.navigator.userAgent })
+          .then(function (session) {
+            S.token = session.session_token;
+            S.sessionId = session.session_id;
+            S.screeningOrder = session.screening_order;
+            window.localStorage.setItem(TOKEN_KEY, S.token);
+            S.data = freshData();
+            S.stage = 'consent';
+            S.screeningIndex = 0;
+            S.hasJob = false;
+            S.shownResponse = null;
+            setStage(S.stage);
+          });
+      })
+      .catch(fatal);
   }
 
   /* What screens.js is allowed to touch. Kept explicit rather than exporting
@@ -359,7 +421,7 @@
   var APP = {
     S: S,
     screens: {},
-    api: api,
+    rpc: rpc,
     advance: advance,
     setStage: setStage,
     save: save,

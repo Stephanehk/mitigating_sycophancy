@@ -18,13 +18,14 @@ a reformatted literal cannot make a check silently vacuous.
 import os
 import sys
 
+import re
+
 import esprima
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import questionnaires
-import server
 
 _STATIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        "static")
@@ -87,8 +88,8 @@ def _string_literals(node):
 
 # --- 1. Endpoints ----------------------------------------------------------
 
-def _api_calls(tree):
-    """Endpoint literals passed to api(...) or APP.api(...)."""
+def _rpc_calls(tree):
+    """Function-name literals passed to rpc(...) or APP.rpc(...)."""
     called = set()
     for node in _walk(tree):
         if node.type != "CallExpression" or not node.arguments:
@@ -97,49 +98,77 @@ def _api_calls(tree):
         name = getattr(callee, "name", None)
         if name is None and callee.type == "MemberExpression":
             name = getattr(callee.property, "name", None)
-        if name == "api" and node.arguments[0].type == "Literal":
+        if name == "rpc" and node.arguments[0].type == "Literal":
             called.add(node.arguments[0].value)
     return called
 
 
-def test_every_endpoint_the_client_calls_exists_on_the_server(trees):
+def _declared_rpcs():
+    """RPC names granted to `anon` in the generated schema.
+
+    Read from the grants rather than the create statements on purpose: a
+    function that exists but was never granted is unreachable from the browser,
+    and that is exactly the failure this test should catch.
+    """
+    path = os.path.join(os.path.dirname(_STATIC), "supabase_app_schema.sql")
+    with open(path, encoding="utf-8") as handle:
+        sql = handle.read()
+    return set(re.findall(r"grant execute on function public\.([a-z_]+)\(", sql))
+
+
+def test_every_rpc_the_client_calls_is_granted_to_anon(trees):
     called = set()
     for tree in trees.values():
-        called |= _api_calls(tree)
-    assert called, "found no api() calls — the extraction is broken, not the client"
+        called |= _rpc_calls(tree)
+    assert called, "found no rpc() calls — the extraction is broken, not the client"
 
-    served = {route.path for route in server.app.routes}
-    missing = called - served
-    assert not missing, "client calls endpoints the server does not serve: %s" % (
-        sorted(missing),)
+    granted = _declared_rpcs()
+    missing = called - granted
+    assert not missing, (
+        "client calls RPCs that are not granted to anon (so they would 403 in "
+        "the browser): %s" % (sorted(missing),))
 
 
-def test_the_client_never_calls_a_worker_endpoint(trees):
-    """Those are authenticated by a shared secret that must never reach a browser."""
+def test_the_client_never_calls_a_worker_rpc(trees):
+    """Worker RPCs need the shared secret, which must never reach a browser."""
+    called = set()
+    for tree in trees.values():
+        called |= _rpc_calls(tree)
+    worker_rpcs = {name for name in called if name.startswith("worker_")}
+    assert not worker_rpcs, "client calls worker RPCs: %s" % (sorted(worker_rpcs),)
     for name, tree in trees.items():
         for node in _walk(tree):
             if node.type == "Literal" and isinstance(node.value, str):
-                assert not node.value.startswith("/api/worker"), \
-                    "%s references a worker endpoint: %r" % (name, node.value)
+                assert "worker_token" not in node.value, \
+                    "%s mentions worker_token: %r" % (name, node.value)
 
 
-def test_the_client_touches_the_server_at_only_five_places(trees):
-    """The whole point of the redesign. A sixth call means a page turn regressed."""
+def test_the_client_makes_exactly_three_kinds_of_call(trees):
+    """The whole point of the redesign. A fourth means a page turn regressed."""
     called = set()
     for tree in trees.values():
-        called |= _api_calls(tree)
-    assert called == {"/api/session", "/api/response/start", "/api/response/status",
-                      "/api/response/retry", "/api/submit"}
+        called |= _rpc_calls(tree)
+    assert called == {"start_session", "start_response", "response_status",
+                      "retry_response", "submit_study"}, sorted(called)
 
 
-def test_only_the_three_expected_screens_talk_to_the_server(trees):
+def test_only_the_three_expected_screens_talk_to_the_database(trees):
     """Every OTHER page turn must be local, which is the latency fix itself."""
-    calls = _api_calls(trees["screens.js"])
-    assert calls == {"/api/response/start", "/api/response/status",
-                     "/api/response/retry", "/api/submit"}, (
-        "a screen gained or lost a server call: %s" % (sorted(calls),))
-    assert _api_calls(trees["widgets.js"]) == set(), \
+    calls = _rpc_calls(trees["screens.js"])
+    assert calls == {"start_response", "response_status", "retry_response",
+                     "submit_study"}, (
+        "a screen gained or lost a database call: %s" % (sorted(calls),))
+    assert _rpc_calls(trees["widgets.js"]) == set(), \
         "widgets.js must stay pure DOM — a widget that fetches is a page-turn stall"
+
+
+def test_the_client_never_embeds_a_secret_key(trees):
+    """The anon key is public and expected in page source; a secret one is not."""
+    for name, tree in trees.items():
+        for node in _walk(tree):
+            if node.type == "Literal" and isinstance(node.value, str):
+                assert "sb_secret_" not in node.value and "service_role" not in node.value, \
+                    "%s embeds what looks like a secret key: %r" % (name, node.value[:40])
 
 
 # --- 2. Payload shape ------------------------------------------------------

@@ -8,3 +8,4 @@ __pycache__/
 .pytest_cache/
 .trial_token
 .supabase_env
+static/config.json
