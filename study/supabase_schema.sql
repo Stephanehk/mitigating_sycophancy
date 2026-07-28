@@ -19,7 +19,11 @@ create table if not exists public.study_submissions (
     session_id        text not null unique,
 
     -- Server-owned facts. NEVER sent to the browser, so they cannot be forged.
-    arm               text not null check (arm in ('ours', 'untrained', 'syco', 'neutral')),
+    -- NULLABLE ON PURPOSE. Screened-out and declining participants submit too
+    -- (they reached the end of their path, and the screening funnel is a
+    -- reportable result) but never reached a generation, so they have no arm.
+    -- This was `not null` and would have rejected every one of them.
+    arm               text check (arm in ('ours', 'untrained', 'syco', 'neutral')),
     job_id            text,
     topic_title       text,
     -- Exactly the string the model received (prompts.build_user_turn output).
