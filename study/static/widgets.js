@@ -466,12 +466,37 @@
     return el('div', { className: 'ai-response prose', html: markdown(text) });
   }
 
-  /* A textarea with a live character counter that turns red below `minChars`. */
+  /* A textarea with a live character counter that turns red below `minChars`.
+   *
+   * PASTE, CUT, COPY AND DROP ARE BLOCKED. These boxes hold the participant's
+   * own account of a real incident, and that text is both the model's input and
+   * a dependent measure — pasted or AI-generated prose would corrupt it.
+   *
+   * This is a speed bump, not a control: anyone determined can retype, use
+   * devtools, or disable JavaScript. It stops the casual case, which is the
+   * common one, and nothing here should be relied on as a guarantee.
+   *
+   * Deliberately NOT applied to the Prolific ID field. That is a 24-character
+   * opaque string participants legitimately paste, and forcing them to
+   * hand-type it would produce typos that break payment matching — a real harm
+   * to them, for no data-quality gain.
+   */
+  function blockClipboard(node) {
+    ['paste', 'copy', 'cut', 'drop'].forEach(function (event) {
+      node.addEventListener(event, function (e) { e.preventDefault(); });
+    });
+    // Some browsers allow a middle-click paste that does not fire `paste`.
+    node.addEventListener('auxclick', function (e) {
+      if (e.button === 1) { e.preventDefault(); }
+    });
+  }
+
   function textArea(options) {
     var area = el('textarea', {
       attrs: { placeholder: options.placeholder || 'Type your answer here…',
                maxlength: String(options.maxChars || 4000) }
     });
+    blockClipboard(area);
     area.value = options.value || '';
     var counter = el('div', { className: 'char-count' });
 
@@ -493,6 +518,7 @@
   window.W = {
     el: el,
     markdown: markdown,
+    blockClipboard: blockClipboard,
     aiResponse: aiResponse,
     clear: clear,
     choiceList: choiceList,

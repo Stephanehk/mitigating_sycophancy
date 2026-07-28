@@ -15,6 +15,7 @@ esprima parses the file rather than a regex reading it, so a renamed function or
 a reformatted literal cannot make a check silently vacuous.
 """
 
+import json
 import os
 import sys
 
@@ -247,7 +248,7 @@ def test_the_client_spine_matches_the_servers_questionnaire_pages(tree):
     spine = _find_function(tree, "buildSpine")
     literals = _string_literals(spine)
     expected_prefix = ["consent", "prolific_id", "prelude", "screening",
-                       "perspective", "response_intro", "response"]
+                       "perspective", "response_intro", "review_input", "response"]
     assert literals[:len(expected_prefix)] == expected_prefix
     assert literals[len(expected_prefix):] == ["debrief", "additional_thoughts", "complete"]
 
@@ -655,3 +656,91 @@ def test_the_bundle_carries_the_prolific_required_message():
     import views
     assert views.content_bundle()["prolific"].get("required_error"), \
         "the client needs a message to show when the ID is blank"
+
+
+# --- 9. The review page -----------------------------------------------------
+
+def test_the_review_page_sits_between_the_intro_and_the_generation(trees):
+    """The participant must see what will be sent BEFORE the job is created —
+    afterwards the input is frozen by the one-way door."""
+    spine = _string_literals(_find_function(trees["app.js"], "buildSpine"))
+    assert spine.index("review_input") == spine.index("response_intro") + 1
+    assert spine.index("response") == spine.index("review_input") + 1
+
+
+def test_only_the_review_page_starts_the_generation(trees):
+    """response_intro used to enqueue it. If both did, a participant could skip
+    the review and still get a job."""
+    calls = {}
+    for node in _walk(trees["screens.js"]):
+        if (node.type == "AssignmentExpression"
+                and node.left.type == "MemberExpression"
+                and getattr(node.left.object, "property", None) is not None
+                and getattr(node.left.object.property, "name", None) == "screens"):
+            name = node.left.property.name
+            calls[name] = {n.arguments[0].value for n in _walk(node.right)
+                           if n.type == "CallExpression" and n.arguments
+                           and getattr(getattr(n.callee, "property", None), "name", None) == "rpc"
+                           and n.arguments[0].type == "Literal"}
+    assert "start_response" in calls.get("review_input", set()), \
+        "the review page does not start the generation"
+    assert "start_response" not in calls.get("response_intro", set()), \
+        "response_intro still enqueues a job, bypassing the review page"
+
+
+def test_the_confirmed_text_is_what_is_sent(trees):
+    """start_response now takes the finished user turn, not the two halves —
+    composing server-side would silently discard the participant's edit."""
+    source = open(os.path.join(_STATIC, "screens.js"), encoding="utf-8").read()
+    review = source[source.index("APP.screens.review_input"):]
+    review = review[:review.index("\n  APP.screens.")] if "\n  APP.screens." in review else review
+    assert "p_user_text" in review, "the edited text is not being sent"
+    assert "p_description" not in review and "p_perspective" not in review, \
+        "the halves are still being sent; the edit would be discarded"
+
+    sql = open(os.path.join(os.path.dirname(_STATIC), "supabase_app_schema.sql"),
+               encoding="utf-8").read()
+    assert "public.start_response(\n    p_token text, p_scenario_key text, p_user_text text)" in sql
+    assert "drop function if exists public.start_response(text, text, text, text);" in sql, \
+        "the old 4-arg signature must be dropped or PostgREST sees an overload"
+
+
+# --- 10. Clipboard and the removed disclaimer -------------------------------
+
+def test_free_text_answers_block_the_clipboard(trees):
+    """These hold the participant's own account of a real incident, which is
+    both the model's input and a dependent measure."""
+    source = open(os.path.join(_STATIC, "widgets.js"), encoding="utf-8").read()
+    assert "function blockClipboard(" in source
+    block = _find_function(trees["widgets.js"], "blockClipboard")
+    events = set(_string_literals(block))
+    for needed in ("paste", "copy", "cut", "drop"):
+        assert needed in events, "blockClipboard does not handle %r" % needed
+
+    area = _find_function(trees["widgets.js"], "textArea")
+    called = {getattr(n.callee, "name", None) for n in _walk(area)
+              if n.type == "CallExpression"}
+    assert "blockClipboard" in called, "textArea does not block the clipboard"
+
+
+def test_the_prolific_id_field_still_allows_paste(trees):
+    """Deliberate exception: a 24-character opaque ID that participants
+    legitimately paste. Hand-typing it produces payment-breaking typos."""
+    screen = _find_function_expression(trees["screens.js"], "prolific_id")
+    called = {getattr(n.callee, "name", None) for n in _walk(screen)}
+    called |= {getattr(getattr(n.callee, "property", None), "name", None)
+               for n in _walk(screen) if n.type == "CallExpression"}
+    assert "blockClipboard" not in called, \
+        "the Prolific ID field blocks paste; that breaks payment matching"
+
+
+def test_the_ai_disclaimer_is_gone_everywhere():
+    """Removed at the researcher's request. It was QID184's sycophancyWarning
+    verbatim, so its absence is a study-design change, not a cosmetic one."""
+    import views
+    blob = json.dumps(views.content_bundle())
+    assert "not human" not in blob, "the AI disclaimer is still in the bundle"
+    assert "dv_banner" not in blob
+    for name in ("screens.js", "app.js"):
+        source = open(os.path.join(_STATIC, name), encoding="utf-8").read()
+        assert "dv_banner" not in source, "%s still renders the disclaimer" % name

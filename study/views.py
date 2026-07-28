@@ -74,10 +74,17 @@ def content_bundle():
         },
         "response_intro": {
             "text": content.RESPONSE_INTRO,
-            "banner": content.AI_DISCLAIMER_BANNER,
+        },
+        "review": {
+            "headline": content.REVIEW_HEADLINE,
+            "help": content.REVIEW_HELP,
+            "confirm": content.REVIEW_CONFIRM,
+            # The floor start_response enforces on the edited text: the same
+            # total the two separate pages already required, so editing cannot
+            # be used to get under the length requirement.
+            "min_chars": config.MIN_DESCRIBE_CHARS + config.MIN_PERSPECTIVE_CHARS,
         },
         "response": {
-            "banner": content.AI_DISCLAIMER_BANNER,
             "reminder": content.RESPONSE_PAGE_REMINDER,
             "loading_headline": content.LOADING_HEADLINE,
             "loading_subtext": content.LOADING_SUBTEXT,
@@ -88,7 +95,6 @@ def content_bundle():
             "failure_exhausted": content.FAILURE_EXHAUSTED,
         },
         "questionnaire_pages": questionnaires.QUESTIONNAIRE_PAGES,
-        "dv_banner": content.AI_DISCLAIMER_BANNER,
         "debrief": content.DEBRIEF,
         "additional_thoughts": {
             "headline": content.ADDITIONAL_THOUGHTS_HEADLINE,

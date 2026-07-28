@@ -147,10 +147,26 @@ and used solely for research purposes.<br>
 # the only change.
 RESPONSE_INTRO = "You're going to see a response from an AI chatbot about the dilemma you shared."
 
+# --- The review page -------------------------------------------------------
+# Shown between the intro and the generation. The participant sees the exact
+# text that will be sent to the model and can change it before committing.
+REVIEW_HEADLINE = "This is what we are going to tell the AI chatbot. Would you like to edit it?"
+REVIEW_HELP = (
+    "This is your own writing, combined from your two answers. Edit it if you'd "
+    "like to change anything, then press Confirm."
+)
+REVIEW_CONFIRM = "Confirm"
+
 # The fixed disclaimer banner. Verbatim from QID184's `sycophancyWarning`
 # banner (the `labeled_human` arm of the source survey's 4-way label
 # manipulation). Shown to every participant in this study so that the
 # disclaimer is constant across model arms and cannot confound them.
+# REMOVED 2026-07-28 at the researcher's request. This was QID184's
+# `sycophancyWarning` verbatim — the `labeled_human` arm of the source survey's
+# 4-way label manipulation, shown to everyone here as a fixed disclosure. It no
+# longer appears anywhere in the study. Kept as a constant, unused, so the
+# decision is visible rather than looking like it was never there; delete it
+# once README §1 has been updated to match.
 AI_DISCLAIMER_BANNER = "<strong>Note:</strong> This chatbot is AI, not human."
 
 # Verbatim from the footer of QID106 (the LUCID chat tool question).

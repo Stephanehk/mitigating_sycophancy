@@ -206,18 +206,54 @@
 
   APP.screens.response_intro = function () {
     APP.mount([
-      el('div', { className: 'banner', html: S.content.response_intro.banner }),
       el('h1', { html: S.content.response_intro.text }),
-      APP.navActions(APP.primaryButton('Continue', function (button) {
-        // The one place a page turn waits on the server: this is what enqueues
-        // the generation. Everything else in the study is local.
+      APP.navActions(APP.primaryButton('Continue', function () { APP.advance(); }))
+    ]);
+  };
+
+  /* The review page: the participant sees EXACTLY what will be sent to the
+   * model and may edit it before committing.
+   *
+   * The two halves are joined here rather than in the database, because the
+   * whole point is that what gets sent is what they approved — composing it
+   * server-side afterwards would silently discard their edits. start_response
+   * now takes the finished text for the same reason.
+   *
+   * This is also the one-way door: pressing Confirm creates the job, and from
+   * then on the input cannot be changed. Back is still available UP TO here. */
+  APP.screens.review_input = function () {
+    var conf = S.content.review;
+    var selected = findScreening(S.data.selected_scenario);
+    var composed = S.modelInput
+      || [(selected && selected.description) || '', S.data.perspective_text || '']
+           .filter(Boolean).join('\n\n');
+
+    var area = window.W.textArea({
+      minChars: conf.min_chars,
+      maxChars: S.content.max_text_chars,
+      value: composed,
+      placeholder: 'What the AI chatbot will be told…'
+    });
+
+    APP.mount([
+      el('h1', { text: conf.headline }),
+      el('p', { className: 'help-text', text: conf.help }),
+      area.node,
+      APP.navActions(APP.primaryButton(conf.confirm, function (button) {
+        var text = area.field.value.trim();
+        if (text.length < conf.min_chars) {
+          APP.showError('Please write a bit more — at least ' + conf.min_chars +
+                        ' characters.');
+          return;
+        }
+        // Remembered so Back-then-forward shows their edit rather than
+        // recomposing from the original two answers.
+        S.modelInput = text;
         button.disabled = true;
-        var selected = findScreening(S.data.selected_scenario);
         APP.rpc('start_response', {
           p_token: S.token,
           p_scenario_key: S.data.selected_scenario,
-          p_description: selected ? selected.description : '',
-          p_perspective: S.data.perspective_text
+          p_user_text: text
         }).then(function (job) {
           S.hasJob = true;
           APP.setStage('response');
@@ -292,7 +328,6 @@
   function renderResponseReady(response) {
     var copy = S.content.response;
     APP.mount([
-      el('div', { className: 'banner', html: copy.banner }),
       el('div', { className: 'ai-response-label', text: 'AI chatbot' }),
       window.W.aiResponse(response.text),
       el('div', { className: 'reminder', html: copy.reminder }),
@@ -342,7 +377,6 @@
     var header = [];
     // The DV pages keep the response visible, since every stem refers to it.
     if (page.page.indexOf('dv_') === 0) {
-      header.push(el('div', { className: 'banner', html: S.content.dv_banner }));
       header.push(el('div', { className: 'ai-response-label', text: 'AI chatbot' }));
       header.push(window.W.aiResponse(S.shownResponse || ''));
       header.push(el('div', { attrs: { style: 'height:28px' } }));

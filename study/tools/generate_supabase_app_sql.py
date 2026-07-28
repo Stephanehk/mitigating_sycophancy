@@ -206,7 +206,17 @@ begin
 end;
 $$;
 
--- Enqueue the generation from the participant's two free-text answers.
+-- Enqueue the generation from the text the participant CONFIRMED.
+--
+-- Takes the finished user turn, not the two halves. A review page now shows the
+-- participant exactly what will be sent and lets them edit it before pressing
+-- Confirm, so the composition happens in the browser and what arrives here is
+-- what they approved. Composing it server-side would silently discard their
+-- edits.
+--
+-- The floor is min_describe + min_perspective, i.e. the same total the two
+-- separate pages already enforced, so editing cannot be used to get past the
+-- length requirement by deleting most of the text.
 --
 -- THE ARM IS DRAWN HERE AND NEVER RETURNED. That is the point of doing this in
 -- the database rather than the browser: a client that could pick its own arm
@@ -215,17 +225,20 @@ $$;
 -- IDEMPOTENT, AND THAT IS A DATA-INTEGRITY RULE. A session gets one job,
 -- forever. Re-posting with different text returns the existing job unchanged,
 -- so the response cannot be regenerated until the participant likes it.
+drop function if exists public.start_response(text, text, text, text);
+
 create or replace function public.start_response(
-    p_token text, p_scenario_key text, p_description text, p_perspective text)
+    p_token text, p_scenario_key text, p_user_text text)
 returns jsonb
-language plpgsql security definer set search_path = public, pg_temp as $$
+language plpgsql security definer
+set search_path = public, pg_temp as $$
 declare
     v_session public.study_sessions;
     v_job public.study_jobs;
     v_topic text;
     v_arm text;
-    v_desc text := btrim(coalesce(p_description, ''));
-    v_persp text := btrim(coalesce(p_perspective, ''));
+    v_text text := btrim(coalesce(p_user_text, ''));
+    v_min integer;
 begin
     v_session := public.session_for_token(p_token);
 
@@ -240,15 +253,13 @@ begin
     if v_topic is null then
         raise exception 'Unknown scenario.' using errcode = 'P0001';
     end if;
-    if length(v_desc) < cfg('min_describe_chars') then
-        raise exception 'Please write a bit more — at least % characters.',
-            cfg('min_describe_chars') using errcode = 'P0001';
+
+    v_min := cfg('min_describe_chars') + cfg('min_perspective_chars');
+    if length(v_text) < v_min then
+        raise exception 'Please write a bit more — at least % characters.', v_min
+            using errcode = 'P0001';
     end if;
-    if length(v_persp) < cfg('min_perspective_chars') then
-        raise exception 'Please write a bit more — at least % characters.',
-            cfg('min_perspective_chars') using errcode = 'P0001';
-    end if;
-    if length(v_desc) > cfg('max_text_chars') or length(v_persp) > cfg('max_text_chars') then
+    if length(v_text) > cfg('max_text_chars') then
         raise exception 'Your answer is too long (limit % characters).',
             cfg('max_text_chars') using errcode = 'P0001';
     end if;
@@ -265,13 +276,8 @@ begin
     insert into public.study_jobs (job_id, session_id, arm, topic_title, user_text,
                                    status, deadline_at)
     values (replace(gen_random_uuid()::text, '-', ''), v_session.session_id, v_arm,
-            v_topic,
-            -- prompts.build_user_turn: the participant's own account of their
-            -- incident, then their side of it, joined by a blank line. NO
-            -- vignette text — it is a canned example, and prepending it once
-            -- made the model answer about the wrong story.
-            v_desc || E'\\n\\n' || v_persp,
-            'pending', now() + make_interval(secs => cfg('job_deadline_seconds')))
+            v_topic, v_text, 'pending',
+            now() + make_interval(secs => cfg('job_deadline_seconds')))
     returning * into v_job;
 
     return public.job_state(v_job);
@@ -489,7 +495,7 @@ $$;
 -- its own caller. service_role stays on a developer machine, for exports.
 
 grant execute on function public.start_session(text) to anon, authenticated;
-grant execute on function public.start_response(text, text, text, text) to anon, authenticated;
+grant execute on function public.start_response(text, text, text) to anon, authenticated;
 grant execute on function public.response_status(text) to anon, authenticated;
 grant execute on function public.retry_response(text) to anon, authenticated;
 grant execute on function public.submit_study(text, jsonb) to anon, authenticated;

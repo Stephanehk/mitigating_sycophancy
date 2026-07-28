@@ -73,6 +73,12 @@
     screeningIndex: 0,
     hasJob: false,
     submitted: false,
+    // The text confirmed on the review page. NOT part of the submitted payload:
+    // the job row already stores it as `user_text`, and whether the participant
+    // edited is derivable by comparing that against their description and
+    // perspective. Held here only so Back-then-forward redisplays their edit
+    // instead of recomposing from the originals.
+    modelInput: null,
     shownResponse: null,
     data: null
   };
@@ -102,7 +108,7 @@
 
   function buildSpine() {
     SPINE = ['consent', 'prolific_id', 'prelude', 'screening', 'perspective',
-             'response_intro', 'response']
+             'response_intro', 'review_input', 'response']
       .concat(S.content.questionnaire_pages.map(function (page) { return page.page; }))
       .concat(['debrief', 'additional_thoughts', 'complete']);
   }
@@ -184,6 +190,7 @@
       screeningOrder: S.screeningOrder,
       screeningIndex: S.screeningIndex,
       hasJob: S.hasJob,
+      modelInput: S.modelInput,
       shownResponse: S.shownResponse,
       data: S.data
     }));
@@ -201,6 +208,7 @@
     S.screeningOrder = parsed.screeningOrder;
     S.screeningIndex = parsed.screeningIndex || 0;
     S.hasJob = !!parsed.hasJob;
+    S.modelInput = parsed.modelInput || null;
     S.shownResponse = parsed.shownResponse || null;
     S.data = parsed.data;
     return true;
