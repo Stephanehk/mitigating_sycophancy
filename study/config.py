@@ -86,6 +86,14 @@ def _normalize_supabase_url(raw):
 
 
 SUPABASE_URL = _normalize_supabase_url(_env("STUDY_SUPABASE_URL", ""))
+
+# PUBLIC. Ships in the page and runs on the GPU worker. Powerless on its own:
+# RLS blocks every table and each RPC authenticates its own caller. This is the
+# only Supabase credential that gets deployed anywhere.
+SUPABASE_ANON_KEY = _env("STUDY_SUPABASE_ANON_KEY", "")
+
+# PRIVILEGED — bypasses RLS. Used only from a developer machine, for exports and
+# ops. Must never be built into the page or exported to the cluster.
 SUPABASE_SERVICE_KEY = _env("STUDY_SUPABASE_SERVICE_KEY", "")
 SUPABASE_TABLE = _env("STUDY_SUPABASE_TABLE", "study_submissions")
 SUPABASE_TIMEOUT_SECONDS = _env_int("STUDY_SUPABASE_TIMEOUT_SECONDS", 20)

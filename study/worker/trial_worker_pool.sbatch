@@ -14,9 +14,15 @@
 #
 # ONE vLLM engine plus four worker processes, for burst capacity.
 #
-#   export STUDY_WORKER_TOKEN=<same secret as the server>
-#   sbatch --export=ALL,STUDY_WORKER_TOKEN \
-#          study/worker/trial_worker_pool.sbatch http://10.79.12.73:8750
+#   source study/.supabase_env                 # URL + PUBLIC anon key
+#   export STUDY_WORKER_TOKEN="$(cat study/.trial_token)"
+#   sbatch --export=ALL,STUDY_WORKER_TOKEN,STUDY_SUPABASE_URL,STUDY_SUPABASE_ANON_KEY \
+#          study/worker/trial_worker_pool.sbatch
+#
+# The workers claim jobs from Supabase directly — there is no study server any
+# more. They carry the PUBLIC anon key plus the shared worker token; the anon key
+# alone reaches no table and no raw queue function, so a compromise of this node
+# leaks no participant data.
 #
 # WHY FOUR WORKERS AND NOT ONE. run_worker.py is serial — claim, generate,
 # repeat — so a single worker never has more than one request in flight and
@@ -39,7 +45,6 @@
 
 set -euo pipefail
 
-SERVER_URL="${1:?usage: sbatch trial_worker_pool.sbatch <server-url>}"
 WORKERS="${STUDY_WORKER_POOL_SIZE:-4}"
 
 REPO=/next/u/stephhk/sycophancy
@@ -51,13 +56,19 @@ export HF_HOME=/next/u/stephhk/.cache/huggingface
 export HF_HUB_OFFLINE=1
 export TOKENIZERS_PARALLELISM=false
 
-: "${STUDY_WORKER_TOKEN:?STUDY_WORKER_TOKEN must be exported (must match the server)}"
+: "${STUDY_WORKER_TOKEN:?STUDY_WORKER_TOKEN must be exported (must match study_config.worker_token)}"
+: "${STUDY_SUPABASE_URL:?STUDY_SUPABASE_URL must be exported}"
+: "${STUDY_SUPABASE_ANON_KEY:?STUDY_SUPABASE_ANON_KEY must be exported (the PUBLIC key)}"
+case "$STUDY_SUPABASE_ANON_KEY" in
+    *secret*|*service_role*)
+        echo "refusing to run: STUDY_SUPABASE_ANON_KEY looks like a SECRET key" >&2
+        exit 1 ;;
+esac
 
-echo "host=$(hostname) job=${SLURM_JOB_ID} gpus=${CUDA_VISIBLE_DEVICES:-unset} workers=$WORKERS server=$SERVER_URL"
+echo "host=$(hostname) job=${SLURM_JOB_ID} gpus=${CUDA_VISIBLE_DEVICES:-unset} workers=$WORKERS queue=$STUDY_SUPABASE_URL"
 nvidia-smi --query-gpu=index,name,memory.total,memory.used --format=csv
 
 exec "$PY" "$REPO/study/worker/run_worker_pool.py" \
-    --server-url "$SERVER_URL" \
     --workers "$WORKERS" \
     --device cuda:0 \
     --gpu-memory-utilization 0.90 \

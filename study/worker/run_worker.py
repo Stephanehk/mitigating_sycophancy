@@ -1,16 +1,16 @@
 """GPU-side worker for the sycophancy user study.
 
 Runs on next6/next7, next to a vLLM engine serving Qwen3-8B plus our OEQ LoRA.
-It reaches the study server by connecting OUTBOUND over HTTPS and long-polling
-for work; nothing ever connects into the cluster. That is what lets the study
-site live on the public internet while generation happens on a private-IP node.
+It reaches the queue by connecting OUTBOUND over HTTPS to Supabase; nothing ever
+connects into the cluster. That is what lets the study site live on the public
+internet while generation happens on a private-IP node.
 
 Loop, per iteration:
-  1. POST /api/worker/claim   (long poll, returns within ~20s either way)
+  1. worker_claim RPC (returns immediately; the worker sleeps between empties)
   2. Build the arm's generation plan (prompts.build_generation_plan)
   3. Run each stage against the local vLLM engine, extending the job lease
      between stages so a slow two-stage neutral generation is not reaped
-  4. POST /api/worker/complete, or /api/worker/fail on any error
+  4. worker_complete RPC, or worker_fail on any error
 
 Failure policy. This file is the one place in the study that deliberately
 catches broad exceptions, because the brief requires the site to degrade
@@ -21,8 +21,9 @@ in prompt construction still surface, because they are raised before the
 try block and reported with their traceback.
 
 Run it with:
-    python study/worker/run_worker.py --server-url https://<host> --device cuda:0
-The shared secret comes from STUDY_WORKER_TOKEN in the environment.
+    python study/worker/run_worker.py --device cuda:0
+Reads STUDY_SUPABASE_URL, STUDY_SUPABASE_ANON_KEY (the PUBLIC key) and
+STUDY_WORKER_TOKEN from the environment.
 """
 
 import argparse
@@ -56,53 +57,74 @@ def make_worker_id():
 
 
 class StudyClient:
-    """Thin HTTP client for the study server's worker API."""
+    """The worker's view of the job queue: four Supabase RPCs.
 
-    def __init__(self, server_url, token, worker_id, timeout=60):
-        self.base = server_url.rstrip("/")
+    THERE IS NO APPLICATION SERVER. This used to POST to /api/worker/* on a
+    FastAPI process; that process is gone, and the queue lives in Postgres.
+
+    Credentials: the PUBLIC anon key identifies the project, and the shared
+    worker token is passed as an argument to every call and checked inside the
+    function against study_config. The anon key alone can do nothing — RLS
+    blocks every table and the raw queue functions are revoked from it — so a
+    compromise of this node leaks no participant data and no database access,
+    only the ability to serve generations.
+    """
+
+    def __init__(self, supabase_url, anon_key, worker_token, worker_id, timeout=60):
+        assert supabase_url, "STUDY_SUPABASE_URL must be set"
+        assert anon_key, "STUDY_SUPABASE_ANON_KEY must be set (the PUBLIC key)"
+        assert worker_token, "STUDY_WORKER_TOKEN must be set"
+        assert "secret" not in anon_key and "service_role" not in anon_key, (
+            "STUDY_SUPABASE_ANON_KEY looks like a SECRET key; the worker must "
+            "use the public anon/publishable key")
+        self.base = supabase_url.rstrip("/") + "/rest/v1/rpc"
+        self.worker_token = worker_token
         self.worker_id = worker_id
         self.timeout = timeout
         self.session = requests.Session()
-        self.session.headers.update({"X-Worker-Token": token})
+        self.session.headers.update({
+            "apikey": anon_key,
+            "Authorization": "Bearer " + anon_key,
+            "Content-Type": "application/json",
+        })
 
-    def _post(self, path, payload, timeout=None):
-        response = self.session.post(
-            self.base + path, json=payload, timeout=timeout or self.timeout)
-        assert response.status_code != 401, (
-            "study server rejected the worker token; check STUDY_WORKER_TOKEN "
-            "matches the server's")
+    def _rpc(self, name, payload, timeout=None):
+        body = dict(payload)
+        body["p_worker_token"] = self.worker_token
+        response = self.session.post("%s/%s" % (self.base, name), json=body,
+                                     timeout=timeout or self.timeout)
+        assert response.status_code != 401 and "bad worker token" not in response.text, (
+            "Supabase rejected the worker token; check STUDY_WORKER_TOKEN matches "
+            "study_config.worker_token")
         response.raise_for_status()
         return response.json()
 
     def claim(self):
         """Ask for a job. Returns the job dict, or None if the queue is empty.
 
-        Returns immediately either way — the server no longer holds the request
-        open. The caller is responsible for sleeping between empty claims; see
-        the loop in main() and config.WORKER_POLL_SECONDS for why the long poll
-        was removed.
+        Returns immediately either way; the caller sleeps between empty claims
+        (see main() and --poll-seconds). PostgREST has no long-poll and we would
+        not want one — see config.WORKER_POLL_SECONDS.
         """
-        body = self._post("/api/worker/claim", {"worker_id": self.worker_id}, timeout=30)
-        return body.get("job")
+        return self._rpc("worker_claim", {"p_worker_id": self.worker_id}, timeout=30).get("job")
 
     def heartbeat(self, job_id):
         """Extend the lease on an in-flight job."""
-        return self._post("/api/worker/heartbeat",
-                          {"job_id": job_id, "worker_id": self.worker_id}).get("extended")
+        return self._rpc("worker_heartbeat",
+                         {"p_job_id": job_id, "p_worker_id": self.worker_id}).get("extended")
 
     def complete(self, job_id, response_text, stages):
-        """Report a finished generation. Returns whether the server took it."""
-        return self._post("/api/worker/complete", {
-            "job_id": job_id,
-            "worker_id": self.worker_id,
-            "response_text": response_text,
-            "stages": stages,
+        """Report a finished generation. Returns whether this worker still held
+        the lease; False means a second worker already produced the result."""
+        return self._rpc("worker_complete", {
+            "p_job_id": job_id, "p_worker_id": self.worker_id,
+            "p_response_text": response_text, "p_stages": stages,
         }).get("accepted")
 
     def fail(self, job_id, error):
-        """Report a failed attempt."""
-        return self._post("/api/worker/fail", {
-            "job_id": job_id, "worker_id": self.worker_id, "error": error,
+        """Report a failed attempt. Returns the job's resulting status."""
+        return self._rpc("worker_fail", {
+            "p_job_id": job_id, "p_worker_id": self.worker_id, "p_error": str(error),
         }).get("status")
 
 
@@ -198,7 +220,7 @@ def run_job(backend, study, job):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--server-url", required=True,
+    parser.add_argument("--supabase-url", default=config.SUPABASE_URL,
                         help="Base URL of the study server, e.g. https://study.example.org")
     parser.add_argument("--backend", choices=("vllm", "hf"), default="vllm",
                         help="vllm: one engine, LoRA as a named adapter. Needs a GPU "
@@ -231,13 +253,14 @@ def main():
     args = parser.parse_args()
 
     token = os.environ.get("STUDY_WORKER_TOKEN", "").strip()
-    assert token, "STUDY_WORKER_TOKEN must be set (must match the study server's)"
+    assert token, ("STUDY_WORKER_TOKEN must be set and must match "
+                   "study_config.worker_token in Supabase")
     if config.IS_PRODUCTION:
         assert token != config.INSECURE_WORKER_TOKEN, (
             "refusing to run a production worker with the development token")
 
     worker_id = make_worker_id()
-    log("worker %s starting; server=%s" % (worker_id, args.server_url))
+    log("worker %s starting; queue=%s" % (worker_id, args.supabase_url))
 
     if args.backend == "hf":
         log("loading HF backend (%s, device_map=%s)" % (config.BASE_MODEL_ID, args.device_map))
@@ -262,7 +285,7 @@ def main():
 
     log("backend ready: %s" % backend.describe())
 
-    study = StudyClient(args.server_url, token, worker_id)
+    study = StudyClient(args.supabase_url, config.SUPABASE_ANON_KEY, token, worker_id)
     completed = 0
     attempted = 0
     idle_since = time.time()

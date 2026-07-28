@@ -20,7 +20,7 @@ Shutdown: SLURM tears the whole process group down with the job cgroup, and
 this script also terminates its children on SIGTERM/SIGINT so an interactive
 Ctrl-C does not leave orphaned workers polling the study server.
 
-    python run_worker_pool.py --server-url http://10.79.12.73:8750 --workers 4
+    python run_worker_pool.py --workers 4
 """
 
 import argparse
@@ -45,8 +45,8 @@ def log(message):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--server-url", required=True,
-                        help="Study server the workers claim jobs from")
+    parser.add_argument("--supabase-url", default=config.SUPABASE_URL,
+                        help="Supabase project the workers claim jobs from")
     parser.add_argument("--workers", type=int, default=4,
                         help="Worker processes sharing the engine (default %(default)s)")
     parser.add_argument("--device", default="cuda:0")
@@ -60,7 +60,9 @@ def main():
 
     assert args.workers >= 1, "--workers must be at least 1"
     assert os.environ.get("STUDY_WORKER_TOKEN"), (
-        "STUDY_WORKER_TOKEN must be exported and match the study server's")
+        "STUDY_WORKER_TOKEN must be exported and match study_config.worker_token")
+    assert config.SUPABASE_ANON_KEY, "STUDY_SUPABASE_ANON_KEY must be exported (PUBLIC key)"
+    assert args.supabase_url, "STUDY_SUPABASE_URL must be set"
 
     log("launching vLLM engine (%s on %s, tp=%s)"
         % (config.BASE_MODEL_ID, args.device, args.tensor_parallel_size or 1))
@@ -82,7 +84,7 @@ def main():
     for index in range(args.workers):
         child = subprocess.Popen(
             [sys.executable, os.path.join(_HERE, "run_worker.py"),
-             "--server-url", args.server_url,
+             "--supabase-url", args.supabase_url,
              "--backend", "vllm",
              "--vllm-url", base_url,
              "--poll-seconds", str(args.poll_seconds)],
