@@ -78,6 +78,16 @@ def _find_function(tree, name):
     raise AssertionError("static/app.js has no function %r — did it get renamed?" % (name,))
 
 
+def _string_or_ident_names(nodes):
+    """Every identifier name appearing anywhere inside `nodes`."""
+    names = set()
+    for node in nodes:
+        for inner in _walk(node):
+            if inner.type == "Identifier":
+                names.add(inner.name)
+    return names
+
+
 def _string_literals(node):
     """Every string literal under `node`, in SOURCE order."""
     found = [n for n in _walk(node)
@@ -363,3 +373,158 @@ def test_the_client_fetches_only_assets_that_the_build_produces():
     for name in fetched:
         assert '"%s"' % name in build_source, (
             "app.js fetches %r but build_static.py never writes it" % (name,))
+
+
+# --- 6. Rendering the model's reply ----------------------------------------
+
+def test_the_model_reply_is_rendered_through_markdown_not_raw(trees):
+    """The reply must go through W.aiResponse, never straight into innerHTML.
+
+    Qwen emits `###`, `**bold**` and lists, so plain text left the markers
+    visible. But the reply is MODEL output, not study copy, so it cannot be
+    trusted HTML either — aiResponse is the one path that escapes first.
+    """
+    source = open(os.path.join(_STATIC, "screens.js"), encoding="utf-8").read()
+    assert "W.aiResponse(" in source, "screens.js no longer renders the reply via aiResponse"
+    assert "className: 'ai-response', text:" not in source, \
+        "screens.js renders the reply as plain text again"
+    for node in _walk(trees["screens.js"]):
+        if (node.type == "ObjectExpression"
+                and any(getattr(p.key, "name", None) == "html" for p in node.properties)):
+            for prop in node.properties:
+                if getattr(prop.key, "name", None) == "html":
+                    src = _string_literals(prop.value)
+                    assert "shownResponse" not in "".join(src), \
+                        "the model reply is being passed through `html`"
+
+
+def test_markdown_escapes_before_it_transforms(trees):
+    """The ordering IS the security property.
+
+    escapeHtml must run over the raw input before any tag-producing transform,
+    so a reply containing <script> renders as characters rather than executing.
+
+    Checked against the AST, not the source text. The first version of this test
+    grepped for "escapeHtml(" and was defeated by a mutation that deleted the
+    call and left the name in a comment — it passed while the injection hole was
+    open. Comments do not appear in the AST, so this cannot repeat.
+    """
+    markdown = _find_function(trees["widgets.js"], "markdown")
+    param = markdown.params[0].name
+
+    escape_calls = [n for n in _walk(markdown)
+                    if n.type == "CallExpression"
+                    and getattr(n.callee, "name", None) == "escapeHtml"]
+    assert escape_calls, "markdown() never calls escapeHtml"
+
+    # It must escape the PARAMETER, not some already-derived string.
+    on_input = [c for c in escape_calls
+                if param in _string_or_ident_names(c.arguments)]
+    assert on_input, (
+        "escapeHtml is called but not on markdown()'s input %r — the raw text "
+        "would reach the output unescaped" % param)
+
+    first_escape = min(c.range[0] for c in on_input)
+    producers = [n for n in _walk(markdown)
+                 if n.type == "Literal" and isinstance(n.value, str)
+                 and "<" in n.value]
+    assert producers, "markdown() produces no tags at all — extraction is broken"
+    earliest = min(n.range[0] for n in producers)
+    assert first_escape < earliest, (
+        "markdown() builds a tag before escaping its input; model output could "
+        "inject HTML")
+
+    # inlineMarkdown must only ever be handed already-escaped text.
+    inline = _find_function(trees["widgets.js"], "inlineMarkdown")
+    assert not [n for n in _walk(inline)
+                if n.type == "CallExpression"
+                and getattr(n.callee, "name", None) == "escapeHtml"], (
+        "inlineMarkdown escapes internally; escaping belongs once, up front")
+
+
+def test_markdown_introduces_no_link_or_image_tags():
+    """No anchors and no images from model output — each is an attack surface
+    and the model has no reason to emit either."""
+    source = open(os.path.join(_STATIC, "widgets.js"), encoding="utf-8").read()
+    body = source[source.index("function markdown("):source.index("function aiResponse(")]
+    for tag in ("<a ", "<a>", "<img", "href", "src="):
+        assert tag not in body, "markdown() emits %r" % tag
+
+
+# --- 7. The Likert header ---------------------------------------------------
+
+def test_numbered_scales_stack_the_word_above_the_number(trees):
+    """Numbers must share a line and columns must be equal width.
+
+    Only the endpoints and midpoint carry an anchor word, so a single-line
+    header made the labelled columns wider, pushed the numbers to different
+    heights, and left the radio buttons unevenly spaced.
+    """
+    source = open(os.path.join(_STATIC, "widgets.js"), encoding="utf-8").read()
+    assert "matrix-head-word" in source and "matrix-head-number" in source, \
+        "optionHeader no longer builds a two-row header"
+    assert "option.label + '\\n' + option.sublabel" not in source, \
+        "the single-line header is back"
+
+    css = open(os.path.join(_STATIC, "styles.css"), encoding="utf-8").read()
+    assert "table-layout: fixed" in css, \
+        "without a fixed table layout the option columns are not equal width"
+    assert ".matrix-head-word" in css and "min-height" in css, \
+        "the word row needs a reserved height or the numbers will not align"
+
+
+def test_every_numbered_scale_in_the_instrument_has_the_shape_the_header_assumes():
+    """optionHeader treats `sublabel` as the number and `label` as the anchor
+    word. Verify that actually holds for every question that uses one."""
+    import questionnaires
+    for question in questionnaires.all_questions():
+        options = question["options"]
+        if not any(o.get("sublabel") for o in options):
+            continue
+        for option in options:
+            if option.get("sublabel"):
+                assert option["sublabel"].strip().isdigit(), (
+                    "%s: sublabel %r is not the number the header renders"
+                    % (question["id"], option["sublabel"]))
+            else:
+                assert str(option["label"]).strip().isdigit(), (
+                    "%s: option %r has no sublabel, so its label must BE the "
+                    "number" % (question["id"], option["label"]))
+
+
+# --- 8. The completion code -------------------------------------------------
+
+def test_the_terminal_page_shows_a_code_and_never_redirects(trees):
+    """A redirect that is slow or blocked strands a participant who finished."""
+    source = open(os.path.join(_STATIC, "screens.js"), encoding="utf-8").read()
+    assert "completion-code" in source, "the terminal page no longer shows a code"
+    for banned in ("window.location.href", "redirect_url", "Return to Prolific",
+                   "prolific.com"):
+        assert banned not in source, "screens.js still redirects or links out: %r" % banned
+    app = open(os.path.join(_STATIC, "app.js"), encoding="utf-8").read()
+    assert "redirect_url" not in app and "prolific.com" not in app
+
+
+def test_the_code_is_shown_only_after_the_submit_succeeds():
+    """A participant holding the code must, by construction, be recorded."""
+    source = open(os.path.join(_STATIC, "screens.js"), encoding="utf-8").read()
+    terminal = source[source.index("APP.screens.terminal"):]
+    finish_at = terminal.index("function finish()")
+    submit_at = terminal.index("submit_study")
+    assert finish_at < submit_at, "expected finish() defined above the submit call"
+    # finish() must be reached only from the resolve path or the unauthorized
+    # branch, never called unconditionally before submitting.
+    before_submit = terminal[:submit_at]
+    assert "finish();" not in before_submit, \
+        "the code is shown before the submit is attempted"
+
+
+def test_the_bundle_carries_a_code_for_every_terminal_state():
+    import views
+    terminal = views.content_bundle()["terminal"]
+    assert set(terminal) == {"complete", "screened_out", "declined"}
+    for name, entry in terminal.items():
+        assert entry.get("code"), "%s has no completion code" % name
+        assert "redirect_url" not in entry, "%s still carries a redirect URL" % name
+        assert "redirected" not in entry["message"].lower(), (
+            "%s still promises a redirect that no longer happens" % name)

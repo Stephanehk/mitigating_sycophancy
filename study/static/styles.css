@@ -420,3 +420,111 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .terminal { text-align: center; padding: 44px 20px; }
 .terminal p { color: var(--text-muted); margin-bottom: 22px; }
 .terminal a { color: var(--accent); font-weight: 580; }
+
+/* --- Likert column headers -------------------------------------------------
+ *
+ * Numbered scales (AGREE_7_NUMBERED, AIAS, the attention check) label only the
+ * endpoints and midpoint, so the header cells hold wildly different amounts of
+ * text. Left to itself the table gave the labelled columns more width, the
+ * numbers landed at different heights, and the radio buttons below them were
+ * visibly unevenly spaced.
+ *
+ * Fixed layout makes every option column the same width; the two-row header
+ * puts the anchor word in a reserved band above the number, so all the numbers
+ * sit on one line whether or not their column has a word.
+ */
+table.matrix {
+  table-layout: fixed;
+  width: 100%;
+}
+
+table.matrix th.item-col,
+table.matrix td.item-label {
+  /* The statement column keeps its own width; the option columns then divide
+   * the remainder equally, which is what makes the bubbles equidistant. */
+  width: 38%;
+  text-align: left;
+}
+
+.matrix-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+}
+
+.matrix-head-word {
+  /* Reserved band, present even when empty, so every number aligns. Two lines
+   * of room: "Neither agree nor disagree" wraps on narrow screens. */
+  min-height: 2.6em;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  font-weight: 400;
+  line-height: 1.15;
+  font-size: 0.78rem;
+  hyphens: auto;
+}
+
+.matrix-head-number {
+  margin-top: 0.35em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+table.matrix td {
+  text-align: center;
+}
+
+/* --- Completion code -------------------------------------------------------
+ *
+ * The last thing a participant sees, and the thing they must transcribe into
+ * Prolific to be paid. Big, monospaced and selectable — tabular figures and
+ * generous letter-spacing so 0/O and 1/l cannot be confused when copying by
+ * hand from a phone.
+ */
+.code-label {
+  margin-top: 1.6rem;
+  margin-bottom: 0.4rem;
+  font-weight: 600;
+}
+
+.completion-code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 1.9rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  padding: 0.85rem 1.2rem;
+  margin: 0 auto 1.1rem;
+  display: inline-block;
+  border: 2px dashed currentColor;
+  border-radius: 10px;
+  /* Explicitly selectable: this is the one string on the site a participant
+   * genuinely needs to copy. */
+  user-select: all;
+  -webkit-user-select: all;
+}
+
+/* --- Rendered model response ----------------------------------------------
+ * .ai-response carries the bubble; .prose styles the markdown inside it. The
+ * model emits headings and lists, so they need sane spacing rather than the
+ * browser defaults, which are far too loose inside a chat bubble.
+ */
+.ai-response.prose > *:first-child { margin-top: 0; }
+.ai-response.prose > *:last-child { margin-bottom: 0; }
+.ai-response.prose p { margin: 0 0 0.75em; }
+.ai-response.prose h3,
+.ai-response.prose h4 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin: 1.1em 0 0.4em;
+}
+.ai-response.prose ul,
+.ai-response.prose ol { margin: 0 0 0.75em; padding-left: 1.4em; }
+.ai-response.prose li { margin: 0.25em 0; }
+.ai-response.prose code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}

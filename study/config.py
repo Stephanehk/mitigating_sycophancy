@@ -127,8 +127,28 @@ PROLIFIC_SCREENOUT_URL = _env(
 # Codes inherited from the source survey; used only to warn at startup.
 _SOURCE_SURVEY_CODES = ("C1CRO5LN", "C1L7XBXC")
 
-# Seconds the terminal screens wait before redirecting to Prolific, so the
-# participant can read the message first.
+# THE COMPLETION CODES THEMSELVES, shown on the last page.
+#
+# Participants are no longer redirected to Prolific — the final screen displays
+# the code and they paste it into Prolific themselves. An auto-redirect meant a
+# slow or blocked navigation could strand someone who had finished, with no way
+# to prove it; a code on screen cannot fail that way.
+#
+# Derived from the completion URLs by default so a URL-only configuration still
+# works, but set them explicitly in production.
+def _code_from_url(url, fallback=""):
+    """The `cc` parameter of a Prolific completion URL, or `fallback`."""
+    import urllib.parse
+    query = urllib.parse.urlparse(url).query
+    return urllib.parse.parse_qs(query).get("cc", [fallback])[0]
+
+
+PROLIFIC_COMPLETION_CODE = _env("STUDY_PROLIFIC_COMPLETION_CODE",
+                                _code_from_url(PROLIFIC_COMPLETION_URL))
+PROLIFIC_SCREENOUT_CODE = _env("STUDY_PROLIFIC_SCREENOUT_CODE",
+                               _code_from_url(PROLIFIC_SCREENOUT_URL))
+
+# Kept only so the codes above can be derived from them; nothing redirects now.
 REDIRECT_DELAY_SECONDS = _env_int("STUDY_REDIRECT_DELAY_SECONDS", 5)
 
 

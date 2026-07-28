@@ -287,7 +287,7 @@
     APP.mount([
       el('div', { className: 'banner', html: copy.banner }),
       el('div', { className: 'ai-response-label', text: 'AI chatbot' }),
-      el('div', { className: 'ai-response', text: response.text }),
+      window.W.aiResponse(response.text),
       el('div', { className: 'reminder', html: copy.reminder }),
       el('div', { className: 'actions' }, [
         APP.primaryButton('Continue', function () { APP.advance(); })
@@ -337,7 +337,7 @@
     if (page.page.indexOf('dv_') === 0) {
       header.push(el('div', { className: 'banner', html: S.content.dv_banner }));
       header.push(el('div', { className: 'ai-response-label', text: 'AI chatbot' }));
-      header.push(el('div', { className: 'ai-response', text: S.shownResponse || '' }));
+      header.push(window.W.aiResponse(S.shownResponse || ''));
       header.push(el('div', { attrs: { style: 'height:28px' } }));
     }
 
@@ -393,8 +393,6 @@
    * participants who ABANDON send nothing. */
   APP.screens.terminal = function () {
     var conf = S.content.terminal[S.stage];
-    var link = el('a', { attrs: { href: conf.redirect_url },
-                         text: 'Return to Prolific now' });
     var body = el('div', { className: 'terminal' }, []);
     APP.mount([body]);
 
@@ -405,15 +403,22 @@
       body.appendChild(el('p', { className: 'muted', text: 'Saving your responses…' }));
     }
 
+    /* The completion code, shown only AFTER the submit succeeds.
+     *
+     * Nothing redirects and nothing links to Prolific. A redirect that was slow,
+     * blocked or mistimed could strand someone who had finished the study with
+     * no evidence they had; a code on screen cannot fail that way, and the
+     * participant controls when they leave.
+     *
+     * Order matters: the code appears only once the data is safely stored. A
+     * participant who has the code has, by construction, been recorded. */
     function finish() {
       APP.clearStorage();
       window.W.clear(body);
       body.appendChild(el('p', { text: conf.message }));
-      body.appendChild(el('div', { className: 'spinner' }));
-      body.appendChild(el('p', {}, [link]));
-      window.setTimeout(function () {
-        window.location.href = conf.redirect_url;
-      }, (S.content.redirect_delay_seconds || 5) * 1000);
+      body.appendChild(el('p', { className: 'code-label', text: S.content.code_label }));
+      body.appendChild(el('div', { className: 'completion-code', text: conf.code }));
+      body.appendChild(el('p', { className: 'muted', text: S.content.code_instruction }));
     }
 
     function attempt() {
@@ -424,7 +429,8 @@
       }).catch(function (error) {
         if (error.kind === 'unauthorized') {
           // The session is gone server-side; there is nothing left to submit to
-          // and nothing the participant can do. Let them collect their payment.
+          // and nothing the participant can do. Give them the code anyway —
+          // withholding it would cost them their payment for our failure.
           finish();
           return;
         }

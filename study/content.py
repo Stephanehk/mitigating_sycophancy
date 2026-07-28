@@ -211,10 +211,17 @@ ADDITIONAL_THOUGHTS_QUESTION = "Please share any other thoughts or feedback you'
 
 SCREENOUT_MESSAGE = (
     "Thank you for your interest in this study. Based on your answers, you are "
-    "not eligible to continue. You will be redirected to Prolific now."
+    "not eligible to continue."
 )
 DECLINE_MESSAGE = (
-    "Thank you for your time. You have chosen not to participate. "
-    "You will be redirected to Prolific now."
+    "Thank you for your time. You have chosen not to participate."
 )
-COMPLETE_MESSAGE = "Thank you! Your responses have been recorded. You will be redirected to Prolific now."
+# The last screen shows the completion code rather than redirecting. CODE_LABEL
+# sits above it and CODE_INSTRUCTION below; the code itself comes from
+# config.PROLIFIC_COMPLETION_CODE.
+COMPLETE_MESSAGE = "Thank you! Your responses have been recorded."
+CODE_LABEL = "Your Prolific completion code is:"
+CODE_INSTRUCTION = (
+    "Please copy this code and paste it into Prolific to complete your "
+    "submission. You may now close this tab."
+)

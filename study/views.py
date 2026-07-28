@@ -93,14 +93,19 @@ def content_bundle():
             "headline": content.ADDITIONAL_THOUGHTS_HEADLINE,
             "question": content.ADDITIONAL_THOUGHTS_QUESTION,
         },
+        # Each terminal page shows a completion CODE. Nothing redirects and
+        # nothing links out: an auto-redirect could strand a participant who had
+        # finished, with no way to prove it. Screen-outs and decliners get the
+        # screen-out code, which is what Prolific expects for a returned slot.
         "terminal": {
             "complete": {"message": content.COMPLETE_MESSAGE,
-                         "redirect_url": config.PROLIFIC_COMPLETION_URL},
+                         "code": config.PROLIFIC_COMPLETION_CODE},
             "screened_out": {"message": content.SCREENOUT_MESSAGE,
-                             "redirect_url": config.PROLIFIC_SCREENOUT_URL},
+                             "code": config.PROLIFIC_SCREENOUT_CODE},
             "declined": {"message": content.DECLINE_MESSAGE,
-                         "redirect_url": config.PROLIFIC_SCREENOUT_URL},
+                         "code": config.PROLIFIC_SCREENOUT_CODE},
         },
+        "code_label": content.CODE_LABEL,
+        "code_instruction": content.CODE_INSTRUCTION,
         "max_text_chars": config.MAX_TEXT_CHARS,
-        "redirect_delay_seconds": config.REDIRECT_DELAY_SECONDS,
     }

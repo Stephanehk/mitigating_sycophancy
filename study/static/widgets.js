@@ -107,10 +107,32 @@
     ]);
   }
 
-  function optionHeader(option) {
-    /* Column header text: the label, plus its numeric sublabel when the QSF
-     * gave one (e.g. "Strongly disagree" over "1"). */
-    return option.sublabel ? option.label + '\n' + option.sublabel : option.label;
+  /* A column header for a numbered scale: the anchor word STACKED ABOVE the
+   * number, in two fixed rows.
+   *
+   * This used to be one text node, "Strongly disagree\n1". Because only the
+   * endpoints and midpoint carry a word, the labelled columns were far wider
+   * than the bare ones, so the numbers sat at different heights and the radio
+   * buttons underneath were not equidistant — the grid read as crooked. Two
+   * separate rows plus a fixed table layout put every number on one line and
+   * every column at the same width.
+   *
+   * `numbered` says whether ANY option in this question has a sublabel. When
+   * none do (the plain AGREE_7 anchors, where every column is a full phrase)
+   * the single-line form is still right.
+   */
+  function optionHeader(option, numbered) {
+    if (!numbered) {
+      return el('div', { className: 'matrix-head', text: option.label });
+    }
+    // With a sublabel the label is the anchor word and the sublabel is the
+    // number; without one, the label IS the number and the word row is empty.
+    var word = option.sublabel ? option.label : '';
+    var number = option.sublabel ? option.sublabel : option.label;
+    return el('div', { className: 'matrix-head numbered' }, [
+      el('span', { className: 'matrix-head-word', text: word }),
+      el('span', { className: 'matrix-head-number', text: number })
+    ]);
   }
 
   /* A Likert grid. Returns {node, markMissing} — `markMissing` highlights the
@@ -119,9 +141,10 @@
     var rowNodes = {};
     var cardNodes = {};
 
+    var numbered = question.options.some(function (option) { return !!option.sublabel; });
     var headRow = el('tr', {}, [el('th', { className: 'item-col', text: '' })]);
     question.options.forEach(function (option) {
-      headRow.appendChild(el('th', { text: optionHeader(option) }));
+      headRow.appendChild(el('th', {}, [optionHeader(option, numbered)]));
     });
 
     var body = el('tbody');
@@ -341,6 +364,102 @@
     };
   }
 
+  /* --- Markdown ------------------------------------------------------------
+   *
+   * Renders the model's reply. Qwen emits `### headings`, `**bold**`, `-` and
+   * `1.` lists, so showing it as plain text left the markers visible on screen.
+   *
+   * SAFETY: the text is MODEL OUTPUT, not study-authored copy, so it is not
+   * trusted HTML. Everything is HTML-escaped FIRST and the markdown transforms
+   * run over the escaped string, which means a response containing `<script>`
+   * or an onerror attribute renders as literal characters and can never
+   * execute. Only the tags this function itself introduces reach the DOM. That
+   * ordering is the whole security property — do not "optimise" it by
+   * transforming first and escaping after.
+   *
+   * Deliberately small: headings, bold, italic, inline code, bullet and
+   * numbered lists, paragraphs. No links, no images, no raw HTML passthrough,
+   * because the model has no reason to emit them and each is an attack surface.
+   */
+  function escapeHtml(text) {
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /* Inline spans, applied to ALREADY-ESCAPED text. Bold before italic so the
+   * `**` of a bold run is consumed and not mistaken for a lone emphasis `*`. */
+  function inlineMarkdown(escaped) {
+    return escaped
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  }
+
+  function markdown(text) {
+    var lines = escapeHtml(text == null ? '' : text).split('\n');
+    var html = [];
+    var listType = null;
+    var paragraph = [];
+
+    function closeParagraph() {
+      if (paragraph.length) {
+        html.push('<p>' + inlineMarkdown(paragraph.join(' ')) + '</p>');
+        paragraph = [];
+      }
+    }
+    function closeList() {
+      if (listType) { html.push('</' + listType + '>'); listType = null; }
+    }
+    function openList(type) {
+      if (listType !== type) { closeList(); html.push('<' + type + '>'); listType = type; }
+    }
+
+    lines.forEach(function (raw) {
+      var line = raw.trim();
+      if (!line) { closeParagraph(); closeList(); return; }
+
+      var heading = line.match(/^(#{1,6})\s+(.*)$/);
+      if (heading) {
+        closeParagraph(); closeList();
+        // Clamped to h3..h4: the page already owns h1/h2, and a model heading
+        // must not outrank the study's own.
+        var level = Math.min(4, Math.max(3, heading[1].length));
+        html.push('<h' + level + '>' + inlineMarkdown(heading[2]) + '</h' + level + '>');
+        return;
+      }
+
+      var bullet = line.match(/^[-*+]\s+(.*)$/);
+      if (bullet) {
+        closeParagraph(); openList('ul');
+        html.push('<li>' + inlineMarkdown(bullet[1]) + '</li>');
+        return;
+      }
+
+      var numbered = line.match(/^\d+[.)]\s+(.*)$/);
+      if (numbered) {
+        closeParagraph(); openList('ol');
+        html.push('<li>' + inlineMarkdown(numbered[1]) + '</li>');
+        return;
+      }
+
+      closeList();
+      paragraph.push(line);
+    });
+    closeParagraph();
+    closeList();
+    return html.join('');
+  }
+
+  /* A rendered model response. `markdown` guarantees the string is escaped, so
+   * this is the ONE place innerHTML is used on something a participant did not
+   * author and the study did not write. */
+  function aiResponse(text) {
+    return el('div', { className: 'ai-response prose', html: markdown(text) });
+  }
+
   /* A textarea with a live character counter that turns red below `minChars`. */
   function textArea(options) {
     var area = el('textarea', {
@@ -367,6 +486,8 @@
 
   window.W = {
     el: el,
+    markdown: markdown,
+    aiResponse: aiResponse,
     clear: clear,
     choiceList: choiceList,
     matrix: matrix,
