@@ -260,7 +260,11 @@
   }
 
   /* Fetch a build-time static asset (the content bundle, the client config).
-   * Both are emitted by tools/build_static.py and served by the CDN. */
+   * Both are emitted by tools/build_static.py and served by the CDN.
+   *
+   * RELATIVE paths: amplify.yml serves study/static as the site root, so these
+   * live beside index.html. They were '/static/...' — a leftover from the
+   * FastAPI mount point — and 404'd on the first deploy. */
   function asset(path) {
     return fetch(path, { cache: 'no-cache' }).then(function (response) {
       if (!response.ok) {
@@ -384,7 +388,7 @@
    * existing job and existing arm. The client lock is the courtesy; the
    * database is the guarantee. */
   function start() {
-    Promise.all([asset('/static/config.json'), asset('/static/content.json')])
+    Promise.all([asset('config.json'), asset('content.json')])
       .then(function (loaded) {
         var conf = loaded[0];
         S.supabaseUrl = conf.supabase_url;
