@@ -411,14 +411,24 @@
      * participant controls when they leave.
      *
      * Order matters: the code appears only once the data is safely stored. A
-     * participant who has the code has, by construction, been recorded. */
+     * participant who has the code has, by construction, been recorded.
+     *
+     * A DECLINER GETS NO CODE. The bundle simply omits `code` for that terminal
+     * state — someone who did not consent has not taken part, so there is
+     * nothing to pay for. They are told to return the submission instead, which
+     * is why the absence is handled here rather than rendering an empty box. */
     function finish() {
       APP.clearStorage();
       window.W.clear(body);
       body.appendChild(el('p', { text: conf.message }));
-      body.appendChild(el('p', { className: 'code-label', text: S.content.code_label }));
-      body.appendChild(el('div', { className: 'completion-code', text: conf.code }));
-      body.appendChild(el('p', { className: 'muted', text: S.content.code_instruction }));
+      if (conf.code) {
+        body.appendChild(el('p', { className: 'code-label', text: S.content.code_label }));
+        body.appendChild(el('div', { className: 'completion-code', text: conf.code }));
+        body.appendChild(el('p', { className: 'muted', text: S.content.code_instruction }));
+      } else {
+        body.appendChild(el('p', { className: 'muted',
+          text: S.content.no_code_instruction }));
+      }
     }
 
     function attempt() {

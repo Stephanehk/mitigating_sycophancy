@@ -40,6 +40,7 @@
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 6px 20px rgba(16, 24, 40, 0.06);
 
   --maxw: 720px;
+  --maxw-wide: 1180px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
     Arial, sans-serif;
 }
@@ -63,6 +64,30 @@ html, body {
   max-width: var(--maxw);
   margin: 0 auto;
   padding: 32px 20px 96px;
+  /* Width changes between stages, so animate it rather than snapping. */
+  transition: max-width 160ms ease;
+}
+
+/* WIDE STAGES: the response and every page that asks about it.
+ *
+ * 720px is right for prose and wrong for a Likert grid — AIAS has ten option
+ * columns, which at that width left ~45px per header and made the anchor words
+ * overlap. These stages get the room instead.
+ *
+ * Applied to the RESPONSE PAGE TOO, and to every questionnaire page whether or
+ * not it happens to contain a grid, so the card is one consistent size for the
+ * whole run of questions about the model's reply. Otherwise the page would jump
+ * between, say, dv_rightorwrong (a single scale row) and dv_repair (a grid). */
+.page.wide {
+  max-width: var(--maxw-wide);
+}
+
+/* The reply itself stays at a readable measure inside the wide card. A 1180px
+ * line length is unreadable, and the participant has to actually read this. */
+.page.wide .ai-response {
+  max-width: 760px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
 .card {
@@ -444,13 +469,11 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
  * line whether or not its column has one.
  */
 
+/* The grid stays INSIDE the card. An earlier version broke it out with a
+ * full-bleed transform, which widened the table but left it hanging over the
+ * card's white background — the fix was to widen the card, not to escape it. */
 .matrix-wrap {
-  /* Full-bleed out of the centred card, clamped so it can never introduce a
-   * horizontal scrollbar. 1140px comfortably fits ten columns. */
-  width: min(1140px, calc(100vw - 32px));
-  position: relative;
-  left: 50%;
-  transform: translateX(-50%);
+  width: 100%;
   margin-bottom: 8px;
 }
 
@@ -507,17 +530,6 @@ table.matrix td.item-label {
 }
 
 table.matrix td { text-align: center; }
-
-/* Below the card-stacking breakpoint the table is hidden in favour of
- * .matrix-cards, so the breakout must not apply — it would only add scroll. */
-@media (max-width: 720px) {
-  .matrix-wrap {
-    width: auto;
-    position: static;
-    left: auto;
-    transform: none;
-  }
-}
 
 /* --- Completion code -------------------------------------------------------
 

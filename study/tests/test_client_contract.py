@@ -519,41 +519,74 @@ def test_the_code_is_shown_only_after_the_submit_succeeds():
         "the code is shown before the submit is attempted"
 
 
-def test_the_bundle_carries_a_code_for_every_terminal_state():
+def test_the_bundle_carries_a_code_wherever_one_is_owed():
+    """Completers and screen-outs are owed a code; a decliner is not — they did
+    not take part. test_views.py owns the decliner case in detail."""
     import views
     terminal = views.content_bundle()["terminal"]
     assert set(terminal) == {"complete", "screened_out", "declined"}
+    for name in ("complete", "screened_out"):
+        assert terminal[name].get("code"), "%s has no completion code" % name
+    assert "code" not in terminal["declined"]
     for name, entry in terminal.items():
-        assert entry.get("code"), "%s has no completion code" % name
         assert "redirect_url" not in entry, "%s still carries a redirect URL" % name
         assert "redirected" not in entry["message"].lower(), (
             "%s still promises a redirect that no longer happens" % name)
 
 
-def test_the_likert_grid_breaks_out_of_the_narrow_card():
-    """The page is 720px, which is right for prose and wrong for a 10-column grid.
+def test_the_card_widens_for_the_response_and_its_questions(trees):
+    """720px is right for prose and wrong for a 10-column Likert grid.
 
-    At 720px, AIAS's ten option columns got ~45px of header each and anchor
-    words like "Completely Agree" overlapped their neighbours. The grid — and
-    only the grid, not the question text — is allowed more width.
+    The CARD widens; the grid stays inside it. An earlier version broke the
+    table out with a full-bleed transform, which widened the table but left it
+    overhanging the card's white background.
+
+    The wide set is the response page plus every questionnaire page — whether or
+    not that page happens to contain a grid — so the card does not resize
+    between consecutive questions about the same reply.
     """
-    source = open(os.path.join(_STATIC, "widgets.js"), encoding="utf-8").read()
-    assert "'matrix-wrap'" in source, "matrix() no longer wraps the grid for the breakout"
-
     css = open(os.path.join(_STATIC, "styles.css"), encoding="utf-8").read()
+    assert "--maxw-wide" in css and ".page.wide" in css, \
+        "no wide-card mode defined"
+
     wrap = css[css.index(".matrix-wrap {"):]
     wrap = wrap[:wrap.index("}")]
-    assert "min(" in wrap and "100vw" in wrap, (
-        "the breakout must be clamped against the viewport or it introduces a "
-        "horizontal scrollbar on narrow screens")
-    assert "1140px" in wrap, "expected an explicit wide cap for the grid"
+    for escaped in ("transform:", "position: relative", "100vw"):
+        assert escaped not in wrap, (
+            "the grid is breaking out of the card again (%r); widen the card "
+            "instead" % escaped)
 
-    # Exactly one rule may decide how the columns divide, or they fight.
-    import re as _re
-    widths = _re.findall(r"\.matrix\s+th\.item-col\s*\{[^}]*width:", css)
-    widths += _re.findall(r"table\.matrix th\.item-col,[^{]*\{[^}]*width:", css)
-    assert len(widths) == 1, (
-        "%d rules set the statement-column width; they will compete" % len(widths))
+    source = open(os.path.join(_STATIC, "app.js"), encoding="utf-8").read()
+    assert "'wide'" in source, "nothing applies the wide class"
+
+    # Checked against the AST, not the text. A substring version of this test
+    # was defeated by a mutation that commented the body out and left the
+    # identifier behind in the comment — green while the behaviour was gone.
+    wide = _find_function(trees["app.js"], "isWideStage")
+    returns = [n for n in _walk(wide) if n.type == "ReturnStatement"]
+    assert returns, "isWideStage returns nothing"
+    assert not any(r.argument is not None and r.argument.type == "Literal"
+                   and r.argument.value is False for r in returns), \
+        "isWideStage has a `return false` short-circuit"
+
+    literals = _string_literals(wide)
+    assert "response" in literals, "the response page must use the same width"
+    members = {n.property.name for n in _walk(wide)
+               if n.type == "MemberExpression" and not n.computed}
+    assert "questionnaire_pages" in members, (
+        "the wide set must be derived from the questionnaire page list, not "
+        "just the pages that happen to contain a grid, or the card resizes "
+        "between consecutive DV pages")
+
+
+def test_the_reply_stays_readable_inside_the_wide_card():
+    """A 1180px line length is unreadable and the participant has to read it."""
+    css = open(os.path.join(_STATIC, "styles.css"), encoding="utf-8").read()
+    assert ".page.wide .ai-response" in css, \
+        "the reply is not constrained inside the wide card"
+    rule = css[css.index(".page.wide .ai-response"):]
+    rule = rule[:rule.index("}")]
+    assert "max-width" in rule
 
 
 def test_the_widest_scale_still_gets_usable_header_room():
@@ -567,7 +600,21 @@ def test_the_widest_scale_still_gets_usable_header_room():
         if question["type"] != "matrix":
             continue
         columns = len(question["options"])
-        per_column = (1140 - 32) * 0.70 / columns
+        # Inside the wide card: 1180 page cap, less page and card padding.
+        per_column = (1180 - 40 - 64) * 0.70 / columns
         assert per_column >= 60, (
             "%s has %d option columns, leaving %.0fpx per header — the anchor "
             "words will overlap again" % (question["id"], columns, per_column))
+
+
+def test_the_terminal_page_handles_a_missing_code():
+    """The bundle omits `code` for a decliner, so the page must branch on it
+    rather than render an empty code box."""
+    source = open(os.path.join(_STATIC, "screens.js"), encoding="utf-8").read()
+    finish = source[source.index("function finish()"):]
+    finish = finish[:finish.index("\n    function ")]
+    assert "if (conf.code)" in finish, (
+        "finish() renders the code unconditionally; a decliner would get an "
+        "empty box")
+    assert "no_code_instruction" in finish, (
+        "with no code, a decliner must be told what to do instead")

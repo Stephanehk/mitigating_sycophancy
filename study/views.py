@@ -93,19 +93,24 @@ def content_bundle():
             "headline": content.ADDITIONAL_THOUGHTS_HEADLINE,
             "question": content.ADDITIONAL_THOUGHTS_QUESTION,
         },
-        # Each terminal page shows a completion CODE. Nothing redirects and
-        # nothing links out: an auto-redirect could strand a participant who had
-        # finished, with no way to prove it. Screen-outs and decliners get the
-        # screen-out code, which is what Prolific expects for a returned slot.
+        # Each terminal page shows a completion CODE, except one. Nothing
+        # redirects and nothing links out: an auto-redirect could strand a
+        # participant who had finished, with no way to prove it.
+        #
+        # NO CODE FOR A DECLINER. Someone who did not consent has not taken
+        # part, so there is nothing to pay for — they return the submission on
+        # Prolific instead. Screen-outs DO get one: they answered the screening,
+        # which is real data and a reportable result, and the screen-out code is
+        # what Prolific expects for that slot.
         "terminal": {
             "complete": {"message": content.COMPLETE_MESSAGE,
                          "code": config.PROLIFIC_COMPLETION_CODE},
             "screened_out": {"message": content.SCREENOUT_MESSAGE,
                              "code": config.PROLIFIC_SCREENOUT_CODE},
-            "declined": {"message": content.DECLINE_MESSAGE,
-                         "code": config.PROLIFIC_SCREENOUT_CODE},
+            "declined": {"message": content.DECLINE_MESSAGE},
         },
         "code_label": content.CODE_LABEL,
         "code_instruction": content.CODE_INSTRUCTION,
+        "no_code_instruction": content.DECLINE_INSTRUCTION,
         "max_text_chars": config.MAX_TEXT_CHARS,
     }

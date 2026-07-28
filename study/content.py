@@ -216,6 +216,13 @@ SCREENOUT_MESSAGE = (
 DECLINE_MESSAGE = (
     "Thank you for your time. You have chosen not to participate."
 )
+# A decliner is given no completion code, so they need to be told what to do
+# instead: return the submission on Prolific rather than wait for a code that
+# is never coming.
+DECLINE_INSTRUCTION = (
+    "You can now close this tab. If you were recruited through Prolific, "
+    "please return your submission there."
+)
 # The last screen shows the completion code rather than redirecting. CODE_LABEL
 # sits above it and CODE_INSTRUCTION below; the code itself comes from
 # config.PROLIFIC_COMPLETION_CODE.

@@ -395,41 +395,62 @@ def test_concurrent_workers_never_double_claim(anon, service, worker_token, tag,
 
 def test_a_worker_that_lost_its_lease_cannot_overwrite_the_winner(
         anon, service, worker_token, clean):
+    """The guard that stops a slow worker clobbering a result already produced.
+
+    Set up by writing the job's state directly rather than racing to claim it:
+    a live pool sharing this database will otherwise take it first, and the test
+    would fail for a reason unrelated to the guard. What is under test is
+    complete_job's worker_id check, and that is exercised either way.
+    """
+    import requests
     session = start(anon)
     request_generation(anon, session)
-    job = anon.rpc("worker_claim", {"p_worker_token": worker_token,
-                                    "p_worker_id": "slow"})["job"]
-    # Force the lease to expire, then let a second worker take it.
-    service.delete("/study_jobs?job_id=eq.%s&lease_expires_at=is.null" % job["job_id"])
-    import requests
-    requests.patch("%s/study_jobs?job_id=eq.%s" % (service.base, job["job_id"]),
+    job_id = service.get("/study_jobs?session_id=eq.%s&select=job_id"
+                         % session["session_id"])[0]["job_id"]
+
+    # 'slow' holds it, with a lease that has already expired.
+    requests.patch("%s/study_jobs?job_id=eq.%s" % (service.base, job_id),
                    headers=service.headers, timeout=30,
-                   json={"lease_expires_at": "2000-01-01T00:00:00Z"})
-    anon.rpc("worker_claim", {"p_worker_token": worker_token, "p_worker_id": "fast"})
+                   json={"status": "running", "worker_id": "slow",
+                         "lease_expires_at": "2000-01-01T00:00:00Z"})
+    # Deliberately NOT asserting that the reap leaves it 'pending' here: it
+    # does, and then a live worker pool re-claims it within its 2s poll, so the
+    # intermediate state is unobservable on a shared database. What this test
+    # is for is complete_job's worker_id check, below.
+    anon.rpc("response_status", {"p_token": session["session_token"]})  # drives the reap
+
+    requests.patch("%s/study_jobs?job_id=eq.%s" % (service.base, job_id),
+                   headers=service.headers, timeout=30,
+                   json={"status": "running", "worker_id": "fast",
+                         "lease_expires_at": "2099-01-01T00:00:00Z"})
 
     assert anon.rpc("worker_complete", {
-        "p_worker_token": worker_token, "p_job_id": job["job_id"],
-        "p_worker_id": "fast", "p_response_text": "winner", "p_stages": []})["accepted"] is True
+        "p_worker_token": worker_token, "p_job_id": job_id,
+        "p_worker_id": "fast", "p_response_text": "winner",
+        "p_stages": []})["accepted"] is True
     assert anon.rpc("worker_complete", {
-        "p_worker_token": worker_token, "p_job_id": job["job_id"],
-        "p_worker_id": "slow", "p_response_text": "loser", "p_stages": []})["accepted"] is False
+        "p_worker_token": worker_token, "p_job_id": job_id,
+        "p_worker_id": "slow", "p_response_text": "loser",
+        "p_stages": []})["accepted"] is False
     assert service.get("/study_jobs?job_id=eq.%s&select=response_text"
-                       % job["job_id"])[0]["response_text"] == "winner"
+                       % job_id)[0]["response_text"] == "winner"
 
 
 def test_retry_is_capped(anon, service, worker_token, clean):
+    import requests
     session = start(anon)
     request_generation(anon, session)
-    job = anon.rpc("worker_claim", {"p_worker_token": worker_token,
-                                    "p_worker_id": "w"})["job"]
-    import requests
-    requests.patch("%s/study_jobs?job_id=eq.%s" % (service.base, job["job_id"]),
+    # Written directly rather than claimed: a live pool would otherwise take the
+    # job first. What is under test is the manual-retry cap, not who claimed it.
+    job_id = service.get("/study_jobs?session_id=eq.%s&select=job_id"
+                         % session["session_id"])[0]["job_id"]
+    requests.patch("%s/study_jobs?job_id=eq.%s" % (service.base, job_id),
                    headers=service.headers, timeout=30, json={"status": "failed"})
     state = anon.rpc("response_status", {"p_token": session["session_token"]})
     assert state["status"] == "failed" and state["can_retry"] is True
 
     anon.rpc("retry_response", {"p_token": session["session_token"]})
-    requests.patch("%s/study_jobs?job_id=eq.%s" % (service.base, job["job_id"]),
+    requests.patch("%s/study_jobs?job_id=eq.%s" % (service.base, job_id),
                    headers=service.headers, timeout=30, json={"status": "failed"})
     state = anon.rpc("response_status", {"p_token": session["session_token"]})
     assert state["can_retry"] is False, "manual retries must be capped"

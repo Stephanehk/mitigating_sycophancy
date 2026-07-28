@@ -336,10 +336,22 @@
 
   // --- Router --------------------------------------------------------------
 
+  /* Stages that get the wide card: the response and everything that asks about
+   * it. Kept as a set rather than "does this page contain a grid?" so the width
+   * does not change between consecutive DV pages — one of them is a single
+   * scale row and the rest are grids, and jumping between them looks broken. */
+  function isWideStage(stage) {
+    if (stage === 'response') { return true; }
+    return (S.content.questionnaire_pages || []).some(function (page) {
+      return page.page === stage;
+    });
+  }
+
   function render() {
     stopPolling();
     clearError();
     setProgress(S.stage);
+    document.querySelector('.page').classList.toggle('wide', isWideStage(S.stage));
 
     var screens = APP.screens;
     if (isTerminal(S.stage)) { return screens.terminal(); }
