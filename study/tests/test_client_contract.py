@@ -528,3 +528,46 @@ def test_the_bundle_carries_a_code_for_every_terminal_state():
         assert "redirect_url" not in entry, "%s still carries a redirect URL" % name
         assert "redirected" not in entry["message"].lower(), (
             "%s still promises a redirect that no longer happens" % name)
+
+
+def test_the_likert_grid_breaks_out_of_the_narrow_card():
+    """The page is 720px, which is right for prose and wrong for a 10-column grid.
+
+    At 720px, AIAS's ten option columns got ~45px of header each and anchor
+    words like "Completely Agree" overlapped their neighbours. The grid — and
+    only the grid, not the question text — is allowed more width.
+    """
+    source = open(os.path.join(_STATIC, "widgets.js"), encoding="utf-8").read()
+    assert "'matrix-wrap'" in source, "matrix() no longer wraps the grid for the breakout"
+
+    css = open(os.path.join(_STATIC, "styles.css"), encoding="utf-8").read()
+    wrap = css[css.index(".matrix-wrap {"):]
+    wrap = wrap[:wrap.index("}")]
+    assert "min(" in wrap and "100vw" in wrap, (
+        "the breakout must be clamped against the viewport or it introduces a "
+        "horizontal scrollbar on narrow screens")
+    assert "1140px" in wrap, "expected an explicit wide cap for the grid"
+
+    # Exactly one rule may decide how the columns divide, or they fight.
+    import re as _re
+    widths = _re.findall(r"\.matrix\s+th\.item-col\s*\{[^}]*width:", css)
+    widths += _re.findall(r"table\.matrix th\.item-col,[^{]*\{[^}]*width:", css)
+    assert len(widths) == 1, (
+        "%d rules set the statement-column width; they will compete" % len(widths))
+
+
+def test_the_widest_scale_still_gets_usable_header_room():
+    """Guards against someone adding a scale with more options than fits.
+
+    Ten columns at the 1140px cap is about 78px each, which holds the longest
+    anchor word in the instrument. Many more than that and the overlap returns.
+    """
+    import questionnaires
+    for question in questionnaires.all_questions():
+        if question["type"] != "matrix":
+            continue
+        columns = len(question["options"])
+        per_column = (1140 - 32) * 0.70 / columns
+        assert per_column >= 60, (
+            "%s has %d option columns, leaving %.0fpx per header — the anchor "
+            "words will overlap again" % (question["id"], columns, per_column))

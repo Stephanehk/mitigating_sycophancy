@@ -235,7 +235,13 @@
       return missing;
     }
 
-    return { node: el('div', {}, [table, cards]), markMissing: markMissing };
+    // `matrix-wrap` lets the grid break out of the 720px card. The prose above
+    // it stays narrow because that is what reads well; the grid does not, and
+    // at 10 option columns it had ~40px per header.
+    return {
+      node: el('div', { className: 'matrix-wrap' }, [table, cards]),
+      markMissing: markMissing
+    };
   }
 
   /* A checkbox list, with support for the QSF's "Other" text entry and the

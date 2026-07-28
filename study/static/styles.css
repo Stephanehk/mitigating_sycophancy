@@ -276,7 +276,7 @@ textarea:focus, input[type="text"]:focus {
 /* Likert matrix. Renders as a table on wide screens and as stacked per-item
  * cards on narrow ones, because a 7-column grid is unusable on a phone. */
 
-.matrix { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+.matrix { width: 100%; border-collapse: collapse; }
 
 .matrix th {
   font-size: 0.78rem;
@@ -288,7 +288,9 @@ textarea:focus, input[type="text"]:focus {
   line-height: 1.25;
 }
 
-.matrix th.item-col { text-align: left; width: 34%; }
+/* width lives with the fixed-layout rules further down, so there is only
+ * one place that decides how the columns divide. */
+.matrix th.item-col { text-align: left; }
 
 .matrix td { padding: 5px 4px; text-align: center; border-top: 1px solid var(--border); }
 .matrix td.item-label { text-align: left; font-size: 0.95rem; padding-right: 14px; }
@@ -421,18 +423,37 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .terminal p { color: var(--text-muted); margin-bottom: 22px; }
 .terminal a { color: var(--accent); font-weight: 580; }
 
-/* --- Likert column headers -------------------------------------------------
+/* --- Likert grids ----------------------------------------------------------
  *
- * Numbered scales (AGREE_7_NUMBERED, AIAS, the attention check) label only the
- * endpoints and midpoint, so the header cells hold wildly different amounts of
- * text. Left to itself the table gave the labelled columns more width, the
- * numbers landed at different heights, and the radio buttons below them were
- * visibly unevenly spaced.
+ * TWO PROBLEMS, ONE CAUSE: not enough width.
  *
- * Fixed layout makes every option column the same width; the two-row header
- * puts the anchor word in a reserved band above the number, so all the numbers
- * sit on one line whether or not their column has a word.
+ * The page is capped at 720px, which is right for prose. A Likert grid is not
+ * prose. AIAS has TEN option columns; after the statement column that left
+ * roughly 40px per header, so anchor words like "Completely Agree" overlapped
+ * their neighbours. Big Five is worse per-column — five options, every one a
+ * full phrase such as "Neither agree nor disagree".
+ *
+ * So the grid, and only the grid, breaks out of the card. The question text
+ * above it keeps the narrow measure.
+ *
+ * The second problem was alignment: only the endpoints and midpoint of a
+ * numbered scale carry a word, so a single-line header made those columns wider
+ * than the bare ones, pushed the numbers to different heights and left the
+ * radio buttons unevenly spaced. Fixed layout equalises the option columns and
+ * the two-row header reserves a band for the word, so every number shares a
+ * line whether or not its column has one.
  */
+
+.matrix-wrap {
+  /* Full-bleed out of the centred card, clamped so it can never introduce a
+   * horizontal scrollbar. 1140px comfortably fits ten columns. */
+  width: min(1140px, calc(100vw - 32px));
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 8px;
+}
+
 table.matrix {
   table-layout: fixed;
   width: 100%;
@@ -440,9 +461,9 @@ table.matrix {
 
 table.matrix th.item-col,
 table.matrix td.item-label {
-  /* The statement column keeps its own width; the option columns then divide
-   * the remainder equally, which is what makes the bubbles equidistant. */
-  width: 38%;
+  /* The statement column takes a fixed share and the option columns divide the
+   * rest equally — that equal division is what makes the bubbles equidistant. */
+  width: 30%;
   text-align: left;
 }
 
@@ -452,32 +473,54 @@ table.matrix td.item-label {
   align-items: center;
   justify-content: flex-end;
   height: 100%;
+  padding: 0 2px;
 }
 
 .matrix-head-word {
-  /* Reserved band, present even when empty, so every number aligns. Two lines
-   * of room: "Neither agree nor disagree" wraps on narrow screens. */
-  min-height: 2.6em;
+  /* Reserved band, present even when empty, so every number aligns. Sized for
+   * two lines: "Neither agree nor disagree" wraps at these column widths. */
+  min-height: 2.8em;
   display: flex;
   align-items: flex-end;
   justify-content: center;
+  text-align: center;
   font-weight: 400;
   line-height: 1.15;
-  font-size: 0.78rem;
+  font-size: 0.76rem;
+  overflow-wrap: break-word;
   hyphens: auto;
 }
 
 .matrix-head-number {
-  margin-top: 0.35em;
+  margin-top: 0.4em;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-table.matrix td {
+/* Un-numbered scales (plain AGREE_7, Big Five) put a whole phrase in every
+ * column, so they need the same wrapping room but no reserved band. */
+.matrix-head:not(.numbered) {
   text-align: center;
+  line-height: 1.2;
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+
+table.matrix td { text-align: center; }
+
+/* Below the card-stacking breakpoint the table is hidden in favour of
+ * .matrix-cards, so the breakout must not apply — it would only add scroll. */
+@media (max-width: 720px) {
+  .matrix-wrap {
+    width: auto;
+    position: static;
+    left: auto;
+    transform: none;
+  }
 }
 
 /* --- Completion code -------------------------------------------------------
+
  *
  * The last thing a participant sees, and the thing they must transcribe into
  * Prolific to be paid. Big, monospaced and selectable — tabular figures and
