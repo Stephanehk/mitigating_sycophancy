@@ -58,12 +58,20 @@ def test_the_bundle_never_carries_the_arm_or_any_prompt():
     assert prompts.SYCO_SYSTEM_PROMPT not in blob
 
 
-def test_the_bundle_carries_all_three_terminal_destinations():
+def test_the_bundle_carries_a_completion_code_for_all_three_terminal_states():
+    """Nothing redirects any more; each terminal page shows a code instead.
+
+    Screen-outs and decliners get the SCREEN-OUT code — that is the one Prolific
+    expects for a returned slot, and paying them the completion code would be
+    wrong.
+    """
     terminal = views.content_bundle()["terminal"]
     assert set(terminal) == {"complete", "screened_out", "declined"}
-    assert terminal["complete"]["redirect_url"] == config.PROLIFIC_COMPLETION_URL
-    assert terminal["screened_out"]["redirect_url"] == config.PROLIFIC_SCREENOUT_URL
-    assert terminal["declined"]["redirect_url"] == config.PROLIFIC_SCREENOUT_URL
+    assert terminal["complete"]["code"] == config.PROLIFIC_COMPLETION_CODE
+    assert terminal["screened_out"]["code"] == config.PROLIFIC_SCREENOUT_CODE
+    assert terminal["declined"]["code"] == config.PROLIFIC_SCREENOUT_CODE
+    for name, entry in terminal.items():
+        assert "redirect_url" not in entry, "%s still carries a redirect URL" % name
 
 
 def test_the_bundle_carries_the_validation_thresholds_the_client_enforces():
