@@ -41,7 +41,7 @@ def client(monkeypatch):
     os.close(handle)
     os.unlink(path)
     monkeypatch.setattr(config, "DATABASE_URL", "sqlite:///" + path)
-    monkeypatch.setattr(config, "WORKER_LONGPOLL_SECONDS", 1)
+    monkeypatch.setattr(config, "WORKER_POLL_SECONDS", 0.01)
     store.init_db()
 
     from fastapi.testclient import TestClient

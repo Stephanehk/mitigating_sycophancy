@@ -294,36 +294,34 @@ def _require_worker(token):
 
 @app.post("/api/worker/claim")
 def worker_claim(payload: dict = Body(...), x_worker_token: str = Header(default=None)):
-    """Long-poll for the next pending job.
+    """Hand out the next pending job, or {"job": None} immediately.
 
-    Holds the request open for up to WORKER_LONGPOLL_SECONDS so a job starts
-    generating within a second of being enqueued without the worker hammering
-    the endpoint. Returns {"job": None} on timeout; the worker simply calls
-    again.
+    RETURNS AT ONCE — it does not wait for work. This was a 20-second long poll
+    that held the request open until a job appeared, which is the right design
+    on a always-on server and the wrong one behind Lambda, where you are billed
+    for the whole time the request is held. With four workers that idle wait
+    costs ~5.2M GB-s/month against a 400k free tier; returning immediately and
+    letting the worker sleep WORKER_POLL_SECONDS costs ~260k. The worker owns
+    the waiting now (see run_worker.py).
 
-    DELIBERATELY SYNCHRONOUS. This was an `async def` that called blocking
-    SQLite inside its loop, which ran that I/O on the event loop and stalled
-    every concurrent participant request. As a plain `def`, FastAPI runs it in
-    the threadpool, so the loop stays free.
+    Concurrency is safe by construction: store.claim_job is atomic (SQLite
+    BEGIN IMMEDIATE, or Postgres FOR UPDATE SKIP LOCKED), so N workers polling
+    simultaneously take N different jobs rather than racing for one.
     """
     _require_worker(x_worker_token)
     worker_id = ((payload or {}).get("worker_id") or "unknown")[:120]
 
-    deadline = time.monotonic() + config.WORKER_LONGPOLL_SECONDS
-    while True:
-        store.reap_expired_jobs()
-        job = store.claim_job(worker_id)
-        if job is not None:
-            return {"job": {
-                "job_id": job["job_id"],
-                "arm": job["arm"],
-                "topic_title": job["topic_title"],
-                "user_text": job["user_text"],
-                "attempts": job["attempts"],
-            }}
-        if time.monotonic() >= deadline:
-            return {"job": None}
-        time.sleep(0.5)
+    store.reap_expired_jobs()
+    job = store.claim_job(worker_id)
+    if job is None:
+        return {"job": None}
+    return {"job": {
+        "job_id": job["job_id"],
+        "arm": job["arm"],
+        "topic_title": job["topic_title"],
+        "user_text": job["user_text"],
+        "attempts": job["attempts"],
+    }}
 
 
 @app.post("/api/worker/heartbeat")

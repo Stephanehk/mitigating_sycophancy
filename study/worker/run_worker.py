@@ -75,9 +75,14 @@ class StudyClient:
         return response.json()
 
     def claim(self):
-        """Long-poll for a job. Returns the job dict or None."""
-        body = self._post("/api/worker/claim", {"worker_id": self.worker_id},
-                          timeout=config.WORKER_LONGPOLL_SECONDS + 30)
+        """Ask for a job. Returns the job dict, or None if the queue is empty.
+
+        Returns immediately either way — the server no longer holds the request
+        open. The caller is responsible for sleeping between empty claims; see
+        the loop in main() and config.WORKER_POLL_SECONDS for why the long poll
+        was removed.
+        """
+        body = self._post("/api/worker/claim", {"worker_id": self.worker_id}, timeout=30)
         return body.get("job")
 
     def heartbeat(self, job_id):
@@ -207,6 +212,10 @@ def main():
                         help="HF backend only: accelerate device_map (default auto)")
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.90)
     parser.add_argument("--max-model-len", type=int, default=8192)
+    parser.add_argument("--poll-seconds", type=float, default=config.WORKER_POLL_SECONDS,
+                        help="Wait between claims when the queue is empty. The server "
+                             "returns immediately rather than long-polling, so this is "
+                             "where the waiting happens (default %(default)s).")
     parser.add_argument("--tensor-parallel-size", type=int, default=None,
                         help="vLLM backend only. NOTE: TP across next5/next6 a4000s "
                              "hangs in NCCL; use --backend hf on those nodes.")
@@ -281,6 +290,10 @@ def main():
             if time.time() - idle_since > 300:
                 log("idle; queue empty")
                 idle_since = time.time()
+            # The wait the server used to do for us. Without this the worker
+            # would busy-loop the claim endpoint, which behind Lambda is a
+            # bill rather than merely rude.
+            time.sleep(args.poll_seconds)
             continue
 
         idle_since = time.time()

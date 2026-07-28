@@ -171,9 +171,19 @@ JOB_MAX_ATTEMPTS = _env_int("STUDY_JOB_MAX_ATTEMPTS", 4)
 # attempts remain, so a participant is never left on the loading screen.
 JOB_DEADLINE_SECONDS = _env_int("STUDY_JOB_DEADLINE_SECONDS", 420)
 
-# Long-poll window for the worker's claim call, and the client's status poll
-# interval. The long poll keeps latency low without a busy loop.
-WORKER_LONGPOLL_SECONDS = _env_int("STUDY_WORKER_LONGPOLL_SECONDS", 20)
+# How long the worker waits before asking for a job again when the queue is
+# empty. THIS USED TO BE A 20-SECOND LONG POLL, and the change is a deployment
+# constraint, not a preference: behind Lambda you are billed for the whole time
+# a request is held open. With four workers, a 20s long poll costs roughly
+# 5.2M GB-s/month (~$85) against the 400k GB-s free tier, purely to wait. A 2s
+# short poll is ~260k GB-s/month — free — because each request returns in
+# milliseconds.
+#
+# The cost is up to WORKER_POLL_SECONDS of extra pickup latency, which is
+# invisible next to a 4-18s generation. Keeping the queue behind the worker
+# token also means the Supabase service-role key stays on the server and never
+# reaches the GPU cluster.
+WORKER_POLL_SECONDS = _env_float("STUDY_WORKER_POLL_SECONDS", 2.0)
 CLIENT_POLL_INTERVAL_MS = _env_int("STUDY_CLIENT_POLL_INTERVAL_MS", 1200)
 
 # After this long on the loading screen the client shows LOADING_SLOW_NOTICE.
