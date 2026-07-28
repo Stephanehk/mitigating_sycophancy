@@ -1,4 +1,4 @@
-"""Contract tests between static/app.js and the Python server.
+"""Contract tests between the client and the database.
 
 The client owns the flow now, which means a whole class of bug that used to be
 impossible is suddenly possible: the browser can drift from the server without
@@ -6,10 +6,10 @@ anything failing until a participant hits it in production. Nothing else in this
 suite executes app.js, so these tests parse it and assert the three couplings
 that would break silently:
 
-  1. Every endpoint the client calls exists on the server.
-  2. The payload the client builds has exactly the fields the server's validator
-     reads — no missing field, no field invented and then dropped.
-  3. The client's stage list matches the questionnaire pages the server sends.
+  1. Every RPC the client calls is granted to anon (an ungranted one 403s).
+  2. The payload the client builds has exactly the fields submit_study reads —
+     no missing field, no field invented and then dropped.
+  3. The client's stage list matches the questionnaire pages in the bundle.
 
 esprima parses the file rather than a regex reading it, so a renamed function or
 a reformatted literal cannot make a check silently vacuous.
@@ -173,7 +173,7 @@ def test_the_client_never_embeds_a_secret_key(trees):
 
 # --- 2. Payload shape ------------------------------------------------------
 
-#: The fields flow.validate_submission reads out of the client's payload.
+#: The fields submit_study reads out of the client's payload.
 EXPECTED_PAYLOAD_FIELDS = {
     "consent", "prolific_pid", "eligibility", "selected_scenario", "screening",
     "perspective_text", "additional_thoughts", "answers", "client_timings",
@@ -198,17 +198,21 @@ def test_the_client_payload_has_exactly_the_fields_the_validator_reads(tree):
            sorted(EXPECTED_PAYLOAD_FIELDS - keys)))
 
 
-def test_the_validator_actually_reads_every_field_the_client_sends():
-    """Guards the other direction: a field the client sends but nobody reads."""
-    import inspect
+def test_submit_study_actually_reads_every_field_the_client_sends():
+    """Guards the other direction: a field the client sends but nobody reads.
 
-    import flow
-    source = inspect.getsource(flow.validate_submission)
-    source += inspect.getsource(flow.validate_screening_answers)
+    The validator is plpgsql now, so this greps the generated SQL. Crude, but it
+    catches the real failure — renaming a field on one side only, which would
+    silently drop it into the payload blob and out of its promoted column.
+    """
+    path = os.path.join(os.path.dirname(_STATIC), "supabase_app_schema.sql")
+    with open(path, encoding="utf-8") as handle:
+        sql = handle.read()
+    body = sql[sql.index("function public.submit_study"):]
     for field in EXPECTED_PAYLOAD_FIELDS:
-        assert '"%s"' % field in source, (
-            "flow.validate_submission never reads %r, so the client is sending "
-            "a field that is silently dropped" % (field,))
+        assert "'%s'" % field in body, (
+            "submit_study never reads %r, so the client is sending a field that "
+            "is silently dropped" % (field,))
 
 
 # --- 3. Stage list ---------------------------------------------------------

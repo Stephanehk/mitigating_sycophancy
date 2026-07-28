@@ -14,12 +14,16 @@
 #
 # Self-contained GPU smoke test for the study's generation path.
 #
-# Starts its own study server on localhost, seeds one job per arm, runs the
-# real worker against a real vLLM engine, and prints all four responses.
-# Nothing outside this node is required, so it can sit in the queue and run
-# unattended whenever a GPU frees.
+# Seeds one job per arm into Supabase, runs the real worker against a real vLLM
+# engine, and prints all four responses. It needs the Supabase credentials
+# (service key to seed and clean up, anon key + worker token for the worker
+# itself) but nothing else, so it can sit in the queue and run unattended
+# whenever a GPU frees. Every row it creates is deleted on exit.
 #
-#   sbatch study/worker/smoke_test.sbatch
+#   source study/.supabase_env
+#   export STUDY_WORKER_TOKEN="$(cat study/.trial_token)"
+#   sbatch --export=ALL,STUDY_WORKER_TOKEN,STUDY_SUPABASE_URL,STUDY_SUPABASE_ANON_KEY,STUDY_SUPABASE_SERVICE_KEY \
+#          study/worker/smoke_test.sbatch
 #   # results land in study/logs/smoke_<jobid>.out
 #
 # ONE A6000 (48GB) and NO tensor parallelism is the intended configuration.

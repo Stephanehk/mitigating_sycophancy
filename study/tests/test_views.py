@@ -1,40 +1,26 @@
-"""Tests for views.py: the one-shot content bundle and the response state.
+"""Tests for views.py: the content bundle.
 
-The bundle is now the client's entire source of truth for what the study says,
-so the thing worth testing is that it is COMPLETE — every scenario, every
-questionnaire item, every terminal message — and that it does not carry the one
-fact the client must never learn.
+Build-time only: tools/build_static.py turns this into static/content.json. It
+is the client's entire source of truth for what the study says, so the thing
+worth testing is that it is COMPLETE — every scenario, every questionnaire item,
+every terminal message — and that it does not carry the one fact the client must
+never learn.
+
+The response-state tests that used to live here are gone with the API server;
+that behaviour is now job_state() in plpgsql and is covered by test_rpcs.py.
 """
 
 import json
 import os
 import sys
-import tempfile
-
-import pytest
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import config
 import content
 import questionnaires
 import scenarios
-import store
 import views
 from prompts import ARMS
-
-
-@pytest.fixture()
-def db(monkeypatch):
-    handle, path = tempfile.mkstemp(suffix=".db")
-    os.close(handle)
-    os.unlink(path)
-    monkeypatch.setattr(config, "DATABASE_URL", "sqlite:///" + path)
-    store.init_db()
-    yield path
-    for suffix in ("", "-wal", "-shm"):
-        if os.path.exists(path + suffix):
-            os.unlink(path + suffix)
 
 
 # --- Content bundle --------------------------------------------------------
@@ -97,38 +83,3 @@ def test_the_bundle_agrees_with_scenarios_about_which_answer_selects():
 def test_the_bundle_is_json_serializable():
     """It is sent verbatim over the wire, so a stray tuple would 500 at runtime."""
     json.dumps(views.content_bundle())
-
-
-# --- Response state --------------------------------------------------------
-
-def test_response_state_reports_pending_then_done(db):
-    session_id, _ = store.create_session(["a"], "pytest")
-    job_id = store.create_job(session_id, "ours", "Topic", "story")
-
-    state = views.response_state(session_id)
-    assert state["status"] == "pending"
-    assert "text" not in state
-
-    store.claim_job("w")
-    store.complete_job(job_id, "w", "the reply", [])
-    state = views.response_state(session_id)
-    assert state["status"] == "done" and state["text"] == "the reply"
-
-
-def test_response_state_reports_retryability_until_exhausted(db):
-    session_id, _ = store.create_session(["a"], "pytest")
-    job_id = store.create_job(session_id, "ours", "Topic", "story")
-    with store.transaction() as conn:
-        conn.execute("UPDATE jobs SET status = 'failed' WHERE job_id = ?", (job_id,))
-
-    assert views.response_state(session_id)["can_retry"] is True
-    store.requeue_job(job_id)
-    with store.transaction() as conn:
-        conn.execute("UPDATE jobs SET status = 'failed' WHERE job_id = ?", (job_id,))
-    assert views.response_state(session_id)["can_retry"] is False
-
-
-def test_response_state_without_a_job_is_a_programming_error(db):
-    session_id, _ = store.create_session(["a"], "pytest")
-    with pytest.raises(AssertionError):
-        views.response_state(session_id)

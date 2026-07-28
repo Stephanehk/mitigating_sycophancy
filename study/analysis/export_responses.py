@@ -44,7 +44,6 @@ sys.path.insert(0, _STUDY_DIR)
 
 import config
 import questionnaires
-import supabase_client
 
 # Columns describing the session itself, before the questionnaire columns.
 SESSION_COLUMNS = [
@@ -63,9 +62,9 @@ def fetch_supabase(page_size=1000):
     Assumption: the service-role key is configured (config.SUPABASE_*). Fails
     loudly rather than returning a partial export.
     """
-    assert supabase_client.is_configured(), (
+    assert config.SUPABASE_URL and config.SUPABASE_SERVICE_KEY, (
         "Supabase is not configured; set STUDY_SUPABASE_URL and "
-        "STUDY_SUPABASE_SERVICE_KEY, or pass --source local.")
+        "STUDY_SUPABASE_SERVICE_KEY.")
     endpoint = "%s/rest/v1/%s" % (config.SUPABASE_URL.rstrip("/"), config.SUPABASE_TABLE)
     headers = {
         "apikey": config.SUPABASE_SERVICE_KEY,

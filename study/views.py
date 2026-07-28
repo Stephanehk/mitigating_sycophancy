@@ -1,72 +1,33 @@
-"""Server-to-client payloads for the sycophancy user study.
+"""The content bundle: every string and question the SPA renders.
 
-Two payloads, and that is the whole module:
+BUILD-TIME ONLY. Nothing imports this at run time — there is no application
+server. tools/build_static.py calls content_bundle() to emit
+static/content.json, which Amplify serves as a CDN-cached asset, and
+tools/generate_supabase_app_sql.py reads MAX_MANUAL_RETRIES.
 
-  content_bundle()  — every piece of study copy, every scenario, every
-                      questionnaire page, sent ONCE at session creation. The
-                      client then renders the entire flow without talking to the
-                      server again until it needs a generation.
+It stays a Python module rather than a hand-maintained JSON file so content.py,
+questionnaires.py and scenarios.py remain the single source of truth for the
+instrument.
 
-  response_state()  — the state of a session's generation job, polled while the
-                      loading screen is up.
-
-WHAT THIS GAVE UP. The old stage-scoped payload only ever sent the copy for the
-stage a participant had reached, so the debrief could not be read early. Sending
-the bundle up front loses that: the whole instrument is visible in devtools from
-the first page. That was judged an acceptable trade, because the guarantees that
-actually protect the DVs — the arm draw and the one-job-per-session rule — are
-enforced server-side and are NOT in this bundle. The arm is never sent to the
-client at all.
+WHAT THIS GAVE UP. The old server sent only the copy for the stage a
+participant had reached, so the debrief could not be read early. A static bundle
+loses that: the whole instrument is visible in devtools from the first page.
+Judged acceptable, because the guarantees that actually protect the DVs — the
+arm draw and one-job-per-session — are enforced inside Postgres and are not in
+this bundle. The arm is never sent to the client at all.
 """
 
 import config
 import content
 import questionnaires
 import scenarios
-import store
 
 #: How many times a participant may press "Try again" before the failure
 #: becomes permanent. Each retry already gets a full JOB_MAX_ATTEMPTS budget
 #: from the worker, so one manual retry is a second full round of attempts;
 #: past that the GPU is genuinely unavailable and looping wastes their time.
+#: Read by the SQL generator into study_config, where retry_response enforces it.
 MAX_MANUAL_RETRIES = 1
-
-
-def retry_exhausted(job):
-    """Whether this job has used up its manual "Try again" presses.
-
-    Reads `manual_retries`, which store.requeue_job increments and never resets,
-    because the row is reused and its status therefore cannot distinguish one
-    manual retry from two.
-    """
-    return job["manual_retries"] >= MAX_MANUAL_RETRIES
-
-
-def response_state(session_id):
-    """Client-facing view of a session's model response and its job.
-
-    Reaps expired jobs first, so a participant polling the loading screen is the
-    thing that drives lease recovery — no separate cron is needed for the
-    single-worker deployment this study uses.
-
-    Asserts a job exists: the client only polls after /api/response/start
-    returned, and that endpoint creates one.
-    """
-    store.reap_expired_jobs()
-    job = store.latest_job_for_session(session_id)
-    assert job is not None, "session %r polled for a response with no job" % (session_id,)
-
-    view = {
-        "job_id": job["job_id"],
-        "status": job["status"],
-        "poll_interval_ms": config.CLIENT_POLL_INTERVAL_MS,
-        "slow_notice_ms": config.CLIENT_SLOW_NOTICE_MS,
-    }
-    if job["status"] == "done":
-        view["text"] = job["response_text"]
-    if job["status"] == "failed":
-        view["can_retry"] = not retry_exhausted(job)
-    return view
 
 
 def content_bundle():

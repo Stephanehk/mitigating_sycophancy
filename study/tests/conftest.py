@@ -1,76 +1,130 @@
-"""Shared pytest fixtures for the study's HTTP-level tests.
+"""Shared fixtures. Everything that touches data now talks to the real database.
 
-Two fixtures:
+There is no application server and no local datastore to fake, so the tests that
+matter drive the actual Supabase RPCs with the actual keys. That is a deliberate
+change of testing strategy, not just a mechanical port.
 
-  client    — a FastAPI TestClient bound to a throwaway SQLite file.
-  submitted — the rows /api/submit would have sent to Supabase, captured in a
-              list instead of posted. Every test that walks to the end of the
-              study asserts against this, because it is now the ONLY place
-              participant answers land.
+WHY. The suite this replaces mocked the network and passed while production was
+broken — twice. `test_a_screened_out_participant_still_submits` asserted
+`arm is None` and passed, while a `not null` constraint would have rejected
+every screen-out. And the whole security model was only ever exercised with the
+service_role key, which bypasses RLS and grants, so the anon key could read the
+worker secret and nobody noticed. Mocks cannot catch either class of bug.
 
-`submitted` also redirects the durability fallback to a temp file, so the tests
-exercise the real supabase_client.submit path (local append, then post) without
-touching the repo's data/ directory or the network.
+Two clients, and which one a test uses is itself meaningful:
 
-The walk-the-flow helpers live in flow_helpers.py rather than here, because they
-are ordinary functions and importing them explicitly makes it obvious which
-module a test's scaffolding came from.
+  anon     the PUBLIC key, exactly what ships in the page and runs on the GPU
+           worker. Every participant-behaviour test uses this, so the tests
+           exercise the same permissions a real browser has.
+  service  privileged, bypasses RLS. Used ONLY to inspect what landed and to
+           clean up — never to perform an action under test, because doing so
+           would prove nothing about what a participant can actually do.
+
+Tests are skipped when credentials are absent, so the suite still runs offline;
+the parts that run offline are the ones that read source files (prompts, the
+client contract, the export).
 """
 
 import os
 import sys
-import tempfile
+import uuid
 
 import pytest
+import requests
 
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_TESTS_DIR))
-# So test modules can `from flow_helpers import ...` regardless of the cwd
-# pytest was invoked from.
 sys.path.insert(0, _TESTS_DIR)
 
 import config
-import store
-import supabase_client
+
+
+def supabase_configured():
+    return bool(config.SUPABASE_URL and config.SUPABASE_ANON_KEY
+                and config.SUPABASE_SERVICE_KEY)
+
+
+class Client:
+    """Minimal PostgREST client. `rpc` raises on failure; `try_rpc` does not."""
+
+    def __init__(self, key):
+        assert key, "no key"
+        self.base = config.SUPABASE_URL.rstrip("/") + "/rest/v1"
+        self.headers = {"apikey": key, "Authorization": "Bearer " + key,
+                        "Content-Type": "application/json"}
+
+    def try_rpc(self, name, args=None):
+        """The raw response, so a test can assert on a REFUSAL."""
+        return requests.post("%s/rpc/%s" % (self.base, name), headers=self.headers,
+                             json=args or {}, timeout=60)
+
+    def rpc(self, name, args=None):
+        response = self.try_rpc(name, args)
+        assert response.status_code in (200, 204), (
+            "%s -> %d %s" % (name, response.status_code, response.text[:400]))
+        return response.json() if response.text.strip() else None
+
+    def get(self, path):
+        response = requests.get(self.base + path, headers=self.headers, timeout=60)
+        assert response.status_code == 200, (
+            "GET %s -> %d %s" % (path, response.status_code, response.text[:400]))
+        return response.json()
+
+    def try_get(self, path):
+        return requests.get(self.base + path, headers=self.headers, timeout=60)
+
+    def delete(self, path):
+        requests.delete(self.base + path, headers=self.headers, timeout=60)
+
+
+@pytest.fixture(scope="session")
+def anon():
+    """The public key — what a participant's browser and the worker actually hold."""
+    if not supabase_configured():
+        pytest.skip("Supabase not configured")
+    return Client(config.SUPABASE_ANON_KEY)
+
+
+@pytest.fixture(scope="session")
+def service():
+    """Privileged. Inspection and cleanup only, never the action under test."""
+    if not supabase_configured():
+        pytest.skip("Supabase not configured")
+    return Client(config.SUPABASE_SERVICE_KEY)
+
+
+@pytest.fixture(scope="session")
+def worker_token():
+    if not os.path.exists(os.path.join(os.path.dirname(_TESTS_DIR), ".trial_token")):
+        pytest.skip("no .trial_token to authenticate a worker with")
+    with open(os.path.join(os.path.dirname(_TESTS_DIR), ".trial_token")) as handle:
+        return handle.read().strip()
 
 
 @pytest.fixture()
-def client(monkeypatch):
-    """A TestClient on a fresh temporary database, torn down afterwards."""
-    handle, path = tempfile.mkstemp(suffix=".db")
-    os.close(handle)
-    os.unlink(path)
-    monkeypatch.setattr(config, "DATABASE_URL", "sqlite:///" + path)
-    monkeypatch.setattr(config, "WORKER_POLL_SECONDS", 0.01)
-    store.init_db()
+def clean(service):
+    """Delete every row a test creates, identified by diffing session ids.
 
-    from fastapi.testclient import TestClient
-    import server
-    with TestClient(server.app) as test_client:
-        yield test_client
-    for suffix in ("", "-wal", "-shm"):
-        if os.path.exists(path + suffix):
-            os.unlink(path + suffix)
+    Ids are generated inside the code under test and cannot be predicted here,
+    so the fixture snapshots before and removes the difference afterwards. Jobs
+    and submissions cascade off the session's foreign key.
 
-
-@pytest.fixture()
-def submitted(monkeypatch, tmp_path):
-    """Capture rows destined for Supabase; returns the list they land in.
-
-    Patches only the HTTP call, so append_fallback still runs for real against a
-    temp file — that ordering (disk first, network second) is the durability
-    guarantee, and a test that stubbed out the whole of submit() would not
-    exercise it.
+    Runs even when a test fails, so a red suite cannot leave rows in the same
+    tables the real study writes to.
     """
-    rows = []
-    monkeypatch.setattr(config, "SUBMISSION_FALLBACK_PATH",
-                        str(tmp_path / "submissions.jsonl"))
-    monkeypatch.setattr(config, "SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setattr(config, "SUPABASE_SERVICE_KEY", "test-service-key")
+    before = {row["session_id"] for row in service.get("/study_sessions?select=session_id")}
+    subs_before = {row["session_id"] for row in
+                   service.get("/study_submissions?select=session_id")}
+    yield
+    for session_id in ({row["session_id"] for row in
+                        service.get("/study_submissions?select=session_id")} - subs_before):
+        service.delete("/study_submissions?session_id=eq.%s" % session_id)
+    for session_id in ({row["session_id"] for row in
+                        service.get("/study_sessions?select=session_id")} - before):
+        service.delete("/study_sessions?session_id=eq.%s" % session_id)
 
-    def fake_post(row):
-        rows.append(row)
-        return None
 
-    monkeypatch.setattr(supabase_client, "post_row", fake_post)
-    return rows
+@pytest.fixture()
+def tag():
+    """A unique marker for rows a test creates directly."""
+    return "test-" + uuid.uuid4().hex[:10]

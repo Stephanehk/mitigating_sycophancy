@@ -1,9 +1,13 @@
 """Self-contained GPU smoke test for the study's generation path.
 
-Runs the WHOLE live pipeline on one node with no external dependencies: starts
-the study server on localhost against a throwaway database, seeds one job per
-arm, runs the real worker against a real vLLM engine, then prints each arm's
-response and the per-stage breakdown.
+Runs the WHOLE live generation pipeline: seeds one job per arm straight into
+Supabase, runs the real worker against a real vLLM engine, then prints each
+arm's response and the per-stage breakdown.
+
+No study server is started, because there is no longer one to start — the queue
+is Postgres and the worker claims from it directly. Seeding uses the SERVICE
+key (this is an operator tool, not something deployed); the worker itself uses
+only the public anon key plus the worker token, exactly as in production.
 
 This exists because the pieces it covers are exactly the ones unit tests
 cannot: that the LoRA registers and is addressable by name, that the base and
@@ -11,20 +15,16 @@ adapter are genuinely different models at inference time, that the neutral
 arm's two-stage chain works against a real engine, and that a response comes
 back within the participant-facing timeouts.
 
-Everything is torn down on exit; the temporary database is deleted.
+Every row it creates is deleted on exit, including on failure.
 
 Usage (see smoke_test.sbatch for the SLURM wrapper):
     python study/worker/smoke_test.py --device cuda:0
 """
 
 import argparse
-import json
 import os
-import shutil
-import socket
 import subprocess
 import sys
-import tempfile
 import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -40,71 +40,77 @@ USER_TEXT = (
 )
 
 
-def free_port():
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    sock.close()
-    return port
-
-
-def wait_for_server(base_url, timeout=90):
-    """Block until the study server answers /api/health."""
+def _rest(path, method="GET", **kwargs):
+    """One PostgREST call with the SERVICE key. Operator-only, never deployed."""
     import requests
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            if requests.get(base_url + "/api/health", timeout=3).status_code == 200:
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-    raise AssertionError("study server did not come up at %s" % base_url)
-
-
-def seed_jobs(db_url):
-    """Insert one session + job per arm. Returns {arm: job_id}."""
     import config
-    config.DATABASE_URL = db_url
-    import store
+    assert config.SUPABASE_SERVICE_KEY, "STUDY_SUPABASE_SERVICE_KEY must be set"
+    url = config.SUPABASE_URL.rstrip("/") + "/rest/v1" + path
+    headers = {"apikey": config.SUPABASE_SERVICE_KEY,
+               "Authorization": "Bearer " + config.SUPABASE_SERVICE_KEY,
+               "Content-Type": "application/json"}
+    response = requests.request(method, url, headers=headers, timeout=30, **kwargs)
+    assert response.status_code in (200, 201, 204), (
+        "%s %s -> %d %s" % (method, path, response.status_code, response.text[:300]))
+    return response.json() if response.text.strip() else None
+
+
+def seed_jobs(tag):
+    """One pending job per arm, inserted straight into the queue.
+
+    Bypasses start_response deliberately: that RPC draws the arm at random, and
+    this test needs one job of EACH arm to compare them. `tag` scopes the rows
+    so cleanup cannot touch anything else.
+    """
+    import datetime
     import scenarios
     from prompts import ARMS, build_user_turn
 
     scenario = scenarios.get_scenario("exclusion")
-    # Same composition the server performs: the participant's own screening
-    # description of their incident, then their side of it. NOT the vignette —
-    # see prompts.build_user_turn.
+    # Same composition start_response performs: the participant's own screening
+    # description of their incident, then their side of it. NOT the vignette.
     own_description = ("I did not invite my brother to my birthday dinner because"
                        " I could only book a table for six.")
     user_text = build_user_turn(own_description, USER_TEXT)
+    deadline = (datetime.datetime.now(datetime.timezone.utc)
+                + datetime.timedelta(seconds=1800)).isoformat()
 
-    store.init_db()
     jobs = {}
     for arm in ARMS:
-        session_id, _token = store.create_session(["exclusion"], "smoke")
-        # `arm` is the only session column the seed needs to set. The stage,
-        # consent, eligibility, selected_scenario and perspective_text columns
-        # this used to write no longer exist: the browser owns the flow and
-        # posts its answers once at the end, so the session row is now just an
-        # anchor for the job. See schema.sql.
-        store.update_session(session_id, arm=arm)
-        jobs[arm] = store.create_job(session_id, arm, scenario["topic_title"], user_text)
+        session_id = "%s-%s" % (tag, arm)
+        _rest("/study_sessions", "POST", json={
+            "session_id": session_id, "session_token": session_id + "-tok",
+            "screening_order": ["exclusion"], "arm": arm, "user_agent": "smoke"})
+        job_id = "%s-job-%s" % (tag, arm)
+        _rest("/study_jobs", "POST", json={
+            "job_id": job_id, "session_id": session_id, "arm": arm,
+            "topic_title": scenario["topic_title"], "user_text": user_text,
+            "status": "pending", "deadline_at": deadline})
+        jobs[arm] = job_id
     return jobs
 
 
-def report(db_url, jobs):
-    """Print every arm's result and return True if all four succeeded."""
-    import config
-    config.DATABASE_URL = db_url
-    import store
+def cleanup(tag):
+    """Delete every row this run created. Jobs cascade off the session."""
+    for row in _rest("/study_sessions?session_id=like.%s*&select=session_id" % tag):
+        _rest("/study_sessions?session_id=eq.%s" % row["session_id"], "DELETE")
 
+
+def get_job(job_id):
+    """One job row from Supabase. `stages` is already parsed jsonb."""
+    rows = _rest("/study_jobs?job_id=eq.%s&select=*" % job_id)
+    return rows[0] if rows else None
+
+
+def report(jobs):
+    """Print every arm's result and return True if all four succeeded."""
     ok = True
     print("\n" + "=" * 78)
     print("SMOKE TEST RESULTS")
     print("=" * 78)
     for arm, job_id in jobs.items():
-        job = store.get_job(job_id)
-        stages = json.loads(job["stages_json"]) if job["stages_json"] else []
+        job = get_job(job_id)
+        stages = job["stages"] or []
         print("\n--- arm=%s  status=%s  attempts=%s  stages=%d"
               % (arm, job["status"], job["attempts"], len(stages)))
         if job["status"] != "done":
@@ -120,9 +126,9 @@ def report(db_url, jobs):
     print("\n" + "=" * 78)
     # The neutral arm is the only two-stage one; if its edit pass did not
     # actually change the text, the editing prompt is not doing its job.
-    neutral = store.get_job(jobs.get("neutral")) if "neutral" in jobs else None
-    if neutral and neutral["stages_json"]:
-        stages = json.loads(neutral["stages_json"])
+    neutral = get_job(jobs["neutral"]) if "neutral" in jobs else None
+    if neutral and neutral["stages"]:
+        stages = neutral["stages"]
         if len(stages) == 2:
             changed = stages[0]["output"] != stages[1]["output"]
             print("neutral edit pass changed the text: %s" % changed)
@@ -131,7 +137,7 @@ def report(db_url, jobs):
             print("neutral arm produced %d stages, expected 2" % len(stages))
 
     # ours vs untrained must not be byte-identical, or the LoRA is not applied.
-    ours, untrained = store.get_job(jobs["ours"]), store.get_job(jobs["untrained"])
+    ours, untrained = get_job(jobs["ours"]), get_job(jobs["untrained"])
     if ours["status"] == "done" and untrained["status"] == "done":
         distinct = ours["response_text"] != untrained["response_text"]
         print("ours != untrained (LoRA is being applied): %s" % distinct)
@@ -155,30 +161,20 @@ def main():
     parser.add_argument("--vllm-log", default=None)
     args = parser.parse_args()
 
-    workdir = tempfile.mkdtemp(prefix="syco_smoke_")
-    db_url = "sqlite:///" + os.path.join(workdir, "smoke.db")
-    port = free_port()
-    base_url = "http://127.0.0.1:%d" % port
-    token = "smoke-token-local"
+    import config
+    tag = "smoke-%d" % int(time.time())
+    token = os.environ.get("STUDY_WORKER_TOKEN", "").strip()
+    assert token, ("STUDY_WORKER_TOKEN must be set and match "
+                   "study_config.worker_token in Supabase")
+    assert config.SUPABASE_ANON_KEY, "STUDY_SUPABASE_ANON_KEY must be set (PUBLIC key)"
 
-    env = dict(os.environ)
-    env.update({"STUDY_DATABASE_URL": db_url, "STUDY_WORKER_TOKEN": token,
-                "STUDY_ENV": "development"})
-
-    print("workdir=%s" % workdir)
-    print("starting study server on %s" % base_url)
-    server = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "server:app", "--host", "127.0.0.1",
-         "--port", str(port), "--log-level", "warning"],
-        cwd=_STUDY_DIR, env=env)
+    print("tag=%s queue=%s" % (tag, config.SUPABASE_URL))
     try:
-        wait_for_server(base_url)
-        os.environ["STUDY_DATABASE_URL"] = db_url
-        jobs = seed_jobs(db_url)
-        print("seeded %d jobs: %s" % (len(jobs), ", ".join(jobs)))
+        jobs = seed_jobs(tag)
+        print("seeded %d jobs: %s" % (len(jobs), ", ".join(jobs.values())))
 
         cmd = [sys.executable, os.path.join(_HERE, "run_worker.py"),
-               "--server-url", base_url, "--device", args.device,
+               "--device", args.device,
                "--gpu-memory-utilization", str(args.gpu_memory_utilization),
                "--max-model-len", str(args.max_model_len),
                "--max-jobs", str(len(jobs)), "--backend", args.backend]
@@ -192,15 +188,16 @@ def main():
             cmd += ["--vllm-log", args.vllm_log]
 
         print("running worker: %s" % " ".join(cmd))
-        worker = subprocess.run(cmd, env=env)
+        worker = subprocess.run(cmd, env=dict(os.environ))
         print("worker exited with %d" % worker.returncode)
 
-        ok = report(db_url, jobs)
+        ok = report(jobs)
         return 0 if ok else 1
     finally:
-        server.terminate()
-        server.wait(timeout=30)
-        shutil.rmtree(workdir, ignore_errors=True)
+        # Runs even on failure: a smoke test must never leave rows behind in the
+        # same tables the real study writes to.
+        cleanup(tag)
+        print("cleaned up rows tagged %s" % tag)
 
 
 if __name__ == "__main__":
