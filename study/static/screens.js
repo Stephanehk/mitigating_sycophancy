@@ -58,9 +58,16 @@
       el('p', { className: 'help-text', text: S.content.prolific.help }),
       field,
       APP.navActions(APP.primaryButton('Continue', function () {
-        // Soft prompt, matching the source survey: a blank value is accepted so
-        // participants recruited outside Prolific can still finish.
-        S.data.prolific_pid = field.value.trim().slice(0, 200);
+        // REQUIRED. The source survey used Qualtrics' soft "request response"
+        // and accepted a blank, which meant a submission could arrive with no
+        // way to match it to a Prolific participant — unpayable and unusable.
+        var value = field.value.trim();
+        if (!value) {
+          APP.showError(S.content.prolific.required_error);
+          field.focus();
+          return;
+        }
+        S.data.prolific_pid = value.slice(0, 200);
         APP.advance();
       }))
     ]);

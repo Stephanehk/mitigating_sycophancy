@@ -92,6 +92,10 @@ PROLIFIC_ID_HELP = (
     "Please note that this response should auto-fill with the correct ID. "
     "If it's blank or incorrect, please fill it out."
 )
+# DEVIATION from the QSF, which used Qualtrics' soft "request response" and let
+# a blank through. A submission with no Prolific ID cannot be matched to a
+# participant, so it is neither payable nor usable — the field is now required.
+PROLIFIC_ID_REQUIRED_ERROR = "Please enter your Prolific ID to continue."
 
 
 # --- Prelude to the dilemmas (QID163) --------------------------------------

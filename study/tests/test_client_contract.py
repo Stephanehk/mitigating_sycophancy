@@ -78,6 +78,16 @@ def _find_function(tree, name):
     raise AssertionError("static/app.js has no function %r — did it get renamed?" % (name,))
 
 
+def _find_function_expression(tree, screen_name):
+    """The function assigned to APP.screens.<screen_name>."""
+    for node in _walk(tree):
+        if (node.type == "AssignmentExpression"
+                and node.left.type == "MemberExpression"
+                and getattr(node.left.property, "name", None) == screen_name):
+            return node.right
+    return None
+
+
 def _string_or_ident_names(nodes):
     """Every identifier name appearing anywhere inside `nodes`."""
     names = set()
@@ -618,3 +628,30 @@ def test_the_terminal_page_handles_a_missing_code():
         "empty box")
     assert "no_code_instruction" in finish, (
         "with no code, a decliner must be told what to do instead")
+
+
+def test_the_prolific_id_is_required(trees):
+    """A submission with no Prolific ID cannot be matched to a participant, so
+    it is neither payable nor usable.
+
+    The source survey used Qualtrics' soft "request response" and accepted a
+    blank; this does not. Enforced client-side, like every other required
+    answer — the server sees the payload only at the end, and rejecting a
+    finished session over it would be worse than the gap.
+    """
+    screen = _find_function_expression(trees["screens.js"], "prolific_id")
+    assert screen is not None, "no prolific_id screen"
+    # A guard clause that returns early on a blank value must exist.
+    returns = [n for n in _walk(screen)
+               if n.type == "ReturnStatement" and n.argument is None]
+    assert returns, "prolific_id advances unconditionally; the field is not required"
+    members = {n.property.name for n in _walk(screen)
+               if n.type == "MemberExpression" and not n.computed}
+    assert "required_error" in members, \
+        "no error message is shown when the field is left blank"
+
+
+def test_the_bundle_carries_the_prolific_required_message():
+    import views
+    assert views.content_bundle()["prolific"].get("required_error"), \
+        "the client needs a message to show when the ID is blank"

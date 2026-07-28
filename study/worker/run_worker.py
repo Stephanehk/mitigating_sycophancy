@@ -179,6 +179,18 @@ class VLLMBackend:
         return text
 
 
+def _fingerprint(system):
+    """First 8 hex of sha256, or None. Identifies WHICH system prompt was used.
+
+    Compare against prompts.BASE_SYSTEM_PROMPT / SYCO_SYSTEM_PROMPT /
+    NEUTRAL_* to audit after the fact that every arm got what it should have.
+    """
+    if system is None:
+        return None
+    import hashlib
+    return hashlib.sha256(system.encode("utf-8")).hexdigest()[:8]
+
+
 def run_job(backend, study, job):
     """Execute one job end to end and report the result.
 
@@ -209,6 +221,18 @@ def run_job(backend, study, job):
             "name": stage["name"],
             "model": backend.model_label(plan["adapter"]),
             "had_system_prompt": stage["system"] is not None,
+            # WHICH system prompt, not merely whether there was one. `model`
+            # separates `ours` from the rest, and the stage count separates
+            # `neutral` — but syco and untrained both address the base model
+            # with a system prompt, so without this there is nothing in the
+            # record proving syco actually received the sycophancy policy. It
+            # is the manipulated arm; "trust the code" is not good enough.
+            #
+            # A fingerprint rather than the text: the prompts are long, they are
+            # already in prompts.py, and this only has to answer "was it the
+            # right one?".
+            "system_sha8": _fingerprint(stage["system"]),
+            "system_chars": 0 if stage["system"] is None else len(stage["system"]),
             "input_chars": len(user_text),
             "output": output,
             "seconds": round(time.time() - started, 3),
