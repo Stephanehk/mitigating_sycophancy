@@ -152,28 +152,6 @@ PROLIFIC_SCREENOUT_CODE = _env("STUDY_PROLIFIC_SCREENOUT_CODE",
 REDIRECT_DELAY_SECONDS = _env_int("STUDY_REDIRECT_DELAY_SECONDS", 5)
 
 
-# --- Data minimisation -----------------------------------------------------
-# How long an unsubmitted session survives before it is deleted.
-#
-# study_submissions is written ONLY on submit, so the questionnaire answers
-# already follow "record nothing unless they finish". study_jobs.user_text does
-# not, and cannot: it is the participant's own account of a real incident, and
-# it has to reach Supabase because that is the only route to the GPU — next7 has
-# no inbound network path, so the worker polls outward. The text is therefore
-# unavoidable DURING a session and avoidable afterwards. This bounds afterwards.
-#
-# Deleting the session cascades to its job, which removes the story, the
-# generated reply and the per-stage outputs together.
-#
-# WHY 2 HOURS AND NOT MINUTES. The purge cannot distinguish "abandoned" from
-# "slow" — there is no last-activity timestamp — so it goes on created_at. A
-# full run is ~10 minutes; purging a participant who is merely reading carefully
-# would delete their session mid-study and dump them back to the consent page
-# having lost everything. 2h is far outside any plausible session while still
-# bounding retention. Lower it if you want, but not below about an hour.
-ABANDONED_PURGE_SECONDS = _env_int("STUDY_ABANDONED_PURGE_SECONDS", 7200)
-
-
 # --- Generation ------------------------------------------------------------
 
 BASE_MODEL_ID = _env("STUDY_BASE_MODEL_ID", "Qwen/Qwen3-8B")

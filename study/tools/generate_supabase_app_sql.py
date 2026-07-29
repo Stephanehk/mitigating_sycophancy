@@ -106,7 +106,6 @@ def emit_config():
         "max_manual_retries": views.MAX_MANUAL_RETRIES,
         "client_poll_interval_ms": config.CLIENT_POLL_INTERVAL_MS,
         "client_slow_notice_ms": config.CLIENT_SLOW_NOTICE_MS,
-        "abandoned_purge_seconds": config.ABANDONED_PURGE_SECONDS,
     }
     lines = ["-- Generated from config.py. Thresholds the RPCs enforce.",
              "create table if not exists public.study_config (",
@@ -184,52 +183,6 @@ $$;
 
 
 -- =========================================================================
--- Data minimisation
--- =========================================================================
-
--- Delete everything belonging to participants who never submitted.
---
--- WHY THIS IS NEEDED. study_submissions is only written on submit, so the
--- questionnaire answers already follow the "only on completion" rule. But
--- study_jobs.user_text does NOT: it is the participant's own account of a real
--- interpersonal incident, and it has to exist server-side from the moment they
--- press Confirm because the model cannot generate without it. Before this, a
--- participant who read the reply and closed the tab left that story behind
--- permanently. So did the model's response to it.
---
--- The text is unavoidable DURING the session. It is avoidable afterwards.
---
--- Jobs cascade off the session's foreign key, so deleting the session removes
--- the story, the generated reply and the per-stage outputs together.
---
--- SAFETY: only rows with submitted_at IS NULL, and only older than the
--- configured window (default 2 hours — far beyond any real session, so a
--- participant who is merely slow is never purged mid-study). A submitted
--- session is never touched.
-create or replace function public.purge_abandoned(p_older_than_seconds integer default null)
-returns integer
-language plpgsql security definer
-set search_path = public, pg_temp as $$
-declare
-    v_window integer := coalesce(p_older_than_seconds, cfg('abandoned_purge_seconds'));
-    v_deleted integer;
-begin
-    with gone as (
-        delete from public.study_sessions
-        where submitted_at is null
-          and created_at < now() - make_interval(secs => v_window)
-        returning 1
-    ) select count(*)::integer into v_deleted from gone;
-    return v_deleted;
-end;
-$$;
-
--- Supports the purge's predicate without scanning the table.
-create index if not exists idx_sessions_abandoned
-    on public.study_sessions (created_at) where submitted_at is null;
-
-
--- =========================================================================
 -- Participant RPCs  (anon key + session_token)
 -- =========================================================================
 
@@ -242,11 +195,6 @@ declare
     v_token text := replace(gen_random_uuid()::text, '-', '');
     v_order jsonb;
 begin
-    -- Self-maintaining cleanup: every new participant clears out abandoned
-    -- sessions older than the window. Cheap (partial index) and needs no cron,
-    -- which matters because there is no server to run one.
-    perform public.purge_abandoned(null);
-
     -- Randomized per participant, drawn here so the order is recorded even
     -- though the browser renders the pages.
     select jsonb_agg(key order by random()) into v_order from public.study_scenarios;
@@ -576,8 +524,6 @@ grant execute on function public.worker_fail(text, text, text, text) to anon, au
 -- Revoking per-name rather than "all functions in schema public" on purpose —
 -- the blanket form would also strip extension functions like gen_random_uuid().
 
-revoke execute on function public.purge_abandoned(integer) from public, anon, authenticated;
-grant execute on function public.purge_abandoned(integer) to service_role;
 revoke execute on function public.cfg(text) from public, anon, authenticated;
 revoke execute on function public.claim_job(text, integer) from public, anon, authenticated;
 revoke execute on function public.reap_expired_jobs(integer) from public, anon, authenticated;
