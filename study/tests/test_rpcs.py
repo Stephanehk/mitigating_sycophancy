@@ -65,10 +65,16 @@ def start(anon):
 
 
 def request_generation(anon, session, description=DESC, perspective=PERS):
+    """Confirm the review page and enqueue the generation.
+
+    start_response takes the FINISHED user turn, not the two halves — the
+    review page composes it in the browser so the participant's edit is what
+    gets sent. This mirrors what screens.js does.
+    """
     return anon.rpc("start_response", {
         "p_token": session["session_token"],
         "p_scenario_key": session["screening_order"][0],
-        "p_description": description, "p_perspective": perspective})
+        "p_user_text": description + "\n\n" + perspective})
 
 
 def finish_generation(anon, session, worker_token, text="the model reply",
@@ -260,15 +266,17 @@ def test_submitting_twice_stores_one_row(anon, service, worker_token, clean):
 # --- 4. Validation ---------------------------------------------------------
 
 @pytest.mark.parametrize("description,perspective,why", [
-    ("tiny", PERS, "description below the minimum"),
-    (DESC, "tiny", "perspective below the minimum"),
+    ("tiny", "also tiny", "combined text far below the floor"),
+    ("a", "b", "essentially empty"),
 ])
 def test_short_free_text_is_rejected(anon, clean, description, perspective, why):
+    """The floor is min_describe + min_perspective on the CONFIRMED text, so
+    editing on the review page cannot be used to get under the requirement."""
     session = start(anon)
     response = anon.try_rpc("start_response", {
         "p_token": session["session_token"],
         "p_scenario_key": session["screening_order"][0],
-        "p_description": description, "p_perspective": perspective})
+        "p_user_text": description + "\n\n" + perspective})
     assert response.status_code >= 400, why
 
 
@@ -276,7 +284,7 @@ def test_unknown_scenario_and_unknown_token_are_rejected(anon, clean):
     session = start(anon)
     assert anon.try_rpc("start_response", {
         "p_token": session["session_token"], "p_scenario_key": "not_a_scenario",
-        "p_description": DESC, "p_perspective": PERS}).status_code >= 400
+        "p_user_text": DESC + "\n\n" + PERS}).status_code >= 400
     assert anon.try_rpc("response_status",
                         {"p_token": "made-up"}).status_code >= 400
 

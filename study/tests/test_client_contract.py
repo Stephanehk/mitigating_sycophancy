@@ -744,3 +744,71 @@ def test_the_ai_disclaimer_is_gone_everywhere():
     for name in ("screens.js", "app.js"):
         source = open(os.path.join(_STATIC, name), encoding="utf-8").read()
         assert "dv_banner" not in source, "%s still renders the disclaimer" % name
+
+
+def test_the_no_paste_notice_appears_wherever_the_clipboard_is_blocked(trees):
+    """Notice and blocking must live together in the widget.
+
+    Putting the notice on each page instead would let the two drift: a new
+    free-text box would silently get the blocking without the warning, or a
+    page would claim a restriction that had been lifted.
+    """
+    area = _find_function(trees["widgets.js"], "textArea")
+    called = {getattr(n.callee, "name", None) for n in _walk(area)
+              if n.type == "CallExpression"}
+    assert "blockClipboard" in called, "textArea no longer blocks the clipboard"
+    members = {n.property.name for n in _walk(area)
+               if n.type == "MemberExpression" and not n.computed}
+    assert "clipboardNotice" in members, \
+        "textArea blocks the clipboard but shows no notice"
+
+    source = open(os.path.join(_STATIC, "app.js"), encoding="utf-8").read()
+    assert "clipboardNotice = S.content.no_paste_notice" in source, \
+        "nothing supplies the notice text from the content bundle"
+
+    import views
+    assert views.content_bundle()["no_paste_notice"], \
+        "the bundle carries no notice text, so nothing would render"
+
+    css = open(os.path.join(_STATIC, "styles.css"), encoding="utf-8").read()
+    assert ".no-paste-notice" in css, "the notice has no styling"
+
+
+def test_the_client_passes_the_arguments_each_rpc_actually_declares(trees):
+    """Client call sites must match the SQL function signatures.
+
+    This is the check that was missing when start_response changed from
+    (token, scenario, description, perspective) to (token, scenario, user_text):
+    the client was updated, the tests still called the old shape, and the suite
+    stayed green while the two had diverged. Nothing else compares them.
+    """
+    sql = open(os.path.join(os.path.dirname(_STATIC), "supabase_app_schema.sql"),
+               encoding="utf-8").read()
+    declared = {}
+    for match in re.finditer(
+            r"create or replace function public\.(\w+)\(([^)]*)\)\s*\nreturns", sql):
+        params = {p.strip().split()[0] for p in match.group(2).split(",") if p.strip()}
+        declared[match.group(1)] = params
+
+    for name, tree in trees.items():
+        for node in _walk(tree):
+            if node.type != "CallExpression" or len(node.arguments) < 2:
+                continue
+            callee = node.callee
+            fn = getattr(callee, "name", None)
+            if fn is None and callee.type == "MemberExpression":
+                fn = getattr(callee.property, "name", None)
+            if fn != "rpc" or node.arguments[0].type != "Literal":
+                continue
+            rpc_name = node.arguments[0].value
+            if rpc_name not in declared:
+                continue  # covered by the grants test
+            if node.arguments[1].type != "ObjectExpression":
+                continue
+            passed = {p.key.name if p.key.type == "Identifier" else p.key.value
+                      for p in node.arguments[1].properties}
+            unknown = passed - declared[rpc_name]
+            assert not unknown, (
+                "%s calls %s with %s, which the SQL function does not declare "
+                "(declares %s)" % (name, rpc_name, sorted(unknown),
+                                   sorted(declared[rpc_name])))

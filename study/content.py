@@ -97,6 +97,11 @@ PROLIFIC_ID_HELP = (
 # participant, so it is neither payable nor usable — the field is now required.
 PROLIFIC_ID_REQUIRED_ERROR = "Please enter your Prolific ID to continue."
 
+# Shown above every free-text box, which all block the clipboard. Sits with the
+# widget rather than each page so the notice cannot drift out of sync with where
+# the blocking is actually applied.
+NO_PASTE_NOTICE = "We do not allow copy/paste"
+
 
 # --- Prelude to the dilemmas (QID163) --------------------------------------
 

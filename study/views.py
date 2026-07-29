@@ -119,5 +119,6 @@ def content_bundle():
         "code_label": content.CODE_LABEL,
         "code_instruction": content.CODE_INSTRUCTION,
         "no_code_instruction": content.DECLINE_INSTRUCTION,
+        "no_paste_notice": content.NO_PASTE_NOTICE,
         "max_text_chars": config.MAX_TEXT_CHARS,
     }

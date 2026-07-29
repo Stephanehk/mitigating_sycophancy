@@ -415,6 +415,9 @@
         S.supabaseKey = conf.supabase_anon_key;
         S.content = loaded[1];
         S.content.redirect_delay_seconds = conf.redirect_delay_seconds;
+        // Handed to the widget layer once, so every free-text box carries the
+        // notice without each call site having to remember to pass it.
+        window.W.clipboardNotice = S.content.no_paste_notice;
         buildSpine();
 
         var stored = window.localStorage.getItem(TOKEN_KEY);

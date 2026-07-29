@@ -512,7 +512,18 @@
 
     area.addEventListener('input', update);
     update();
-    return { node: el('div', {}, [area, counter]), field: area };
+
+    /* The notice sits with the widget, not with each page, so it can only ever
+     * appear where blockClipboard was actually applied — the two cannot drift
+     * apart. `W.clipboardNotice` is set once at boot from the content bundle,
+     * keeping the wording in content.py with the rest of the copy. */
+    var children = [];
+    if (window.W.clipboardNotice) {
+      children.push(el('div', { className: 'no-paste-notice',
+                                text: window.W.clipboardNotice }));
+    }
+    children.push(area, counter);
+    return { node: el('div', {}, children), field: area };
   }
 
   window.W = {
