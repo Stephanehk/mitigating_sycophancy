@@ -88,10 +88,9 @@ CONSENT_CHOICES = [
 # --- Prolific ID (QID142) --------------------------------------------------
 
 PROLIFIC_ID_QUESTION = "What is your Prolific ID?"
-PROLIFIC_ID_HELP = (
-    "Please note that this response should auto-fill with the correct ID. "
-    "If it's blank or incorrect, please fill it out."
-)
+# The QSF's help line ("this response should auto-fill with the correct ID...")
+# was REMOVED on request, 2026-07-31. The field still pre-fills from the
+# PROLIFIC_PID URL parameter; it just no longer says so.
 # DEVIATION from the QSF, which used Qualtrics' soft "request response" and let
 # a blank through. A submission with no Prolific ID cannot be matched to a
 # participant, so it is neither payable nor usable — the field is now required.

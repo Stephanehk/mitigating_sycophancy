@@ -55,7 +55,6 @@
     field.value = S.data.prolific_pid || APP.prolificFromUrl() || '';
     APP.mount([
       el('h1', { html: S.content.prolific.question }),
-      el('p', { className: 'help-text', text: S.content.prolific.help }),
       field,
       APP.navActions(APP.primaryButton('Continue', function () {
         // REQUIRED. The source survey used Qualtrics' soft "request response"

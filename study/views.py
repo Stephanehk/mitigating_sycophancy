@@ -48,7 +48,6 @@ def content_bundle():
         },
         "prolific": {
             "question": content.PROLIFIC_ID_QUESTION,
-            "help": content.PROLIFIC_ID_HELP,
             "required_error": content.PROLIFIC_ID_REQUIRED_ERROR,
         },
         "prelude": content.PRELUDE,
