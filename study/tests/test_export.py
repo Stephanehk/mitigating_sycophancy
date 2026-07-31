@@ -29,6 +29,9 @@ def make_submission(session_id="s1", **overrides):
     row = {
         "session_id": session_id,
         "arm": "ours",
+        # Present and false on a real row: the arm was drawn, not forced by a
+        # /debug_<key> link.
+        "is_debug": False,
         "job_id": "j1",
         "topic_title": "Excluding Someone",
         "user_text": "their story\n\ntheir side",
@@ -200,3 +203,34 @@ def test_the_written_csv_round_trips(tmp_path):
 def test_write_csv_refuses_a_row_carrying_an_undeclared_column(tmp_path):
     with pytest.raises(ValueError):
         export_responses.write_csv(str(tmp_path / "x.csv"), ["a"], [{"a": 1, "b": 2}])
+
+
+# --- Hand-walked sessions --------------------------------------------------
+
+def test_forced_arm_sessions_are_dropped_by_default():
+    """A /debug_<key> session chose its own arm, so it is not a participant.
+
+    This filter is what makes the debug links safe to leave unsecured: whatever
+    gets walked through them is quarantined rather than counted in a cell.
+    """
+    rows = [make_submission("real", is_debug=False),
+            make_submission("hand", is_debug=True, arm="ours_noreview")]
+    kept, dropped = export_responses.drop_debug_sessions(rows)
+    assert [row["session_id"] for row in kept] == ["real"]
+    assert dropped == 1
+
+
+def test_rows_without_the_flag_are_kept():
+    """The fallback JSONL predates the column, and those rows are participants."""
+    rows = [make_submission("old")]
+    del rows[0]["is_debug"]
+    kept, dropped = export_responses.drop_debug_sessions(rows)
+    assert len(kept) == 1 and dropped == 0
+
+
+def test_the_flag_is_exported_as_a_column():
+    """Kept or dropped, an analysis must be able to see which rows were forced."""
+    columns, rows = export_responses.build_participant_rows(
+        [make_submission("hand", is_debug=True)])
+    assert "is_debug" in columns
+    assert rows[0]["is_debug"] is True

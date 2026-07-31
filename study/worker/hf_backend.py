@@ -18,7 +18,7 @@ same `load_llama` loader, same `build_chat_input` chat-template call, same
 That eval is where our adapter's reported numbers come from, so matching it
 is what makes the study's `ours` arm the same model behaviour we measured.
 
-Base vs adapter. One PeftModel serves all four arms: `ours` runs with the
+Base vs adapter. One PeftModel serves every arm: `ours` runs with the
 adapter active, and the base arms run inside `model.disable_adapter()`, which
 is PEFT's exact analogue of addressing the base model name on a vLLM engine.
 No second model is loaded and no weights are swapped per request.
@@ -54,7 +54,7 @@ class NonFiniteLogitsGuard:
     A device-side assert is unrecoverable: it poisons the whole CUDA context,
     so every later call in the process fails instantly and an in-process retry
     is impossible. (That is exactly what happened on the first HF smoke run —
-    one bad generation took the worker down for all four arms.) So instead of
+    one bad generation took the worker down for every arm.) So instead of
     recovering after the fact, this replaces non-finite entries BEFORE the
     sampler sees them, keeping the context clean.
 

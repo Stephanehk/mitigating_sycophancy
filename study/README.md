@@ -3,7 +3,7 @@
 A self-contained web study adapted from `syco_label_mitigations_-_Copy_for_stephane.qsf`.
 Participants are screened onto an interpersonal dilemma they have personally
 experienced, write their side of the story, are shown **one** AI response
-generated live by one of four randomly assigned model arms, and then answer the
+generated live by one of six randomly assigned arms, and then answer the
 source survey's reflection battery about that response.
 
 Everything — the app, the GPU worker, the tests, and the analysis export —
@@ -16,7 +16,7 @@ lives in this directory.
 | | Source `.qsf` | This study |
 |---|---|---|
 | Interaction | 8-turn chat with gpt-4o | **One** response, no follow-up |
-| Randomized factor | 4-way sycophancy *label* (3 banners + unlabeled) | 4-way **model arm** |
+| Randomized factor | 4-way sycophancy *label* (3 banners + unlabeled) | 6-way **arm**: 4 model arms + 2 no-review variants |
 | Disclaimer | Varied by condition | **Fixed** for everyone: *"Note: This chatbot is AI, not human."* |
 | Demographics (age/gender/race) | Present | **Removed** |
 | Debrief | Two variants (syco / non-syco) | **One shared** debrief |
@@ -38,9 +38,18 @@ prolific_id ─▶ prelude ─▶ screening (4 scenarios, random order, one per 
               ┌──────────────┴───────────── no "Very similar" ──▶ screened_out ──▶ Prolific
               │ first "Very similar" selects the scenario
               ▼
-        perspective ─▶ response_intro ─▶ response (loading ─▶ reply)
-                            │  the arm is drawn HERE, server-side, at job
-                            │  creation — so screen-outs consume no arm slot
+        perspective ─▶ response_intro ─┬─▶ review_input ─▶ response (loading ─▶ reply)
+                            │          │      4 review arms: the composed text is
+                            │          │      shown and can be edited before Confirm
+                            │          └─▶ response
+                            │                 2 no-review arms: the same text is sent
+                            │                 without being shown
+                            │
+                            │  the arm is drawn HERE, server-side, on the
+                            │  response_flow call — so screen-outs consume no
+                            │  arm slot. The browser is told ONE bit of it
+                            │  (`show_review`), because a page that is not
+                            │  rendered cannot be hidden from it
               ▼
    dv_felt_understood_trust ─▶ dv_objectivity_quality ─▶ dv_rightorwrong
        ─▶ dv_repair ─▶ dv_return_likelihood ─▶ attention_check
@@ -48,7 +57,7 @@ prolific_id ─▶ prelude ─▶ screening (4 scenarios, random order, one per 
 ```
 
 **The browser owns this state machine.** `static/app.js` walks the pages
-locally; the server is contacted three times in the whole study (see §3).
+locally; the database is contacted four times in the whole study (see §3).
 
 ---
 
@@ -92,14 +101,94 @@ the response page, not that people wandered off.
 
 | Fact | Where | Why it cannot move to the browser |
 |---|---|---|
-| **model arm** | drawn in `/api/response/start`, stored on the session, **never sent to the client** | a client-side draw could be re-rolled from devtools until the participant got the arm they wanted |
+| **model arm** | drawn in `response_flow` (or `start_response`, whichever comes first), stored on the session, **never sent to the client** | a client-side draw could be re-rolled from devtools until the participant got the arm they wanted |
+| **a forced arm** | `start_session(p_debug_condition => 'c1')`, from a `/debug_c1` link; stamps `is_debug` on the session | the one sanctioned override, for walking a flow condition by hand — see below |
+| **which flow** | derived from the arm inside `response_flow`, which returns the single boolean `show_review` | this one bit *is* visible — see below |
 | **one job per session** | `/api/response/start` is idempotent | otherwise the response could be regenerated until they liked it |
 | `user_text`, `shown_response`, `stages` | read off the job row at submit | the client's copy is display-only; the merged row uses the server's |
 | screening order | drawn at session creation | so the randomization is recorded even though the client renders the pages |
 
-`tests/test_server.py::test_a_client_cannot_forge_its_arm` and
+`tests/test_rpcs.py::test_a_client_cannot_forge_its_arm_or_response` and
 `tests/test_views.py::test_the_bundle_never_carries_the_arm_or_any_prompt`
 pin the first row of that table.
+
+#### The one bit that does leak, and why it has to
+
+Two of the six arms remove the review-and-edit page. A page that is not
+rendered cannot be hidden from the browser, so `response_flow` returns
+`show_review` — one boolean that splits the six arms into an observable 4 and 2.
+Stated plainly:
+
+- **What it does not give up.** Which of the four, or which of the two, is still
+  unknowable client-side. The draw is sticky (`session_arm` only writes while
+  `arm is null`), so pressing Continue again cannot re-roll it, and
+  `start_response` reuses the same draw rather than making its own.
+  `tests/test_rpcs.py` pins all three.
+- **What it does.** Someone who cleared `localStorage` and restarted the study
+  could re-roll until they landed in the group they preferred — possible before,
+  but not *observable* before. There is no design that both removes a visible
+  page and hides that it was removed.
+- **Fail-safe direction.** `S.showReview` is `null` until the call answers, and
+  only an explicit `false` drops the page, so a failed or skipped call shows the
+  review page rather than silently removing it from an arm that should have had
+  one.
+
+#### Walking a condition by hand
+
+Two links enter the study with the condition **forced** instead of drawn:
+
+| Link | Condition | Arm |
+|---|---|---|
+| `https://<host>/debug_c1` | C1 | `ours_noreview` |
+| `https://<host>/debug_c2` | C2 | `untrained_noreview` |
+
+They exist because a flow manipulation is the one kind of arm you cannot check by
+hand under random assignment: the no-review arms are 2 of 6, so seeing that page
+disappear otherwise means clearing `localStorage` and restarting until the coin
+lands. Both walk the identical no-review flow — only the model behind the
+response differs — so either link is enough to review the *flow*.
+
+How it works, and what keeps it contained:
+
+- `static/debug_c1/index.html` is a **real generated file** (from
+  `prompts.DEBUG_CONDITIONS`, by `tools/build_static.py`), not a route. Amplify's
+  rewrite rules live in the console rather than in `amplify.yml`, so a path that
+  needed an SPA rewrite would 404 on a fresh app. It bounces to `/?debug=c1`,
+  which the app also accepts directly.
+- The browser forwards the **key**, never an arm name. `start_session` maps
+  `c1 → ours_noreview` in SQL (generated, so it cannot drift from `prompts.py`)
+  and sets the arm at session creation; `session_arm` is sticky, so the same rule
+  that stops a re-roll is what makes the forced arm hold. An unknown key is
+  **refused**, not quietly randomized.
+- Every such session is stamped **`is_debug`** on both `study_sessions` and
+  `study_submissions`, and `analysis/export_responses.py` **drops those rows by
+  default** (`--include-debug` keeps them, and the count is always printed). That
+  filter — not secrecy — is what protects the dataset, which is why the links
+  need no token: a participant who found one would produce a quarantined row, not
+  a corrupted cell.
+- A debug session starts **fresh**: the arm is decided once, at creation, so a
+  debug link cannot retrofit itself onto a session in progress, and reopening the
+  real study afterwards does not continue inside the debug one. Both directions
+  clear `localStorage`.
+- A red **DEBUG** banner sits above every page of such a session, so it cannot be
+  mistaken for the study a participant sees.
+
+Requires the current `supabase_app_schema.sql` to be applied (the links call the
+two-argument `start_session`):
+
+```bash
+$PY tools/generate_supabase_app_sql.py > supabase_app_schema.sql   # already committed
+cat supabase_app_schema.sql          # paste into the Supabase SQL editor and run
+```
+
+Until it is, the debug links fail loudly with *"Could not find the function
+`public.start_session`"* — and nothing else changes, because a participant's
+`start_session` call does not send the new argument at all.
+
+`tests/test_rpcs.py` §2c pins the forcing, the flag, the refusal of an unknown
+key, and that an ordinary session is never flagged;
+`tests/test_client_contract.py` §10 pins that an entry page exists for every
+declared condition and that no arm name reaches the browser.
 
 ### Back navigation
 
@@ -124,8 +213,11 @@ The client is load-bearing and no test executes it, so
 `tests/test_client_contract.py` parses `app.js`, `screens.js` and `widgets.js`
 with `esprima` and asserts the couplings that would otherwise break silently:
 
-- every endpoint the client calls exists on the server, and it calls exactly
-  five — a sixth means a page turn regressed into a round trip;
+- every RPC the client calls is granted to `anon`, and it calls exactly six —
+  a seventh means a page turn regressed into a round trip;
+- both flows open the one-way door through the *same* `startGeneration()` /
+  `composeModelInput()` pair, so a no-review arm cannot drift from its twin on
+  what is actually sent to the model;
 - `widgets.js` makes no network calls at all;
 - the payload `freshData()` builds has exactly the fields
   `flow.validate_submission` reads, in both directions;
@@ -139,18 +231,39 @@ relevant check fails.
 
 ---
 
-## 2. The four arms
+## 2. The six arms
 
-All four run on **one** vLLM engine: Qwen3-8B loaded once, with our LoRA
+All of them run on **one** vLLM engine: Qwen3-8B loaded once, with our LoRA
 registered as a hot-swappable named adapter. An arm is selected purely by which
 model name the request addresses.
 
-| Arm | Model addressed | System prompt | Stages |
-|---|---|---|---|
-| `ours` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 |
-| `untrained` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 |
-| `syco` | `Qwen/Qwen3-8B` | shared `[ETHICS]` + `[SYCOPHANCY POLICY]` | 1 |
-| `neutral` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 2 (generate → neutrality edit) |
+| Arm | Model addressed | System prompt | Stages | Review page |
+|---|---|---|---|---|
+| `ours` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 | yes |
+| `untrained` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 | yes |
+| `syco` | `Qwen/Qwen3-8B` | shared `[ETHICS]` + `[SYCOPHANCY POLICY]` | 1 | yes |
+| `neutral` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 2 (generate → neutrality edit) | yes |
+| `ours_noreview` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 | **no** |
+| `untrained_noreview` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 | **no** |
+
+### The last two manipulate the flow, not the model (added 2026-07-30)
+
+`ours_noreview` and `untrained_noreview` generate **identically** to `ours` and
+`untrained` — `build_generation_plan` maps each onto its twin's plan rather than
+restating it, so a prompt change cannot apply to one and not the other, and
+`test_prompts.py` asserts the two plans are equal. What differs is one page:
+their participants are never shown the concatenation of their two answers and
+never get to edit it. The browser composes the same string with the same
+`composeModelInput()` and sends it straight to `start_response`.
+
+So `ours` vs `ours_noreview` isolates the review-and-edit step alone, and
+likewise for `untrained`. It is not a full factorial — `syco` and `neutral` have
+no no-review counterpart — so the review factor is estimable only within those
+two model conditions.
+
+For the GPU this means four distinct generations, not six:
+`prompts.GENERATION_ARMS` drops the flow-only duplicates, and the smoke test
+walks that instead of `ARMS`.
 
 `ours` uses `runs/dpo_lora_oeq_qwen3-8b_P6_voice2_rpo0p5` (Qwen3-8B, r=16,
 α=32). `worker/vllm_server.py` asserts the adapter's declared base matches the
@@ -159,7 +272,7 @@ loaded onto the 8B engine by mistake.
 
 ### The shared system prompt (changed 2026-07-27)
 
-All four arms now receive the **same** system prompt: the source survey's
+Every arm receives the **same** system prompt: the source survey's
 `[ETHICS]` section and nothing else (112 chars).
 
 ```
@@ -183,7 +296,7 @@ What this buys and what it costs:
   comparison is now a one-section contrast rather than "prompted vs bare".
 - **The length confound is gone.** "Keep your answer to no more than 100 words"
   lived in `[TONE AND FORMATTING]`, and was what made `syco`/`neutral` run
-  200–400 chars against the bare arms' ~2300 (see §6.1). All four arms are now
+  200–400 chars against the bare arms' ~2300 (see §6.1). Every arm is now
   unconstrained. `shown_response_chars` is still exported.
 - **`neutral` Stage 1 is now byte-identical to `untrained`**, so neutral-vs-
   untrained isolates the editing pass alone — a cleaner contrast than before.
@@ -229,7 +342,7 @@ string the model received. The two source texts are separately preserved as
 `screening.csv:description` and `participants.csv:perspective_text`.
 
 Participant text never enters a system prompt; `test_prompts.py` asserts this
-for all four arms.
+for every arm.
 
 The neutral arm's **pre-edit Stage 1 text is preserved** in
 `generations.csv:stage1_output`, so the editing pass can itself be analysed.
@@ -245,11 +358,11 @@ works. So the GPU never accepts a connection — it makes them.
 ```
   Prolific participant                          ┌──────────────┐
           │                                     │   Supabase   │
-          │  1. POST /api/session               │ submissions  │
-          │     (token + ALL study copy)        └──────▲───────┘
-          │  2. POST /api/response/start               │
-          │     GET  /api/response/status  (poll)      │ 3. one row per
-          │  3. POST /api/submit  ── the whole study ──┘    completed session
+          │  1. rpc start_session               │ submissions  │
+          │  2. rpc response_flow  (review?)    └──────▲───────┘
+          │  3. rpc start_response                     │
+          │     rpc response_status  (poll)            │ 4. one row per
+          │  4. rpc submit_study ── the whole study ───┘    completed session
           ▼
   ┌───────────────────────┐        jobs table
   │  Study server         │◀──────────────────────┐
@@ -269,15 +382,16 @@ works. So the GPU never accepts a connection — it makes them.
   └───────────────────────────────────────────────────────┘
 ```
 
-Every page turn other than the three numbered participant calls is local to the
+Every page turn other than the numbered participant calls is local to the
 browser and costs no HTTP at all.
 
-**Request lifecycle.** The participant presses Continue on the disclaimer page →
-the client posts their two free-text answers → the server inserts a `pending`
-job → the worker's in-flight long poll returns it within ~1s → the worker
-generates locally → posts the text back → the participant's next 1.2s status
-poll renders it. Typical end-to-end latency is one generation (plus a second one
-for `neutral`).
+**Request lifecycle.** The participant presses Continue on the response-intro
+page → the client asks `response_flow` which flow this arm walks → it posts the
+composed text, either straight away (no-review arms) or after the participant
+confirms it on the review page → the database inserts a `pending` job → the
+worker's next poll returns it → the worker generates locally → posts the text
+back → the participant's next 1.2s status poll renders it. Typical end-to-end
+latency is one generation (plus a second one for `neutral`).
 
 **Why pull for the GPU, and why push for the data.** The cluster has no inbound
 route, so the worker must dial out. Supabase is the opposite: the study server
@@ -366,7 +480,7 @@ match to `eval_endorsement_heldout.py`, which is the parity target for the
 cd /next/u/stephhk/sycophancy/study
 PY=/next/u/stephhk/miniconda3/envs/llm/bin/python
 
-$PY -m pytest tests/ -q                      # 141 tests
+$PY -m pytest tests/ -q                      # 155 tests
 $PY -m uvicorn server:app --reload --port 8000
 ```
 
@@ -536,6 +650,7 @@ is single-threaded, so a slow generation blocks every job behind it. That cap
 $PY analysis/export_responses.py --out-dir data/export            # from Supabase
 $PY analysis/export_responses.py --source local                   # from the fallback JSONL
 $PY analysis/export_responses.py --eligible-only                  # drop screen-outs/decliners
+$PY analysis/export_responses.py --include-debug                  # keep hand-walked sessions
 ```
 
 Writes three tidy CSVs:
@@ -548,19 +663,24 @@ Writes three tidy CSVs:
 - **`generations.csv`** — one row per generation, including per-stage outputs
   (the neutral arm's pre-edit Stage 1 text is `stage1_output`).
 
-Four things worth knowing:
+Five things worth knowing:
 
-1. **Completers only.** Abandoners are not in Supabase and cannot be exported.
+1. **Hand-walked sessions are dropped by default.** Anyone who entered through
+   `/debug_c1` or `/debug_c2` had their arm *forced*, so counting them would bias
+   whichever cell they landed in. They carry `is_debug = true`, the export removes
+   them unless you pass `--include-debug`, and the number dropped is printed every
+   run — the column is in `participants.csv` either way.
+2. **Completers only.** Abandoners are not in Supabase and cannot be exported.
    Screen-outs and decliners *are* — they reached a terminal page. See §1b.
-2. **Raw codes are QSF choice ids, which are not always scale positions.**
+3. **Raw codes are QSF choice ids, which are not always scale positions.**
    `response_objectivity`, `response_quality` and `rightorwrong` skip ids in the
    source survey (objectivity's top point is stored as `8`, not `7`). The raw id
    is exported for comparability with the original study's data, and a parallel
    `*_point` column gives the 1..7 position for analysis.
-3. **Nothing is ever imputed.** An unanswered item is an empty cell. The column
+4. **Nothing is ever imputed.** An unanswered item is an empty cell. The column
    set is derived from `questionnaires.py`, not from what happens to be in the
    data, so a missing item shows up as an empty column rather than vanishing.
-4. **`n_missing_answers` should always be 0.** Every question is required and
+5. **`n_missing_answers` should always be 0.** Every question is required and
    the client blocks Continue, so a non-zero value is a client bug worth
    investigating — not missing data to impute around. The specific keys are in
    the row's `missing_keys`.
@@ -572,17 +692,19 @@ submission exactly as received, before validation, as a backstop.
 
 ## 6. GPU smoke test — PASSED
 
-One self-contained sbatch runs the entire live path: it starts its own study
-server on localhost, seeds one job per arm, runs the real worker against a real
-model, and prints all four responses. Nothing outside the node is required.
+One self-contained sbatch runs the entire live path: it seeds one job per
+*generation* arm (`prompts.GENERATION_ARMS` — the two no-review arms are
+flow-only duplicates and would re-test the same code path), runs the real worker
+against a real model, and prints all four responses. Nothing outside the node is
+required.
 
 ```bash
 sbatch study/worker/smoke_test_hf.sbatch    # 2x a4000, HF backend  (VERIFIED)
 sbatch study/worker/smoke_test.sbatch       # 1x a6000, vLLM backend (not yet run)
 ```
 
-**Result on next6, 2x a4000, job 16363116 — OVERALL: PASS.** All four arms
-generated on the first attempt:
+**Result on next6, 2x a4000, job 16363116 — OVERALL: PASS.** All four
+generation arms produced a response on the first attempt:
 
 | arm | model addressed | system | stages | time | chars |
 |---|---|---|---|---|---|
@@ -599,7 +721,8 @@ applied) and the neutral arm's edit pass changed the text.
 > "no more than 100 words" instruction, and `ours`/`untrained` ran with
 > `system=None`. The per-arm times and char counts are therefore no longer
 > current — re-run `smoke_test_hf.sbatch` for fresh numbers. The structural
-> results it establishes still hold: all four arms generate, `ours != untrained`,
+> results it establishes still hold: all four generation arms work,
+> `ours != untrained`,
 > and the neutral edit pass changes the text.
 
 ### Two things this surfaced that you should decide on
@@ -608,8 +731,8 @@ applied) and the neutral arm's edit pass changed the text.
 the run above the bare arms produced ~2300 characters and the prompted arms
 200-400, because the syco/neutral prompts carried a "no more than 100 words"
 instruction and the bare arms had no length instruction at all. Removing
-`[TONE AND FORMATTING - IMPORTANT]` (§2) deletes that instruction, so all four
-arms are now unconstrained and should land in the same range. **Re-measure
+`[TONE AND FORMATTING - IMPORTANT]` (§2) deletes that instruction, so every
+arm is now unconstrained and should land in the same range. **Re-measure
 before trusting this** — it is a prediction, not an observation. `ours` and
 `untrained` also emitted markdown headers and numbered lists where the prompted
 arms emitted conversational prose; that difference came from the tone section
@@ -650,11 +773,14 @@ text is your call, not mine.
    comparability with the source instrument.
 4. **Consent describes "talking with a chatbot"**, which now overstates the
    interaction.
-5. **One text I did change:** the pre-response line, from *"You're going to chat
-   with an AI chatbot about the dilemma you shared"* to *"You're going to see a
-   response from an AI chatbot…"*, since "chat with" would have actively misled.
+5. **Two texts I did change:** the pre-response line, from *"You're going to
+   chat with an AI chatbot about the dilemma you shared"* to *"You're going to
+   see a response from an AI chatbot…"*, since "chat with" would have actively
+   misled; and the perspective question, from *"your perspective on the
+   situation"* to *"your perspective on **your** situation"* (italicised), at
+   your request on 2026-07-30.
 6. **The shared debrief is newly written** (`content.py: DEBRIEF`), merged from
-   the source's two variants so it is accurate for all four arms without
+   the source's two variants so it is accurate for every arm without
    revealing which one the participant saw. Please read it.
 7. **Screening free-text is now conditional** on a Very/Somewhat answer rather
    than required unconditionally.
@@ -676,7 +802,7 @@ study/
 ├── content.py            All participant-facing prose, lifted from the .qsf
 ├── questionnaires.py     Scale definitions (DVs, attention check, AI use, Big Five)
 ├── scenarios.py          The four dilemmas + similarity options
-├── prompts.py            The four arms; shared [ETHICS] prompt + composed user turn
+├── prompts.py            The six arms; shared [ETHICS] prompt + composed user turn
 ├── flow.py               Randomization + submission validation (pure logic, no I/O)
 ├── views.py              The one-shot content bundle + the response state
 ├── store.py              The only module that speaks SQL — job queue ONLY
@@ -688,7 +814,9 @@ study/
 │   ├── widgets.js           DOM builders (Likert grids, scales, textareas)
 │   ├── app.js               THE FLOW: state, stage machine, persistence,
 │   │                        transport. Exposes window.APP — see §1b
-│   └── screens.js           One renderer per page; calls APP.start()
+│   ├── screens.js           One renderer per page; calls APP.start()
+│   └── debug_c1/, debug_c2/ GENERATED entry pages that force a condition
+│                            instead of drawing one — see §1b
 ├── worker/
 │   ├── vllm_server.py       Engine launch + LoRA registration + adapter validation
 │   ├── run_worker.py        The polling loop
@@ -696,7 +824,7 @@ study/
 ├── analysis/
 │   ├── export_responses.py  Supabase (or local JSONL) → three tidy CSVs
 │   └── backfill_supabase.py Replay rows that only reached disk
-└── tests/                141 tests. conftest.py holds the TestClient fixture and
+└── tests/                155 tests. conftest.py holds the TestClient fixture and
                           the `submitted` fixture that captures Supabase writes;
                           flow_helpers.py builds the payload a browser would;
                           test_client_contract.py parses app.js to catch

@@ -23,7 +23,19 @@ create table if not exists public.study_submissions (
     -- (they reached the end of their path, and the screening funnel is a
     -- reportable result) but never reached a generation, so they have no arm.
     -- This was `not null` and would have rejected every one of them.
-    arm               text check (arm in ('ours', 'untrained', 'syco', 'neutral')),
+    --
+    -- NO INLINE CHECK on the arm values: that list lives in prompts.py and is
+    -- emitted into supabase_app_schema.sql, which re-asserts the constraint on
+    -- every run. See the note in supabase_queue_schema.sql — a hardcoded list
+    -- here silently outlived a change to prompts.py once already.
+    arm               text,
+    -- True when the arm was FORCED by a /debug_<key> link rather than drawn, i.e.
+    -- this row is a researcher walking a condition by hand and not a
+    -- participant. analysis/export_responses.py drops these by default.
+    --
+    -- Declared here for a FRESH install; supabase_app_schema.sql emits an
+    -- `add column if not exists` for databases this file already created.
+    is_debug          boolean not null default false,
     job_id            text,
     topic_title       text,
     -- Exactly the string the model received (prompts.build_user_turn output).

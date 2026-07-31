@@ -1,4 +1,4 @@
-"""Tests for the four arms' prompt construction.
+"""Tests for the six arms' prompt construction.
 
 The arm definitions are the study's independent variable, so the properties
 that make the manipulation valid are asserted here rather than trusted:
@@ -7,6 +7,8 @@ that make the manipulation valid are asserted here rather than trusted:
   - the removed sections ([ROLE], [CONTEXT], [GUIDING PRINCIPLES],
     [TONE AND FORMATTING - IMPORTANT], [TOPIC]) are gone from every arm
   - `ours` and `untrained` differ ONLY in which model is addressed
+  - the two no-review arms differ from their twins ONLY in the flow — their
+    generation plans are byte-identical, so the pair isolates the review step
   - the user turn is the scenario vignette plus the participant's perspective
   - no participant text ever lands in a system prompt
 """
@@ -230,5 +232,98 @@ def test_unknown_arm_and_empty_user_text_are_rejected():
 
 def test_arms_tuple_matches_the_declared_constants():
     assert set(prompts.ARMS) == {prompts.ARM_OURS, prompts.ARM_UNTRAINED,
-                                 prompts.ARM_SYCO, prompts.ARM_NEUTRAL}
-    assert len(prompts.ARMS) == 4
+                                 prompts.ARM_SYCO, prompts.ARM_NEUTRAL,
+                                 prompts.ARM_OURS_NOREVIEW,
+                                 prompts.ARM_UNTRAINED_NOREVIEW}
+    assert len(prompts.ARMS) == 6
+    assert len(set(prompts.ARMS)) == 6, "an arm name is duplicated"
+
+
+# --- The no-review arms ----------------------------------------------------
+# These manipulate the participant's FLOW, not the model. Everything below
+# exists to keep that true: the moment a no-review arm's generation diverges
+# from its twin's, the pair stops isolating the review step.
+
+@pytest.mark.parametrize("noreview,twin", [
+    (prompts.ARM_OURS_NOREVIEW, prompts.ARM_OURS),
+    (prompts.ARM_UNTRAINED_NOREVIEW, prompts.ARM_UNTRAINED),
+])
+def test_a_noreview_arm_generates_exactly_like_its_twin(noreview, twin):
+    plan = prompts.build_generation_plan(noreview, USER_TEXT)
+    twin_plan = prompts.build_generation_plan(twin, USER_TEXT)
+    assert plan["stages"] == twin_plan["stages"]
+    assert plan["adapter"] == twin_plan["adapter"]
+    # ...and it still reports itself, or the worker's stage record and the
+    # exported `arm` column would attribute it to the wrong condition.
+    assert plan["arm"] == noreview
+
+
+def test_ours_noreview_addresses_the_lora_and_untrained_noreview_does_not():
+    """The half of the pair that is NOT flow: one still gets the adapter."""
+    assert prompts.build_generation_plan(
+        prompts.ARM_OURS_NOREVIEW, USER_TEXT)["adapter"] == "lora"
+    assert prompts.build_generation_plan(
+        prompts.ARM_UNTRAINED_NOREVIEW, USER_TEXT)["adapter"] is None
+
+
+def test_exactly_the_two_noreview_arms_skip_the_review_page():
+    assert set(prompts.SKIP_REVIEW_ARMS) == {prompts.ARM_OURS_NOREVIEW,
+                                             prompts.ARM_UNTRAINED_NOREVIEW}
+    for arm in prompts.ARMS:
+        assert prompts.shows_review(arm) is (arm not in prompts.SKIP_REVIEW_ARMS)
+    assert prompts.shows_review(prompts.ARM_OURS) is True
+    assert prompts.shows_review(prompts.ARM_OURS_NOREVIEW) is False
+
+
+def test_shows_review_rejects_an_unknown_arm():
+    """No silent default: a new arm must declare which flow it walks."""
+    with pytest.raises(AssertionError):
+        prompts.shows_review("not_an_arm")
+
+
+def test_generation_arms_drop_the_flow_only_duplicates():
+    """What the smoke test walks: every distinct generation, each once."""
+    assert set(prompts.GENERATION_ARMS) == set(prompts.ARMS) - set(prompts.SKIP_REVIEW_ARMS)
+    # Distinct in what is actually sent: the model addressed AND the stages.
+    # `ours` and `untrained` share their stages and differ only in the adapter.
+    plans = []
+    for arm in prompts.GENERATION_ARMS:
+        plan = prompts.build_generation_plan(arm, USER_TEXT)
+        signature = (plan["adapter"], plan["stages"])
+        assert signature not in plans, "%s duplicates another generation arm" % (arm,)
+        plans.append(signature)
+
+
+# --- Manual-entry conditions (the /debug_<key> links) ----------------------
+
+def test_every_flow_arm_has_a_manual_entry_condition():
+    """The invariant the links exist for.
+
+    A flow manipulation is the one kind of arm you cannot check by hand under
+    random assignment — you would restart the study until the coin landed. So
+    every arm in SKIP_REVIEW_ARMS must be reachable by key, and nothing else
+    needs to be: the model arms differ in what the model writes, which the smoke
+    test verifies far better than clicking through does.
+    """
+    assert set(prompts.DEBUG_CONDITIONS.values()) == set(prompts.SKIP_REVIEW_ARMS)
+    assert prompts.DEBUG_CONDITIONS["c1"] == prompts.ARM_OURS_NOREVIEW
+    assert prompts.DEBUG_CONDITIONS["c2"] == prompts.ARM_UNTRAINED_NOREVIEW
+
+
+def test_every_manual_entry_condition_names_a_real_arm():
+    """A key that mapped to nothing would 'work' and force no condition."""
+    for key, arm in prompts.DEBUG_CONDITIONS.items():
+        assert arm in prompts.ARMS, "condition %r maps to unknown arm %r" % (key, arm)
+
+
+def test_manual_entry_keys_are_url_and_path_safe():
+    """Each key becomes a URL segment (/debug_<key>) and a directory name under
+    static/, so anything else would produce a link that cannot be served."""
+    for key in prompts.DEBUG_CONDITIONS:
+        assert key and key.replace("_", "").isalnum() and key.lower() == key, key
+
+
+def test_no_two_conditions_point_at_the_same_arm():
+    """Two links to one condition is a mislabelled link waiting to happen."""
+    arms = list(prompts.DEBUG_CONDITIONS.values())
+    assert len(set(arms)) == len(arms), arms

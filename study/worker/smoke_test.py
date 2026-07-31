@@ -56,15 +56,20 @@ def _rest(path, method="GET", **kwargs):
 
 
 def seed_jobs(tag):
-    """One pending job per arm, inserted straight into the queue.
+    """One pending job per GENERATION arm, inserted straight into the queue.
 
     Bypasses start_response deliberately: that RPC draws the arm at random, and
     this test needs one job of EACH arm to compare them. `tag` scopes the rows
     so cleanup cannot touch anything else.
+
+    GENERATION_ARMS, not ARMS: the two no-review arms are flow-only variants
+    whose generation plans are byte-identical to `ours` and `untrained`
+    (test_prompts.py pins that), so generating for them would spend two GPU
+    minutes re-testing the same code path.
     """
     import datetime
     import scenarios
-    from prompts import ARMS, build_user_turn
+    from prompts import GENERATION_ARMS, build_user_turn
 
     scenario = scenarios.get_scenario("exclusion")
     # Same composition start_response performs: the participant's own screening
@@ -76,7 +81,7 @@ def seed_jobs(tag):
                 + datetime.timedelta(seconds=1800)).isoformat()
 
     jobs = {}
-    for arm in ARMS:
+    for arm in GENERATION_ARMS:
         session_id = "%s-%s" % (tag, arm)
         _rest("/study_sessions", "POST", json={
             "session_id": session_id, "session_token": session_id + "-tok",
@@ -103,7 +108,7 @@ def get_job(job_id):
 
 
 def report(jobs):
-    """Print every arm's result and return True if all four succeeded."""
+    """Print every seeded arm's result and return True if all of them succeeded."""
     ok = True
     print("\n" + "=" * 78)
     print("SMOKE TEST RESULTS")

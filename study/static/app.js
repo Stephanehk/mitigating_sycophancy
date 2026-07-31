@@ -12,11 +12,13 @@
  * nothing but the DOM.
  *
  * THERE IS NO APPLICATION SERVER. The page is static (Amplify) and every call
- * goes straight to a Supabase RPC. A participant makes exactly three:
+ * goes straight to a Supabase RPC. A participant makes exactly four:
  *   1. start_session   — token and randomized scenario order.
- *   2. start_response  — the two free-text answers that are the model's input;
- *                        then response_status polls until the reply is ready.
- *   3. submit_study    — the whole study, once, at the terminal page.
+ *   2. response_flow   — whether this arm walks the review-and-edit page. One
+ *                        bit; the arm itself is still never sent (see below).
+ *   3. start_response  — the confirmed model input; then response_status polls
+ *                        until the reply is ready.
+ *   4. submit_study    — the whole study, once, at the terminal page.
  * The copy itself is a static asset (static/content.json), not a fetch, so it
  * is CDN-cached rather than re-sent per session.
  *
@@ -26,12 +28,24 @@
  * declined — all submit, so anyone who reaches the end of their path is
  * recorded even if that path was short.
  *
- * WHAT THE DATABASE STILL DECIDES: the model arm (drawn inside start_response
- * and never returned) and the one-job-per-session rule. Neither can be
- * influenced from this file, which is the point — otherwise the condition could
- * be re-rolled from devtools. The anon key in static/config.json is public and
- * powerless on its own: RLS blocks every table, and each RPC authenticates its
- * own caller.
+ * WHAT THE DATABASE STILL DECIDES: the model arm (drawn inside response_flow /
+ * start_response and never returned) and the one-job-per-session rule. Neither
+ * can be influenced from this file, which is the point — otherwise the
+ * condition could be re-rolled from devtools. The anon key in
+ * static/config.json is public and powerless on its own: RLS blocks every
+ * table, and each RPC authenticates its own caller.
+ *
+ * THE ONE EXCEPTION IS A DEBUG LINK. `/debug_c1` and `/debug_c2` (see
+ * debugConditionFromUrl) pass a condition KEY to start_session, which sets the
+ * arm instead of drawing it — because a flow manipulation cannot be checked by
+ * hand under random assignment. Every such session is stamped `is_debug` in the
+ * database and dropped from the export, so the escape hatch cannot reach the
+ * dataset; that is what makes it safe to leave unsecured.
+ *
+ * The ONE thing the database now tells this file about the arm is `show_review`
+ * — two of the six arms drop the review-and-edit page, and a page that is not
+ * rendered cannot be hidden from the browser. It is a single bit that separates
+ * four arms from two; which arm inside either group is still unknowable here.
  *
  * Resilience:
  *   - Session token AND the answer payload live in localStorage, so a refresh
@@ -73,6 +87,13 @@
     screeningIndex: 0,
     hasJob: false,
     submitted: false,
+    // null until response_flow answers. true = this arm sees the review page,
+    // false = its input goes to the model without being shown. The flag, not
+    // the arm: see the header note.
+    showReview: null,
+    // The debug condition key this session was started with ('c1', 'c2'), or
+    // null for a real participant. See debugConditionFromUrl().
+    debugCondition: null,
     // The text confirmed on the review page. NOT part of the submitted payload:
     // the job row already stores it as `user_text`, and whether the participant
     // edited is derivable by comparing that against their description and
@@ -103,14 +124,34 @@
 
   /* The linear spine. Built once the content bundle arrives, because the
    * questionnaire pages come from questionnaires.py rather than being hardcoded
-   * here — that module stays the single source of truth for the instrument. */
+   * here — that module stays the single source of truth for the instrument.
+   *
+   * `review_input` is on it for everyone UNTIL response_flow says otherwise:
+   * S.showReview is null before that call, and only an explicit false drops the
+   * page. So a failed or missing flow call degrades to showing the review page
+   * rather than silently skipping it for an arm that should have had it. */
   var SPINE = [];
+
+  /* The stage the two no-review arms drop. Named so the one place that removes
+   * it is greppable, the way BACK_LOCK_STAGE is. */
+  var REVIEW_STAGE = 'review_input';
 
   function buildSpine() {
     SPINE = ['consent', 'prolific_id', 'prelude', 'screening', 'perspective',
              'response_intro', 'review_input', 'response']
+      .filter(function (stage) {
+        return stage !== REVIEW_STAGE || S.showReview !== false;
+      })
       .concat(S.content.questionnaire_pages.map(function (page) { return page.page; }))
       .concat(['debrief', 'additional_thoughts', 'complete']);
+  }
+
+  /* Record which flow this participant walks and rebuild the spine around it.
+   * Called from the response_intro screen with response_flow's answer. */
+  function setShowReview(showReview) {
+    S.showReview = !!showReview;
+    buildSpine();
+    save();
   }
 
   var TERMINAL = ['complete', 'screened_out', 'declined'];
@@ -190,6 +231,8 @@
       screeningOrder: S.screeningOrder,
       screeningIndex: S.screeningIndex,
       hasJob: S.hasJob,
+      showReview: S.showReview,
+      debugCondition: S.debugCondition,
       modelInput: S.modelInput,
       shownResponse: S.shownResponse,
       data: S.data
@@ -208,6 +251,10 @@
     S.screeningOrder = parsed.screeningOrder;
     S.screeningIndex = parsed.screeningIndex || 0;
     S.hasJob = !!parsed.hasJob;
+    // Tri-state, so `null` (never asked) survives a refresh as null rather than
+    // collapsing to false and dropping the review page for a review arm.
+    S.showReview = typeof parsed.showReview === 'boolean' ? parsed.showReview : null;
+    S.debugCondition = parsed.debugCondition || null;
     S.modelInput = parsed.modelInput || null;
     S.shownResponse = parsed.shownResponse || null;
     S.data = parsed.data;
@@ -376,6 +423,45 @@
     return params.get('PROLIFIC_PID') || params.get('prolific_pid') || '';
   }
 
+  /* The condition key a /debug_<key> link is asking for, or null.
+   *
+   * FOR WALKING A CONDITION BY HAND, not for participants. Two of the six arms
+   * remove a page, and random assignment is exactly what you cannot work around
+   * when you need to SEE that: otherwise you restart the study until the coin
+   * lands. start_session turns the key into an arm and flags the session, so
+   * these sessions are quarantined from the export (see prompts.py).
+   *
+   * TWO SPELLINGS, ON PURPOSE. `/debug_c1` is the link you type: Amplify serves
+   * it from static/debug_c1/index.html (emitted by tools/build_static.py), which
+   * bounces to `/?debug=c1` — so the app stays one deployment with one set of
+   * relative asset paths. The pathname form is read as well, so the same link
+   * keeps working if the site ever gains an SPA rewrite that hands /debug_c1
+   * straight to index.html.
+   *
+   * THE KEY IS ALL THIS FILE LEARNS. It is passed through untranslated; the
+   * key → arm mapping lives in the database, so the browser still has no name
+   * for any condition. An unknown key is rejected there rather than silently
+   * becoming a normal randomized session. */
+  function debugConditionFromUrl() {
+    var fromQuery = new URLSearchParams(window.location.search).get('debug');
+    if (fromQuery) { return fromQuery; }
+    var match = /(?:^|\/)debug_([A-Za-z0-9_]+)\/?$/.exec(window.location.pathname);
+    return match ? match[1] : null;
+  }
+
+  /* A debug session must look like one. It is flagged in the database and
+   * dropped from the export either way, but the person walking it needs to know
+   * they are not looking at the real study — and anyone who stumbles onto the
+   * link must not mistake it for one. Sits outside #root, so it survives every
+   * re-render. */
+  function showDebugBanner(condition) {
+    document.body.insertBefore(
+      el('div', { className: 'debug-banner',
+                  text: 'DEBUG — condition ' + condition + '. This session is '
+                        + 'flagged and excluded from analysis.' }),
+      document.body.firstChild);
+  }
+
   function restart() {
     clearStorage();
     window.location.reload();
@@ -420,14 +506,41 @@
         window.W.clipboardNotice = S.content.no_paste_notice;
         buildSpine();
 
+        var debugCondition = debugConditionFromUrl();
+        if (debugCondition) { showDebugBanner(debugCondition); }
+
         var stored = window.localStorage.getItem(TOKEN_KEY);
-        if (stored && restore()) {
+        if (stored && restore() && S.debugCondition === debugCondition) {
           S.token = stored;
+          // Again, AFTER restore: a resumed session may already know it skips
+          // the review page, and the spine built above assumed it does not.
+          buildSpine();
           setStage(S.stage);
           return null;
         }
-        return rpc('start_session', { p_user_agent: window.navigator.userAgent })
+
+        /* Either there was nothing to resume, or what is stored belongs to a
+         * different condition than this URL asks for. Both directions matter: a
+         * debug link cannot retrofit itself onto an existing session (the arm is
+         * decided once, at creation), and opening the study proper afterwards
+         * must not carry on inside a debug one. */
+        clearStorage();
+        var args = { p_user_agent: window.navigator.userAgent };
+        // Sent ONLY when there is one. Passing it unconditionally would make
+        // every participant's first call depend on the two-argument
+        // start_session being deployed, so a database that had not been
+        // re-generated would break the study rather than just these links.
+        if (debugCondition) { args.p_debug_condition = debugCondition; }
+        return rpc('start_session', args)
           .then(function (session) {
+            // The database is the only thing that can honour the request, so it
+            // is the only thing worth believing about it. Failing here beats
+            // walking a flow that quietly came from a random draw.
+            if (debugCondition && session.is_debug !== true) {
+              throw { kind: 'network',
+                      message: 'The server did not accept the debug condition "'
+                               + debugCondition + '".' };
+            }
             S.token = session.session_token;
             S.sessionId = session.session_id;
             S.screeningOrder = session.screening_order;
@@ -436,6 +549,9 @@
             S.stage = 'consent';
             S.screeningIndex = 0;
             S.hasJob = false;
+            S.showReview = null;
+            S.debugCondition = debugCondition;
+            S.modelInput = null;
             S.shownResponse = null;
             setStage(S.stage);
           });
@@ -451,6 +567,7 @@
     rpc: rpc,
     advance: advance,
     setStage: setStage,
+    setShowReview: setShowReview,
     save: save,
     clearStorage: clearStorage,
     restart: restart,

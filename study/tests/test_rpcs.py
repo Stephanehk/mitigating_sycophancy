@@ -12,6 +12,10 @@ landed and to clean up.
 Organised by what could actually go wrong:
   1. the happy path, end to end
   2. randomization — the arm and the screening order
+  2b. the flow fork — which arms show the review-and-edit page, and the fact
+      that asking is the only thing the browser learns about its arm
+  2c. the /debug_<key> links — the one sanctioned way to choose an arm, and the
+      flag that keeps a hand-walked session out of the dataset
   3. the two integrity rules: the arm is unforgeable, one job per session
   4. validation, and the deliberate difference between "reject" and "record"
   5. the queue under concurrency
@@ -30,7 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import questionnaires
 import scenarios
-from prompts import ARMS
+from prompts import ARMS, DEBUG_CONDITIONS, SKIP_REVIEW_ARMS
 
 DESC = "I did not invite my sibling to my birthday party because I only had six seats."
 PERS = "My side is that the table was genuinely too small and I meant no slight by it."
@@ -62,6 +66,16 @@ def payload(session, **overrides):
 
 def start(anon):
     return anon.rpc("start_session", {"p_user_agent": "pytest"})
+
+
+def ask_flow(anon, session):
+    """What the browser asks on the response_intro page: review page or not?"""
+    return anon.rpc("response_flow", {"p_token": session["session_token"]})
+
+
+def arm_of(service, session):
+    return service.get("/study_sessions?session_id=eq.%s&select=arm"
+                       % session["session_id"])[0]["arm"]
 
 
 def request_generation(anon, session, description=DESC, perspective=PERS):
@@ -176,16 +190,187 @@ def test_screening_order_is_a_permutation_and_varies(anon, service, clean):
 
 
 def test_every_arm_is_reachable(anon, service, worker_token, clean):
+    # 60 draws for 6 arms: missing one has probability 6*(5/6)^60 ≈ 1e-4, so a
+    # failure here means an arm is genuinely unreachable, not bad luck.
     drawn = set()
-    for _ in range(30):
+    for _ in range(60):
         session = start(anon)
         request_generation(anon, session)
-        row = service.get("/study_sessions?session_id=eq.%s&select=arm"
-                          % session["session_id"])[0]
-        drawn.add(row["arm"])
+        drawn.add(arm_of(service, session))
         if drawn == set(ARMS):
             break
-    assert drawn == set(ARMS), "only drew %s in 30 sessions" % sorted(drawn)
+    assert drawn == set(ARMS), "only drew %s in 60 sessions" % sorted(drawn)
+
+
+# --- 2b. The flow fork: which arms show the review page --------------------
+
+def test_the_flow_answer_matches_the_arm_that_was_drawn(anon, service, clean):
+    """The whole contract of response_flow, checked against the arm it drew.
+
+    Two of the six arms drop the review-and-edit page. Loops until both answers
+    have been observed, so this cannot pass by only ever seeing `true`.
+    """
+    seen = set()
+    for _ in range(60):
+        session = start(anon)
+        flow = ask_flow(anon, session)
+        arm = arm_of(service, session)
+        assert arm is not None, "response_flow returned without drawing an arm"
+        assert flow["show_review"] is (arm not in SKIP_REVIEW_ARMS), (
+            "arm %s got show_review=%s" % (arm, flow["show_review"]))
+        seen.add(flow["show_review"])
+        if seen == {True, False}:
+            break
+    assert seen == {True, False}, "only ever saw show_review=%s" % sorted(seen)
+
+
+def test_the_flow_call_leaks_nothing_but_the_bit(anon, clean):
+    """It is the one call that tells the browser anything about its arm, so what
+    it does NOT contain is the property worth pinning."""
+    session = start(anon)
+    flow = ask_flow(anon, session)
+    assert set(flow) == {"show_review"}, sorted(flow)
+    body = json.dumps(flow)
+    for arm in ARMS:
+        assert arm not in body, "arm %r leaked to the client" % arm
+
+
+def test_the_flow_is_sticky_and_cannot_be_re_rolled(anon, service, clean):
+    """The integrity rule the new call could have broken: a participant who
+    presses Continue repeatedly must not be redrawing their condition."""
+    session = start(anon)
+    first = ask_flow(anon, session)
+    arm = arm_of(service, session)
+    for _ in range(8):
+        assert ask_flow(anon, session) == first
+        assert arm_of(service, session) == arm
+
+
+def test_the_arm_the_flow_drew_is_the_arm_the_job_gets(anon, service, clean):
+    """start_response must reuse the draw rather than making its own."""
+    session = start(anon)
+    ask_flow(anon, session)
+    arm = arm_of(service, session)
+    request_generation(anon, session)
+    assert arm_of(service, session) == arm
+    job = service.get("/study_jobs?session_id=eq.%s&select=arm"
+                      % session["session_id"])[0]
+    assert job["arm"] == arm
+
+
+def test_asking_the_flow_creates_no_job(anon, service, clean):
+    """It runs one page before the generation; someone who stops there must not
+    leave a job for the worker to burn a GPU on."""
+    session = start(anon)
+    ask_flow(anon, session)
+    assert service.get("/study_jobs?session_id=eq.%s&select=job_id"
+                       % session["session_id"]) == []
+
+
+def test_a_client_that_never_asks_the_flow_still_gets_an_arm(anon, service, clean):
+    """A tampered or stale client can skip response_flow. start_response must
+    still draw, or the job would carry a null arm."""
+    session = start(anon)
+    request_generation(anon, session)
+    assert arm_of(service, session) in set(ARMS)
+
+
+def test_the_flow_rejects_an_unknown_token(anon, clean):
+    assert anon.try_rpc("response_flow", {"p_token": "made-up"}).status_code >= 400
+
+
+# --- 2c. Walking a condition by hand (the /debug_<key> links) --------------
+# The one sanctioned way to choose an arm. It exists because the flow arms are
+# the only ones a person can verify by looking, and random assignment is exactly
+# what stops you looking. Everything here is about the trade being contained:
+# the arm is forced, the session is FLAGGED, and nothing else changes.
+
+def test_a_debug_link_forces_exactly_the_condition_it_names(anon, service, clean):
+    """The whole point: no restarting the study until the coin lands."""
+    for key, expected in DEBUG_CONDITIONS.items():
+        session = anon.rpc("start_session", {"p_user_agent": "pytest",
+                                             "p_debug_condition": key})
+        assert session["is_debug"] is True
+        assert arm_of(service, session) == expected, (
+            "condition %r did not force %r" % (key, expected))
+
+
+def test_a_debug_session_walks_the_flow_its_arm_implies(anon, service, clean):
+    """Forcing the arm is only useful if response_flow then agrees with it —
+    otherwise the page under test is still decided by the draw."""
+    for key, arm in DEBUG_CONDITIONS.items():
+        session = anon.rpc("start_session", {"p_user_agent": "pytest",
+                                             "p_debug_condition": key})
+        flow = ask_flow(anon, session)
+        assert flow["show_review"] is (arm not in SKIP_REVIEW_ARMS)
+        assert arm_of(service, session) == arm, "asking the flow re-rolled a forced arm"
+
+
+def test_a_forced_arm_survives_to_the_submission_row_with_its_flag(
+        anon, service, worker_token, clean):
+    """The containment guarantee, end to end. A hand-walked session must be
+    identifiable in the exported data, or it counts as a participant in whichever
+    cell it landed in — which is worse than the arm being forced in the first
+    place."""
+    key, arm = sorted(DEBUG_CONDITIONS.items())[0]
+    session = anon.rpc("start_session", {"p_user_agent": "pytest",
+                                         "p_debug_condition": key})
+    request_generation(anon, session)
+    finish_generation(anon, session, worker_token, text="A generated reply.")
+    anon.rpc("submit_study", {"p_token": session["session_token"],
+                              "p_payload": payload(session)})
+    row = service.get("/study_submissions?session_id=eq.%s&select=arm,is_debug"
+                      % session["session_id"])[0]
+    assert row["arm"] == arm
+    assert row["is_debug"] is True, "a forced arm reached the dataset unflagged"
+
+
+def test_a_real_participant_is_never_flagged(anon, service, worker_token, clean):
+    """The flag has to be a real discriminator: if an ordinary session set it,
+    the export's default filter would throw away the study."""
+    session = start(anon)
+    assert session["is_debug"] is False
+    request_generation(anon, session)
+    finish_generation(anon, session, worker_token)
+    anon.rpc("submit_study", {"p_token": session["session_token"],
+                              "p_payload": payload(session)})
+    assert service.get("/study_sessions?session_id=eq.%s&select=is_debug"
+                       % session["session_id"])[0]["is_debug"] is False
+    assert service.get("/study_submissions?session_id=eq.%s&select=is_debug"
+                       % session["session_id"])[0]["is_debug"] is False
+
+
+def test_a_debug_link_still_never_returns_the_arm(anon, clean):
+    """It tells the browser THAT the condition was honoured, not which one it is.
+    The key came from the URL; the arm name must stay in the database."""
+    session = anon.rpc("start_session", {"p_user_agent": "pytest",
+                                         "p_debug_condition": "c1"})
+    body = json.dumps(session)
+    for arm in ARMS:
+        assert arm not in body, "arm %r leaked to the client" % (arm,)
+
+
+def test_an_unknown_condition_is_refused_rather_than_randomized(anon, clean):
+    """A mistyped link must fail loudly. Falling back to a normal draw would let
+    someone believe they had seen a condition they never saw."""
+    for bad in ("c9", "ours", "", "ours_noreview"):
+        response = anon.try_rpc("start_session", {"p_user_agent": "pytest",
+                                                  "p_debug_condition": bad})
+        if bad == "":
+            # Empty is the absence of a condition, not a bad one: a plain visit
+            # with a stray `?debug=` must still start a normal session.
+            assert response.status_code == 200 and response.json()["is_debug"] is False
+        else:
+            assert response.status_code >= 400, (
+                "%r was accepted as a debug condition" % (bad,))
+
+
+def test_an_ordinary_session_needs_no_debug_argument(anon, service, clean):
+    """PostgREST resolves overloads by the keys in the body, so the argument
+    being OPTIONAL is what keeps a participant's first call working."""
+    session = anon.rpc("start_session", {"p_user_agent": "pytest"})
+    assert session["is_debug"] is False
+    assert arm_of(service, session) is None, "a session start must draw no arm"
 
 
 # --- 3. The two integrity rules --------------------------------------------
@@ -278,6 +463,36 @@ def test_short_free_text_is_rejected(anon, clean, description, perspective, why)
         "p_scenario_key": session["screening_order"][0],
         "p_user_text": description + "\n\n" + perspective})
     assert response.status_code >= 400, why
+
+
+def test_the_longest_composition_the_client_can_produce_is_accepted(anon, service, clean):
+    """The ceiling must clear the WORST CASE, not the per-field cap.
+
+    On a no-review arm the participant never sees a page holding the composed
+    text, so a rejection here is a dead end — nothing to shorten, no way
+    forward. Two maxed-out fields joined by a blank line is exactly what the
+    client can hand over.
+    """
+    import config
+    description = "d" * config.MAX_TEXT_CHARS
+    perspective = "p" * config.MAX_TEXT_CHARS
+    session = start(anon)
+    request_generation(anon, session, description=description, perspective=perspective)
+    stored = service.get("/study_jobs?session_id=eq.%s&select=user_text"
+                         % session["session_id"])[0]["user_text"]
+    assert len(stored) == config.MAX_MODEL_INPUT_CHARS
+    assert stored == description + "\n\n" + perspective, "the input was altered"
+
+
+def test_a_composition_over_the_ceiling_is_still_rejected(anon, clean):
+    """The cap is raised to the real worst case, not removed."""
+    import config
+    session = start(anon)
+    response = anon.try_rpc("start_response", {
+        "p_token": session["session_token"],
+        "p_scenario_key": session["screening_order"][0],
+        "p_user_text": "x" * (config.MAX_MODEL_INPUT_CHARS + 1)})
+    assert response.status_code >= 400
 
 
 def test_unknown_scenario_and_unknown_token_are_rejected(anon, clean):
@@ -491,6 +706,10 @@ def test_the_public_key_cannot_read_any_table(anon, table):
     ("mark_submitted", {"p_session_id": "x"}),
     ("reap_expired_jobs", {"p_max_attempts": 4}),
     ("queue_stats", {}),
+    # The arm draw itself, which RETURNS the arm. Reachable from the browser it
+    # would hand a participant their condition outright — response_flow is the
+    # only way to it, and that answers with one bit.
+    ("session_arm", {"p_session_id": "x"}),
 ])
 def test_the_public_key_cannot_call_internal_functions(anon, name, args):
     """Postgres grants EXECUTE to PUBLIC by default and Supabase additionally

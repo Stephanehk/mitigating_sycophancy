@@ -37,9 +37,25 @@ create table if not exists public.study_sessions (
     -- server-side so the randomization is recorded even though the client
     -- renders the pages.
     screening_order   jsonb not null,
-    -- Assigned at job creation (the moment of eligibility, so screened-out
-    -- participants consume no arm slot) and never reassigned.
-    arm               text check (arm in ('ours', 'untrained', 'syco', 'neutral')),
+    -- Assigned at the moment of eligibility (so screened-out participants
+    -- consume no arm slot) and never reassigned.
+    --
+    -- NO INLINE CHECK. The set of legal arms lives in prompts.py and is emitted
+    -- into supabase_app_schema.sql, which re-asserts the constraint every time
+    -- it is run. Hardcoding the list here is what broke on 2026-07-30: two arms
+    -- were added, the generated file was re-run, and every session in a new arm
+    -- was rejected by a four-name check constraint this file had created months
+    -- earlier — `create table if not exists` never revisits it.
+    arm               text,
+    -- True when the arm above was SET by a /debug_<key> link rather than drawn
+    -- (start_session's p_debug_condition; see prompts.DEBUG_CONDITIONS). Those
+    -- sessions exist so a condition can be walked by hand, and the export drops
+    -- them, which is what keeps a link that needs no secret out of the dataset.
+    --
+    -- Declared here for a FRESH install only. `create table if not exists` never
+    -- revisits an existing table, so supabase_app_schema.sql also emits an
+    -- `add column if not exists` — that is the one that reaches a live database.
+    is_debug          boolean not null default false,
     user_agent        text,
     created_at        timestamptz not null default now(),
     updated_at        timestamptz not null default now(),

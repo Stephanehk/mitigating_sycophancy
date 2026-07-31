@@ -1,6 +1,6 @@
 """Model arms and their prompts for the sycophancy user study.
 
-Four arms, all served from ONE engine running Qwen/Qwen3-8B with our LoRA
+Six arms, all served from ONE engine running Qwen/Qwen3-8B with our LoRA
 adapter loaded as a hot-swappable adapter (see worker/vllm_server.py and
 worker/hf_backend.py):
 
@@ -10,6 +10,17 @@ worker/hf_backend.py):
   syco       — Qwen3-8B base + the [SYCOPHANCY POLICY] section.
   neutral    — Qwen3-8B base, two stages: generate, then rewrite that output
                with a neutrality editing prompt.
+  ours_noreview      — generation identical to `ours`.
+  untrained_noreview — generation identical to `untrained`.
+
+TWO OF THE SIX MANIPULATE THE FLOW, NOT THE MODEL. `ours_noreview` and
+`untrained_noreview` produce byte-identical generation plans to `ours` and
+`untrained`; what differs is that the participant is NOT shown the review page
+where the two halves of their writing are concatenated and offered for editing.
+The text is composed and sent without them seeing it. So `ours` vs
+`ours_noreview` isolates the review step alone, and likewise for `untrained`.
+The plans are MAPPED onto their twin (GENERATION_TWIN) rather than duplicated,
+so a prompt change cannot apply to one and not the other.
 
 SYSTEM PROMPT (changed 2026-07-27): every arm now receives the SAME shared
 system prompt, BASE_SYSTEM_PROMPT, which is the source survey's [ETHICS]
@@ -19,8 +30,8 @@ were all removed. `syco` is the only arm whose system prompt differs, and it
 differs by exactly one appended section.
 
 Consequences worth keeping in mind for analysis:
-  - The system prompt is no longer confounded with the arm: all four arms now
-    carry identical instructions apart from the sycophancy policy.
+  - The system prompt is no longer confounded with the arm: every arm now
+    carries identical instructions apart from the sycophancy policy.
   - The "no more than 100 words" instruction lived in [TONE AND FORMATTING] and
     is now gone, so `syco`/`neutral` are no longer systematically shorter than
     the bare arms. `shown_response_chars` is still exported.
@@ -41,7 +52,7 @@ vignette must NOT be used here (it is a canned example, and prepending it made
 the model answer about the wrong story).
 
 Participant text never enters a system prompt; tests/test_prompts.py asserts
-this for all four arms.
+this for every arm.
 """
 
 # --- Arm identifiers -------------------------------------------------------
@@ -50,8 +61,75 @@ ARM_OURS = "ours"
 ARM_UNTRAINED = "untrained"
 ARM_SYCO = "syco"
 ARM_NEUTRAL = "neutral"
+ARM_OURS_NOREVIEW = "ours_noreview"
+ARM_UNTRAINED_NOREVIEW = "untrained_noreview"
 
-ARMS = (ARM_OURS, ARM_UNTRAINED, ARM_SYCO, ARM_NEUTRAL)
+ARMS = (ARM_OURS, ARM_UNTRAINED, ARM_SYCO, ARM_NEUTRAL,
+        ARM_OURS_NOREVIEW, ARM_UNTRAINED_NOREVIEW)
+
+#: Arms whose participants never see the review page — the composed user turn
+#: goes straight to the model. Consumed by the browser (through the
+#: `response_flow` RPC, which is generated from this tuple) and by nothing else:
+#: the generation is unaffected.
+SKIP_REVIEW_ARMS = (ARM_OURS_NOREVIEW, ARM_UNTRAINED_NOREVIEW)
+
+#: The arm each no-review arm is a flow-only variant of. Its generation plan is
+#: reused verbatim, which is what makes the pair a clean one-factor contrast.
+GENERATION_TWIN = {
+    ARM_OURS_NOREVIEW: ARM_OURS,
+    ARM_UNTRAINED_NOREVIEW: ARM_UNTRAINED,
+}
+
+#: The arms with genuinely distinct generation behaviour — every arm that is not
+#: a flow-only variant of another. The smoke test walks these rather than ARMS,
+#: so it does not pay for two identical generations.
+GENERATION_ARMS = tuple(a for a in ARMS if a not in GENERATION_TWIN)
+
+assert set(SKIP_REVIEW_ARMS) == set(GENERATION_TWIN), (
+    "every no-review arm needs a twin whose generation plan it reuses"
+)
+assert set(GENERATION_TWIN.values()) <= set(ARMS)
+
+#: MANUAL-ENTRY LINKS, FOR QA ONLY — arm name keyed by URL suffix, so
+#: `/debug_c1` is DEBUG_CONDITIONS["c1"].
+#:
+#: WHY THIS EXISTS. Random assignment is exactly what you cannot work around
+#: when checking a condition by hand: the flow arms are 2 of 6, so walking the
+#: no-review flow means restarting the study until the coin lands. These links
+#: hand `start_session` a condition key, which sets the arm directly INSTEAD of
+#: drawing it — and stamps `is_debug` on the session, so the resulting row is
+#: quarantined from the export rather than counted as a participant.
+#:
+#: Deliberately NOT secret. The link is powerless against the data because every
+#: session it creates is flagged; a token would add a thing to leak without
+#: adding a guarantee. See README "Walking a condition by hand".
+#:
+#: Only the flow arms are listed, because they are the only ones a person can
+#: verify by looking: the other four differ in what the model writes, which the
+#: smoke test checks far better than a human clicking through can.
+DEBUG_CONDITIONS = {
+    "c1": ARM_OURS_NOREVIEW,
+    "c2": ARM_UNTRAINED_NOREVIEW,
+}
+
+assert set(DEBUG_CONDITIONS.values()) == set(SKIP_REVIEW_ARMS), (
+    "every flow-manipulating arm needs a manual-entry link, since random "
+    "assignment is what makes it unreachable by hand"
+)
+assert all(key.replace("_", "").isalnum() for key in DEBUG_CONDITIONS), (
+    "a condition key becomes a URL path segment (/debug_<key>) and a static "
+    "directory name, so it must be alphanumeric"
+)
+
+
+def shows_review(arm):
+    """Whether `arm`'s participants see the review-and-edit page.
+
+    The one place the flow manipulation is defined. Raises on an unknown arm
+    rather than defaulting, so a new arm cannot silently inherit a flow.
+    """
+    assert arm in ARMS, "unknown arm: %r" % (arm,)
+    return arm not in SKIP_REVIEW_ARMS
 
 
 # --- The shared system prompt ----------------------------------------------
@@ -214,9 +292,18 @@ def build_generation_plan(arm, user_text):
     A stage with `user=None` means "use the previous stage's output as the user
     turn" (the neutral arm's editing pass). The first stage always has an
     explicit `user`.
+
+    The no-review arms return their twin's plan with only `arm` changed: they
+    are a manipulation of the participant's flow, not of the generation.
     """
     assert arm in ARMS, "unknown arm: %r" % (arm,)
     assert user_text is not None and user_text.strip(), "user_text must be non-empty"
+
+    twin = GENERATION_TWIN.get(arm)
+    if twin is not None:
+        plan = build_generation_plan(twin, user_text)
+        plan["arm"] = arm
+        return plan
 
     if arm == ARM_OURS:
         return {

@@ -442,6 +442,20 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .hidden { display: none !important; }
 
+/* Only ever rendered on a /debug_<key> session (see app.js showDebugBanner).
+ * Loud on purpose: it is the difference between "I am checking a condition" and
+ * "I am looking at the study a participant sees", and the two flows differ by
+ * one page, which is easy to mistake. */
+.debug-banner {
+  background: #7f1d1a;
+  color: #ffffff;
+  text-align: center;
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 /* --- Terminal screens --------------------------------------------------- */
 
 .terminal { text-align: center; padding: 44px 20px; }

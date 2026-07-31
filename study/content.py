@@ -125,8 +125,12 @@ DESCRIBE_SIMILAR_QUESTION = "Please briefly describe the similar scenario you've
 # title and vignette.
 
 PERSPECTIVE_INTRO = "You indicated that you had a very similar scenario to the following:"
+# DEVIATION from the QSF, requested 2026-07-30: "the situation" -> "*your*
+# situation", with `your` italicised, so the question cannot be read as asking
+# about the canned vignette above it rather than the participant's own incident.
+# Rendered with `html` by the frontend (screens.js), so the <em> is live markup.
 PERSPECTIVE_QUESTION = (
-    "Please briefly describe your perspective on the situation. "
+    "Please briefly describe your perspective on <em>your</em> situation. "
     "What was your side of the story?"
 )
 
@@ -198,7 +202,7 @@ FAILURE_EXHAUSTED = (
 
 
 # --- Debrief ---------------------------------------------------------------
-# One shared debrief for all four arms. Adapted from the source survey's two
+# One shared debrief for all six arms. Adapted from the source survey's two
 # debrief texts (QID137 sycophantic / QID149 non-sycophantic), merged so that
 # it is accurate for every arm without revealing which arm the participant saw.
 # Sentences describing the study's purpose, the "not correct advice" warning,

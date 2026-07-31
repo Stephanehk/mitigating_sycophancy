@@ -334,6 +334,19 @@ insert into public.questionnaire_options (response_key, question_id, value) valu
     ('big_five_10', 'big_five', 4),
     ('big_five_10', 'big_five', 5);
 
+-- Generated from prompts.ARMS: the 6 legal arm values.
+alter table public.study_sessions drop constraint if exists study_sessions_arm_check;
+alter table public.study_sessions add constraint study_sessions_arm_check
+    check (arm in ('ours', 'untrained', 'syco', 'neutral', 'ours_noreview', 'untrained_noreview'));
+alter table public.study_submissions drop constraint if exists study_submissions_arm_check;
+alter table public.study_submissions add constraint study_submissions_arm_check
+    check (arm in ('ours', 'untrained', 'syco', 'neutral', 'ours_noreview', 'untrained_noreview'));
+
+-- Sessions whose arm was forced by a /debug_<key> link rather than drawn.
+-- Excluded from the export by default; see prompts.DEBUG_CONDITIONS.
+alter table public.study_sessions add column if not exists is_debug boolean not null default false;
+alter table public.study_submissions add column if not exists is_debug boolean not null default false;
+
 -- Generated from config.py. Thresholds the RPCs enforce.
 create table if not exists public.study_config (
     key   text primary key,
@@ -344,6 +357,8 @@ insert into public.study_config (key, value) values ('min_describe_chars', '20')
 insert into public.study_config (key, value) values ('min_perspective_chars', '50')
     on conflict (key) do update set value = excluded.value;
 insert into public.study_config (key, value) values ('max_text_chars', '4000')
+    on conflict (key) do update set value = excluded.value;
+insert into public.study_config (key, value) values ('max_model_input_chars', '8002')
     on conflict (key) do update set value = excluded.value;
 insert into public.study_config (key, value) values ('job_deadline_seconds', '420')
     on conflict (key) do update set value = excluded.value;
@@ -401,6 +416,36 @@ begin
 end;
 $$;
 
+-- Draw this session's arm, ONCE, and return it.
+--
+-- Sticky by construction: the update only fires while `arm` is null, and the
+-- value is re-read afterwards so a caller that lost a concurrent race still
+-- gets the arm that actually landed. That is what stops a participant re-rolling
+-- their condition by calling response_flow or start_response again.
+--
+-- Called at the moment of eligibility (from response_flow, or from
+-- start_response if the client skipped it), never at session creation, so
+-- screen-outs and decliners keep a null arm.
+--
+-- A debug session (start_session's p_debug_condition) already has one, so the
+-- same stickiness that stops a re-roll is what makes a forced arm hold: this
+-- function reads it and draws nothing.
+create or replace function public.session_arm(p_session_id text) returns text
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_arm text;
+begin
+    select arm into v_arm from public.study_sessions where session_id = p_session_id;
+    if v_arm is null then
+        update public.study_sessions
+           set arm = (array['ours', 'untrained', 'syco', 'neutral', 'ours_noreview', 'untrained_noreview'])[1 + floor(random() * 6)],
+               updated_at = now()
+         where session_id = p_session_id and arm is null;
+        select arm into v_arm from public.study_sessions where session_id = p_session_id;
+    end if;
+    return v_arm;
+end;
+$$;
+
 -- The worker's shared secret. Every worker RPC calls this first; the anon key
 -- alone gets nothing.
 create or replace function public.assert_worker(p_worker_token text) returns void
@@ -423,32 +468,100 @@ $$;
 -- =========================================================================
 
 -- Start a session and draw this participant's screening order.
-create or replace function public.start_session(p_user_agent text)
+--
+-- p_debug_condition IS THE ONE WAY TO CHOOSE AN ARM, and it is for walking a
+-- condition by hand (see prompts.DEBUG_CONDITIONS and the /debug_<key> pages).
+-- Random assignment is precisely what you cannot work around when you need to
+-- SEE a condition: the two flow arms are 2 of 6, so checking the no-review flow
+-- otherwise means restarting until the coin lands.
+--
+-- WHAT KEEPS IT FROM CORRUPTING THE DATA. The session is stamped is_debug, and
+-- the export drops those rows by default, so a forced arm is quarantined rather
+-- than counted. That guarantee does not depend on the link staying secret —
+-- which is why it is not secret. The randomization itself is untouched: a
+-- participant who does not pass this argument gets a null arm here and a drawn
+-- one at eligibility, exactly as before.
+--
+-- The KEY is sent, never an arm name, so the browser still has no vocabulary for
+-- the conditions; the mapping below is generated from prompts.py.
+drop function if exists public.start_session(text);
+
+create or replace function public.start_session(
+    p_user_agent text, p_debug_condition text default null)
 returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
     v_id text := replace(gen_random_uuid()::text, '-', '');
     v_token text := replace(gen_random_uuid()::text, '-', '');
     v_order jsonb;
+    v_arm text := null;
 begin
+    if coalesce(p_debug_condition, '') <> '' then
+        v_arm := case p_debug_condition
+                      when 'c1' then 'ours_noreview'
+                      when 'c2' then 'untrained_noreview'
+                 end;
+        -- A mistyped link must not silently become a normally randomized
+        -- session: someone testing a condition would then believe they had
+        -- seen it.
+        if v_arm is null then
+            raise exception 'unknown debug condition: %', p_debug_condition
+                using errcode = 'P0001';
+        end if;
+    end if;
     -- Randomized per participant, drawn here so the order is recorded even
     -- though the browser renders the pages.
     select jsonb_agg(key order by random()) into v_order from public.study_scenarios;
-    insert into public.study_sessions (session_id, session_token, screening_order, user_agent)
-    values (v_id, v_token, v_order, left(coalesce(p_user_agent, ''), 500));
+    insert into public.study_sessions (session_id, session_token, screening_order,
+                                       user_agent, arm, is_debug)
+    values (v_id, v_token, v_order, left(coalesce(p_user_agent, ''), 500),
+            v_arm, v_arm is not null);
+    -- is_debug, not the arm: enough for the client to confirm the link worked
+    -- and to show its banner, and it still names no condition.
     return jsonb_build_object('session_id', v_id, 'session_token', v_token,
                               'screening_order', v_order, 'has_job', false,
-                              'submitted', false);
+                              'submitted', false, 'is_debug', v_arm is not null);
+end;
+$$;
+
+-- Which flow this participant walks: with the review-and-edit page, or without.
+--
+-- WHY THE CLIENT HAS TO ASK. Two of the six arms (SKIP_REVIEW_ARMS) remove the
+-- page that shows the participant their concatenated writing and offers it for
+-- editing. Skipping a visible page cannot be hidden from the browser, so the
+-- arm is drawn here — one page before it is needed — and exactly one bit of it
+-- is returned: `show_review`. The arm ITSELF is still never sent.
+--
+-- WHAT THAT BIT COSTS, STATED PLAINLY: it partitions the six arms into two
+-- observable groups (4 with the page, 2 without). A participant who cleared
+-- localStorage and restarted could therefore re-roll until they landed in the
+-- group they preferred — which they could always do, but until now could not
+-- observe. The within-session guarantees are unchanged: the draw is sticky
+-- (session_arm), the job is one-per-session, and which of the four (or which of
+-- the two) they got is still unknowable. The alternative — hiding the bit — is
+-- not available, because the manipulation IS a visible page.
+create or replace function public.response_flow(p_token text)
+returns jsonb
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+    v_session public.study_sessions;
+    v_arm text;
+begin
+    v_session := public.session_for_token(p_token);
+    v_arm := public.session_arm(v_session.session_id);
+    return jsonb_build_object(
+        'show_review', not (v_arm = any (array['ours_noreview', 'untrained_noreview'])));
 end;
 $$;
 
 -- Enqueue the generation from the text the participant CONFIRMED.
 --
--- Takes the finished user turn, not the two halves. A review page now shows the
--- participant exactly what will be sent and lets them edit it before pressing
--- Confirm, so the composition happens in the browser and what arrives here is
--- what they approved. Composing it server-side would silently discard their
--- edits.
+-- Takes the finished user turn, not the two halves. On the four review arms a
+-- page shows the participant exactly what will be sent and lets them edit it
+-- before pressing Confirm, so the composition happens in the browser and what
+-- arrives here is what they approved; composing it server-side would silently
+-- discard their edits. On the two no-review arms the browser composes the same
+-- string and sends it without showing it — identical input, one fewer page.
 --
 -- The floor is min_describe + min_perspective, i.e. the same total the two
 -- separate pages already enforced, so editing cannot be used to get past the
@@ -495,19 +608,20 @@ begin
         raise exception 'Please write a bit more — at least % characters.', v_min
             using errcode = 'P0001';
     end if;
-    if length(v_text) > cfg('max_text_chars') then
+    -- The COMPOSED cap, not the per-field one: this text is two capped fields
+    -- joined by a blank line. On a no-review arm the participant has no page
+    -- holding it, so a rejection here would be a dead end rather than something
+    -- they could shorten.
+    if length(v_text) > cfg('max_model_input_chars') then
         raise exception 'Your answer is too long (limit % characters).',
-            cfg('max_text_chars') using errcode = 'P0001';
+            cfg('max_model_input_chars') using errcode = 'P0001';
     end if;
 
     -- Drawn at the moment of eligibility, so screened-out participants never
-    -- consume an arm slot. Sticky: the early return above means this line runs
-    -- at most once per session.
-    v_arm := coalesce(v_session.arm, (array['ours', 'untrained', 'syco', 'neutral'])[1 + floor(random() * 4)]);
-    if v_session.arm is distinct from v_arm then
-        update public.study_sessions set arm = v_arm, updated_at = now()
-        where session_id = v_session.session_id;
-    end if;
+    -- consume an arm slot. Normally response_flow has already drawn it one page
+    -- earlier; session_arm is sticky, so this returns that same arm rather than
+    -- re-rolling, and still works for a client that never called response_flow.
+    v_arm := public.session_arm(v_session.session_id);
 
     insert into public.study_jobs (job_id, session_id, arm, topic_title, user_text,
                                    status, deadline_at)
@@ -642,14 +756,18 @@ begin
         return jsonb_build_object('ok', true, 'duplicate', true);
     end if;
 
+    -- is_debug is carried from the SESSION, not the payload, for the same reason
+    -- the arm is: a debug walk-through must be identifiable at analysis time
+    -- even though the browser has no say in it.
     insert into public.study_submissions (
-        session_id, arm, job_id, topic_title, user_text, shown_response,
+        session_id, arm, is_debug, job_id, topic_title, user_text, shown_response,
         shown_response_chars, stages, worker_attempts, manual_retries,
         prolific_pid, consent, eligibility, selected_scenario, screening_order,
         screening, perspective_text, additional_thoughts, answers, missing_keys,
         client_timings, payload, session_created_at, submitted_at)
     values (
-        v_session.session_id, v_session.arm, v_job.job_id, v_job.topic_title,
+        v_session.session_id, v_session.arm, v_session.is_debug,
+        v_job.job_id, v_job.topic_title,
         v_job.user_text, v_job.response_text, length(v_job.response_text),
         v_job.stages, v_job.attempts, v_job.manual_retries,
         left(coalesce(p_payload ->> 'prolific_pid', ''), 200),
@@ -730,7 +848,8 @@ $$;
 -- table directly (RLS is on with no policies), and every function authenticates
 -- its own caller. service_role stays on a developer machine, for exports.
 
-grant execute on function public.start_session(text) to anon, authenticated;
+grant execute on function public.start_session(text, text) to anon, authenticated;
+grant execute on function public.response_flow(text) to anon, authenticated;
 grant execute on function public.start_response(text, text, text) to anon, authenticated;
 grant execute on function public.response_status(text) to anon, authenticated;
 grant execute on function public.retry_response(text) to anon, authenticated;
@@ -771,6 +890,9 @@ revoke execute on function public.mark_submitted(text) from public, anon, authen
 revoke execute on function public.queue_stats() from public, anon, authenticated;
 revoke execute on function public.job_state(public.study_jobs) from public, anon, authenticated;
 revoke execute on function public.session_for_token(text) from public, anon, authenticated;
+-- session_arm is the arm draw itself. Callable with the anon key it would let a
+-- participant burn draws on other sessions, and — worse — it RETURNS the arm.
+revoke execute on function public.session_arm(text) from public, anon, authenticated;
 revoke execute on function public.assert_worker(text) from public, anon, authenticated;
 
 -- The internal helpers and raw queue functions are reachable ONLY through the
@@ -784,6 +906,7 @@ grant execute on function public.extend_lease(text, text, integer) to service_ro
 grant execute on function public.requeue_job(text, integer) to service_role;
 grant execute on function public.mark_submitted(text) to service_role;
 grant execute on function public.queue_stats() to service_role;
+grant execute on function public.session_arm(text) to service_role;
 
 -- RLS on the generated data tables too. Without this the anon key could read
 -- study_config, which is where the worker's shared secret lives.

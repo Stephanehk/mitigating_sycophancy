@@ -228,6 +228,16 @@ MIN_PERSPECTIVE_CHARS = _env_int("STUDY_MIN_PERSPECTIVE_CHARS", 50)
 # maxlength="1024" on the chat input.
 MAX_TEXT_CHARS = _env_int("STUDY_MAX_TEXT_CHARS", 4000)
 
+# Cap on the COMPOSED model input, which is two of those fields joined by a
+# blank line — hence twice the field cap plus the separator, not the field cap
+# itself.
+#
+# This is not cosmetic. On the two no-review arms the participant never sees a
+# page holding the composed text, so a rejection at start_response is a dead
+# end: there is nothing they can shorten and no way forward. Anything below the
+# worst case two maxed-out fields can produce would leave exactly that gap.
+MAX_MODEL_INPUT_CHARS = 2 * MAX_TEXT_CHARS + len("\n\n")
+
 
 def filesystem_type(path):
     """The filesystem type backing `path`, from /proc/mounts, or None.

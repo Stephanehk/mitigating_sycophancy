@@ -164,20 +164,26 @@ def test_the_client_never_calls_a_worker_rpc(trees):
                     "%s mentions worker_token: %r" % (name, node.value)
 
 
-def test_the_client_makes_exactly_three_kinds_of_call(trees):
-    """The whole point of the redesign. A fourth means a page turn regressed."""
+def test_the_client_makes_exactly_the_expected_kinds_of_call(trees):
+    """The whole point of the redesign. An extra one means a page turn
+    regressed into a round trip.
+
+    `response_flow` is the newest and the only one that is not strictly about
+    data: it asks which flow this arm walks, because two of the six drop the
+    review page and a page that is not rendered cannot be hidden.
+    """
     called = set()
     for tree in trees.values():
         called |= _rpc_calls(tree)
-    assert called == {"start_session", "start_response", "response_status",
-                      "retry_response", "submit_study"}, sorted(called)
+    assert called == {"start_session", "response_flow", "start_response",
+                      "response_status", "retry_response", "submit_study"}, sorted(called)
 
 
-def test_only_the_three_expected_screens_talk_to_the_database(trees):
+def test_only_the_expected_screens_talk_to_the_database(trees):
     """Every OTHER page turn must be local, which is the latency fix itself."""
     calls = _rpc_calls(trees["screens.js"])
-    assert calls == {"start_response", "response_status", "retry_response",
-                     "submit_study"}, (
+    assert calls == {"response_flow", "start_response", "response_status",
+                     "retry_response", "submit_study"}, (
         "a screen gained or lost a database call: %s" % (sorted(calls),))
     assert _rpc_calls(trees["widgets.js"]) == set(), \
         "widgets.js must stay pure DOM — a widget that fetches is a page-turn stall"
@@ -661,18 +667,18 @@ def test_the_bundle_carries_the_prolific_required_message():
 # --- 9. The review page -----------------------------------------------------
 
 def test_the_review_page_sits_between_the_intro_and_the_generation(trees):
-    """The participant must see what will be sent BEFORE the job is created —
-    afterwards the input is frozen by the one-way door."""
+    """On the arms that show it, the participant must see what will be sent
+    BEFORE the job is created — afterwards the input is frozen by the one-way
+    door."""
     spine = _string_literals(_find_function(trees["app.js"], "buildSpine"))
     assert spine.index("review_input") == spine.index("response_intro") + 1
     assert spine.index("response") == spine.index("review_input") + 1
 
 
-def test_only_the_review_page_starts_the_generation(trees):
-    """response_intro used to enqueue it. If both did, a participant could skip
-    the review and still get a job."""
+def _screen_rpc_calls(tree):
+    """{screen name: the RPCs its renderer calls}."""
     calls = {}
-    for node in _walk(trees["screens.js"]):
+    for node in _walk(tree):
         if (node.type == "AssignmentExpression"
                 and node.left.type == "MemberExpression"
                 and getattr(node.left.object, "property", None) is not None
@@ -682,20 +688,68 @@ def test_only_the_review_page_starts_the_generation(trees):
                            if n.type == "CallExpression" and n.arguments
                            and getattr(getattr(n.callee, "property", None), "name", None) == "rpc"
                            and n.arguments[0].type == "Literal"}
-    assert "start_response" in calls.get("review_input", set()), \
-        "the review page does not start the generation"
-    assert "start_response" not in calls.get("response_intro", set()), \
-        "response_intro still enqueues a job, bypassing the review page"
+    return calls
+
+
+def test_the_generation_starts_from_one_shared_function(trees):
+    """Two screens can now open the one-way door — review_input's Confirm on the
+    four review arms, response_intro's Continue on the two that skip it. Both
+    must go through startGeneration(), or the two flows could drift on what is
+    actually sent to the model, which would break the pairing they exist for."""
+    source = open(os.path.join(_STATIC, "screens.js"), encoding="utf-8").read()
+    assert "function startGeneration(" in source, \
+        "the shared generation-start helper is gone"
+    assert "function composeModelInput(" in source, \
+        "the shared input composition is gone; the two flows can now diverge"
+
+    starter = _find_function(trees["screens.js"], "startGeneration")
+    assert "start_response" in _rpc_calls(starter), \
+        "startGeneration no longer enqueues the job"
+
+    calls = _screen_rpc_calls(trees["screens.js"])
+    for screen, allowed in calls.items():
+        assert "start_response" not in allowed, (
+            "%s calls start_response directly instead of via startGeneration" % screen)
+
+
+def test_response_intro_asks_which_flow_before_it_can_skip_the_review(trees):
+    """The fork itself. response_intro must ask the database — it cannot decide
+    locally, because the arm lives in Postgres and must not be guessable here."""
+    calls = _screen_rpc_calls(trees["screens.js"])
+    assert calls.get("response_intro") == {"response_flow"}, (
+        "response_intro must call response_flow and nothing else, got %s"
+        % (sorted(calls.get("response_intro", [])),))
+
+    screen = _find_function_expression(trees["screens.js"], "response_intro")
+    names = {n.name for n in _walk(screen) if n.type == "Identifier"}
+    assert "setShowReview" in names, "the answer is never recorded"
+    assert "startGeneration" in names, (
+        "response_intro never starts the generation, so the no-review arms "
+        "would land on the review page anyway")
+
+
+def test_only_an_explicit_false_drops_the_review_page(trees):
+    """Fail-safe direction. If response_flow is never called or its answer is
+    lost, S.showReview is null and the participant gets the review page —
+    showing it to a no-review arm is a recoverable analysis note; silently
+    skipping it for a review arm corrupts a condition."""
+    spine = _find_function(trees["app.js"], "buildSpine")
+    source = open(os.path.join(_STATIC, "app.js"), encoding="utf-8").read()
+    body = source[spine.range[0]:spine.range[1]]
+    assert "S.showReview !== false" in body or "S.showReview === false" in body, (
+        "buildSpine no longer branches on an explicit false; a null (never "
+        "asked) would decide the flow")
+    assert "showReview: null" in source, "the unknown state is no longer null"
 
 
 def test_the_confirmed_text_is_what_is_sent(trees):
     """start_response now takes the finished user turn, not the two halves —
     composing server-side would silently discard the participant's edit."""
     source = open(os.path.join(_STATIC, "screens.js"), encoding="utf-8").read()
-    review = source[source.index("APP.screens.review_input"):]
-    review = review[:review.index("\n  APP.screens.")] if "\n  APP.screens." in review else review
-    assert "p_user_text" in review, "the edited text is not being sent"
-    assert "p_description" not in review and "p_perspective" not in review, \
+    start = source[source.index("function startGeneration("):]
+    start = start[:start.index("\n  }")]
+    assert "p_user_text" in start, "the edited text is not being sent"
+    assert "p_description" not in start and "p_perspective" not in start, \
         "the halves are still being sent; the edit would be discarded"
 
     sql = open(os.path.join(os.path.dirname(_STATIC), "supabase_app_schema.sql"),
@@ -812,3 +866,97 @@ def test_the_client_passes_the_arguments_each_rpc_actually_declares(trees):
                 "%s calls %s with %s, which the SQL function does not declare "
                 "(declares %s)" % (name, rpc_name, sorted(unknown),
                                    sorted(declared[rpc_name])))
+
+
+# --- 10. The manual-entry links (/debug_c1, /debug_c2) ---------------------
+
+def _debug_conditions():
+    import prompts
+    return prompts.DEBUG_CONDITIONS
+
+
+def _source_of(name, node):
+    """The source text of one AST node, for asserting on structure + content."""
+    with open(os.path.join(_STATIC, name), encoding="utf-8") as handle:
+        return handle.read()[node.range[0]:node.range[1]]
+
+
+def test_an_entry_page_exists_for_every_manual_entry_condition():
+    """`/debug_c1` must be a real file, not a route.
+
+    Amplify redirects live in the console rather than in amplify.yml, so a path
+    that relied on an SPA rewrite would 404 on a fresh app — the one failure mode
+    a QA link cannot have. tools/build_static.py emits these; this test is what
+    notices when a new condition is declared and the pages are not rebuilt.
+    """
+    for key in _debug_conditions():
+        path = os.path.join(_STATIC, "debug_%s" % key, "index.html")
+        assert os.path.exists(path), (
+            "no entry page for condition %r — run tools/build_static.py" % (key,))
+        with open(path, encoding="utf-8") as handle:
+            page = handle.read()
+        assert "?debug=%s" % key in page, (
+            "the entry page for %r does not carry its own key, so it would "
+            "start the wrong condition" % (key,))
+
+
+def test_no_entry_page_exists_for_a_condition_that_was_removed():
+    """A stale link would start a session the database now rejects, which reads
+    as 'the study is broken' rather than 'that condition is gone'."""
+    declared = {"debug_%s" % key for key in _debug_conditions()}
+    found = {name for name in os.listdir(_STATIC) if name.startswith("debug_")}
+    assert found == declared, "stale entry pages: %s" % (sorted(found - declared),)
+
+
+def test_the_debug_condition_is_passed_under_the_name_the_sql_declares():
+    """The one argument that is not in an inline object literal at the call site,
+    so the generic signature test above cannot see it."""
+    source = open(os.path.join(_STATIC, "app.js"), encoding="utf-8").read()
+    sql = open(os.path.join(os.path.dirname(_STATIC), "supabase_app_schema.sql"),
+               encoding="utf-8").read()
+    assert "p_debug_condition" in source, \
+        "the client never forwards the condition, so /debug_c1 would draw at random"
+    assert "p_debug_condition text default null" in sql, \
+        "start_session does not declare the argument the client sends"
+
+
+def test_the_condition_is_sent_only_when_the_url_asks_for_one():
+    """A participant's start_session call must not depend on the two-argument
+    signature being deployed: PostgREST resolves by the keys in the body, so
+    always sending the argument would break the whole study against a database
+    that had not been regenerated — instead of breaking only these links."""
+    tree = _parse("app.js")
+    start = _find_function(tree, "start")
+    guarded = [n for n in _walk(start)
+               if n.type == "IfStatement"
+               and "p_debug_condition" in _source_of("app.js", n)]
+    assert guarded, "p_debug_condition is assigned unconditionally"
+
+
+def test_a_debug_link_never_adopts_an_existing_session():
+    """The arm is decided once, at session creation, so a debug link cannot
+    retrofit itself onto a session already in progress — it has to start a new
+    one. The reverse matters too: reopening the real study must not continue
+    inside a debug session."""
+    source = open(os.path.join(_STATIC, "app.js"), encoding="utf-8").read()
+    assert "S.debugCondition === debugCondition" in source, (
+        "the resume path does not compare the stored condition against the URL, "
+        "so /debug_c1 would silently resume a normal session")
+    assert "debugCondition: S.debugCondition" in source, (
+        "the condition is not persisted, so a refresh would look like a "
+        "mismatch and restart the session")
+
+
+def test_the_client_never_learns_an_arm_name():
+    """The key is all the browser handles; the key -> arm mapping stays in SQL.
+
+    Pinned because the tempting shortcut — map c1 to `ours_noreview` in app.js —
+    would put condition names in page source for the first time.
+    """
+    import prompts
+    for name in _CLIENT_FILES:
+        tree = _parse(name)
+        for node in _walk(tree):
+            if node.type == "Literal" and isinstance(node.value, str):
+                assert node.value not in prompts.ARMS, \
+                    "%s names the arm %r" % (name, node.value)

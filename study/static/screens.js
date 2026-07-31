@@ -204,33 +204,92 @@
 
   // --- The generation ------------------------------------------------------
 
+  /* The two halves of the participant's own writing, joined exactly as the
+   * review page would show them. Shared by both flows on purpose: the no-review
+   * arms must send the SAME string their review-arm twins are shown, or the
+   * pair stops being a one-factor contrast.
+   *
+   * The join happens in the browser rather than the database because on the
+   * review arms what gets sent must be what the participant approved, edits
+   * included — composing it server-side afterwards would discard them. */
+  function composeModelInput() {
+    var selected = findScreening(S.data.selected_scenario);
+    return S.modelInput
+      || [(selected && selected.description) || '', S.data.perspective_text || '']
+           .filter(Boolean).join('\n\n');
+  }
+
+  /* Create the generation job and move to the response page.
+   *
+   * THE ONE-WAY DOOR, and the only place it opens. Called from the review
+   * page's Confirm on the four review arms, and straight from response_intro on
+   * the two that skip it; once it returns, the input can no longer be changed.
+   * `button` is re-enabled on failure so the participant can retry. */
+  function startGeneration(text, button) {
+    // Remembered so Back-then-forward shows what was sent rather than
+    // recomposing from the original two answers.
+    S.modelInput = text;
+    button.disabled = true;
+    APP.rpc('start_response', {
+      p_token: S.token,
+      p_scenario_key: S.data.selected_scenario,
+      p_user_text: text
+    }).then(function (job) {
+      S.hasJob = true;
+      APP.setStage('response');
+      renderResponse(job);
+    }).catch(function (error) {
+      button.disabled = false;
+      if (error.kind === 'unauthorized') { return APP.restart(); }
+      APP.showError(error.message || 'Something went wrong. Please try again.');
+    });
+  }
+
+  /* The last page before the generation, and where the flow forks.
+   *
+   * response_flow answers one question — does this arm show the review page? —
+   * and the answer is asked for HERE rather than at session start so that
+   * screened-out participants never consume an arm draw. It is idempotent: the
+   * arm behind it is drawn once and sticks, so pressing Continue again after a
+   * network error cannot re-roll the condition. */
   APP.screens.response_intro = function () {
     APP.mount([
       el('h1', { html: S.content.response_intro.text }),
-      APP.navActions(APP.primaryButton('Continue', function () { APP.advance(); }))
+      APP.navActions(APP.primaryButton('Continue', function (button) {
+        button.disabled = true;
+        APP.rpc('response_flow', { p_token: S.token }).then(function (flow) {
+          APP.setShowReview(flow.show_review);
+          if (flow.show_review) {
+            button.disabled = false;
+            APP.advance();
+            return;
+          }
+          startGeneration(composeModelInput(), button);
+        }).catch(function (error) {
+          button.disabled = false;
+          if (error.kind === 'unauthorized') { return APP.restart(); }
+          APP.showError(error.message || 'Something went wrong. Please try again.');
+        });
+      }))
     ]);
   };
 
   /* The review page: the participant sees EXACTLY what will be sent to the
    * model and may edit it before committing.
    *
-   * The two halves are joined here rather than in the database, because the
-   * whole point is that what gets sent is what they approved — composing it
-   * server-side afterwards would silently discard their edits. start_response
-   * now takes the finished text for the same reason.
+   * NOT REACHED ON THE NO-REVIEW ARMS — response_flow drops it from the spine
+   * for those, and response_intro enqueues the generation itself.
    *
    * This is also the one-way door: pressing Confirm creates the job, and from
    * then on the input cannot be changed. Back is still available UP TO here. */
   APP.screens.review_input = function () {
     var conf = S.content.review;
-    var selected = findScreening(S.data.selected_scenario);
-    var composed = S.modelInput
-      || [(selected && selected.description) || '', S.data.perspective_text || '']
-           .filter(Boolean).join('\n\n');
+    var composed = composeModelInput();
 
     var area = window.W.textArea({
       minChars: conf.min_chars,
-      maxChars: S.content.max_text_chars,
+      // The composed cap, not the per-field one — this box holds two fields.
+      maxChars: conf.max_chars,
       value: composed,
       placeholder: 'What the AI chatbot will be told…'
     });
@@ -246,23 +305,7 @@
                         ' characters.');
           return;
         }
-        // Remembered so Back-then-forward shows their edit rather than
-        // recomposing from the original two answers.
-        S.modelInput = text;
-        button.disabled = true;
-        APP.rpc('start_response', {
-          p_token: S.token,
-          p_scenario_key: S.data.selected_scenario,
-          p_user_text: text
-        }).then(function (job) {
-          S.hasJob = true;
-          APP.setStage('response');
-          renderResponse(job);
-        }).catch(function (error) {
-          button.disabled = false;
-          if (error.kind === 'unauthorized') { return APP.restart(); }
-          APP.showError(error.message || 'Something went wrong. Please try again.');
-        });
+        startGeneration(text, button);
       }))
     ]);
   };

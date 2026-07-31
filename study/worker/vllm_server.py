@@ -1,6 +1,6 @@
 """Launch and address the study's vLLM engine.
 
-ONE engine serves all four arms. Qwen3-8B is loaded once as the base model,
+ONE engine serves every arm. Qwen3-8B is loaded once as the base model,
 and our OEQ-trained DPO LoRA is registered as a named adapter via
 `--enable-lora`, so a request selects its arm purely by which model name it
 addresses:
@@ -9,7 +9,7 @@ addresses:
                             their system prompt)
   model=<lora_name>      -> ours
 
-That is what makes a four-arm live study fit on a single GPU with no model
+That is what makes a six-arm live study fit on a single GPU with no model
 reloading between participants.
 
 This module reuses `training_mitigations/core/vllm_sim.py` for the launch and

@@ -3,6 +3,10 @@
 Reads from Supabase (or, with --source local, the server's fallback JSONL) and
 writes the same three files the SQLite-backed exporter used to:
 
+Sessions that entered through a /debug_<key> link — a researcher walking a
+condition by hand, with the arm FORCED rather than drawn — are dropped by
+default and counted in the summary. Pass --include-debug to keep them.
+
   participants.csv  — one row per submission: arm, eligibility, the selected
                       scenario, the participant's own text, the exact response
                       they were shown, timings, and one column per
@@ -47,7 +51,7 @@ import questionnaires
 
 # Columns describing the session itself, before the questionnaire columns.
 SESSION_COLUMNS = [
-    "session_id", "prolific_pid", "arm", "eligibility", "consent",
+    "session_id", "prolific_pid", "arm", "is_debug", "eligibility", "consent",
     "selected_scenario", "screening_order", "n_screening_answered",
     "perspective_text", "perspective_chars", "shown_response",
     "shown_response_chars", "worker_attempts", "manual_retries",
@@ -104,6 +108,25 @@ def read_local(path):
             assert "session_id" in row, "line %d has no session_id" % (number,)
             by_session[row["session_id"]] = row
     return list(by_session.values())
+
+
+def drop_debug_sessions(submissions):
+    """Split off the sessions whose arm was FORCED rather than drawn.
+
+    A debug session is one that entered through a /debug_<key> link (see
+    prompts.DEBUG_CONDITIONS) — a researcher walking a condition by hand. Its arm
+    was chosen, not randomly assigned, so counting it as a participant would bias
+    whichever cell it landed in. This filter is the entire reason those links can
+    be plain URLs with no secret.
+
+    Assumption: `is_debug` is present and false on real submissions. Rows from
+    the fallback JSONL predate the column and are treated as non-debug, which is
+    correct — the links did not exist when they were written.
+
+    Returns (kept, dropped_count).
+    """
+    kept = [s for s in submissions if not s.get("is_debug")]
+    return kept, len(submissions) - len(kept)
 
 
 def _parse_iso(value):
@@ -189,6 +212,7 @@ def build_participant_rows(submissions):
             "session_id": submission["session_id"],
             "prolific_pid": submission.get("prolific_pid") or "",
             "arm": submission.get("arm") or "",
+            "is_debug": bool(submission.get("is_debug")),
             "eligibility": submission.get("eligibility") or "",
             "consent": submission.get("consent") or "",
             "selected_scenario": submission.get("selected_scenario") or "",
@@ -290,6 +314,9 @@ def main():
     parser.add_argument("--local-path", default=config.SUBMISSION_FALLBACK_PATH)
     parser.add_argument("--eligible-only", action="store_true",
                         help="Drop screen-outs and decliners")
+    parser.add_argument("--include-debug", action="store_true",
+                        help="Keep sessions that entered through a /debug_<key> "
+                             "link with their arm forced (dropped by default)")
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -301,6 +328,12 @@ def main():
         source_label = args.local_path
 
     total = len(submissions)
+
+    # Dropped by default, and counted out loud either way.
+    kept, n_debug = drop_debug_sessions(submissions)
+    if not args.include_debug:
+        submissions = kept
+
     if args.eligible_only:
         submissions = [s for s in submissions if s.get("eligibility") == "eligible"]
 
@@ -315,6 +348,8 @@ def main():
 
     print("source:       %s" % source_label)
     print("submissions:  %d read, %d exported" % (total, n_participants))
+    print("debug rows:   %d %s" % (n_debug, "kept (--include-debug)"
+                                   if args.include_debug else "dropped"))
     print("screening:    %d answers" % n_screening)
     print("generations:  %d responses" % n_generations)
     print("out-dir:      %s" % args.out_dir)

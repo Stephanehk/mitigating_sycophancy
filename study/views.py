@@ -83,6 +83,10 @@ def content_bundle():
             # total the two separate pages already required, so editing cannot
             # be used to get under the length requirement.
             "min_chars": config.MIN_DESCRIBE_CHARS + config.MIN_PERSPECTIVE_CHARS,
+            # ...and the ceiling it enforces, which is the COMPOSED one. Using
+            # the per-field cap here would put a maxlength on the box that the
+            # text already in it exceeds.
+            "max_chars": config.MAX_MODEL_INPUT_CHARS,
         },
         "response": {
             "reminder": content.RESPONSE_PAGE_REMINDER,
