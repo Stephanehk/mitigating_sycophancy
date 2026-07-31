@@ -480,9 +480,31 @@ match to `eval_endorsement_heldout.py`, which is the parity target for the
 cd /next/u/stephhk/sycophancy/study
 PY=/next/u/stephhk/miniconda3/envs/llm/bin/python
 
-$PY -m pytest tests/ -q                      # 155 tests
+$PY -m pytest tests/ -q -k "not test_rpcs"   # 123 tests — USE THIS ONE
 $PY -m uvicorn server:app --reload --port 8000
 ```
+
+**Run only that form.** `test_rpcs.py` drives the REAL Supabase project — there
+is only one — and `tests/conftest.py` authenticates it with `study/.trial_token`,
+the same worker secret next7's pool uses. With a participant in the queue it can:
+
+- claim *their* pending job (`claim_job` is FIFO across the whole table, with no
+  session filter) and `worker_complete` it with a test literal such as
+  `"A generated reply."`, which they then see as the chatbot's reply and rate;
+- delete their session and submission — the `clean` fixture removes every session
+  created *during* the test, not just its own;
+- burn their `JOB_MAX_ATTEMPTS` by claiming without completing, ending in
+  FAILURE_EXHAUSTED.
+
+None of that has ever happened, because it has only ever run with no
+participants in the queue. Decided 2026-07-31 to keep it that way rather than
+build a second Supabase project: **do not run the live suite once recruitment is
+open.** `-k "not test_rpcs"` covers the client contract, the content bundle, the
+generated SQL, the prompts and the export — everything except the RPCs.
+
+`worker/smoke_test.py` also inserts jobs into the live queue. It cannot corrupt a
+response (it waits for the pool instead of claiming), but FIFO order means its
+jobs are served ahead of participants who arrive after it.
 
 With no Supabase configured the server boots with a warning and writes every
 submission to `data/submissions.jsonl` only — which is the right setup for local
