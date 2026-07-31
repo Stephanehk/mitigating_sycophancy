@@ -786,9 +786,12 @@ text is your call, not mine.
 1. **Consent says "approximately twenty minutes" and "$2 USD"**
    (`content.py: CONSENT_BODY`). Without the 8-turn chat and demographics this
    study is roughly 8–10 minutes. Both are IRB-facing.
-2. **The SCREEN-OUT code is still the source survey's** (`cc=C1L7XBXC`), so a
-   screened-out participant is shown a code that pays the *old* study. The
-   completion code is this study's own as of 2026-07-31 (`cc=C1Q8MWKX`).
+2. **Both paths now show the same code**, `cc=C1Q8MWKX`, this study's own
+   (2026-07-31). Prolific issued one code, so completers and screen-outs are
+   indistinguishable *to Prolific* — it cannot pay them differently and shows no
+   screen-out rate. Recover the funnel from the export instead: `eligibility` is
+   `eligible` vs `screened_out` on every submission row. Decliners still get no
+   code and return the submission.
 
    **Nothing enforces this any more.** README used to say "production startup
    refuses to boot until you override them", and that was true when `server.py`

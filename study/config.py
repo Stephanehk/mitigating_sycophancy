@@ -112,22 +112,26 @@ INSECURE_WORKER_TOKEN = "dev-insecure-worker-token"
 
 
 # --- Prolific --------------------------------------------------------------
-# The COMPLETION code is this study's own (cc=C1Q8MWKX, set 2026-07-31).
+# ONE CODE FOR BOTH PATHS: cc=C1Q8MWKX, this study's own (set 2026-07-31).
+# Completers and screened-out participants are shown the same code, at your
+# instruction — Prolific issued one code, and the alternative was leaving
+# screen-outs with the SOURCE survey's cc=C1L7XBXC, which credits that study.
 #
-# FLAGGED_FOR_REVIEW: the SCREEN-OUT code is still the source survey's
-# (cc=C1L7XBXC) and pays that Prolific study, not this one. Replace it before
-# launch — screen-outs are shown it on the terminal page.
+# WHAT THAT MEANS DOWNSTREAM. Prolific cannot tell the two apart, so it cannot
+# pay them differently and its dashboard will not show a screen-out rate. Your
+# own data still can: `eligibility` is 'eligible' vs 'screened_out' on every
+# submission row, so the funnel is recoverable from the export, not from Prolific.
 #
 # An environment variable still wins over either default, so a stale
-# STUDY_PROLIFIC_COMPLETION_URL/_CODE in the Amplify console would silently
-# override the value below.
+# STUDY_PROLIFIC_COMPLETION_URL/_CODE or _SCREENOUT_URL/_CODE in the Amplify
+# console would silently override the values below.
 
 PROLIFIC_COMPLETION_URL = _env(
     "STUDY_PROLIFIC_COMPLETION_URL",
     "https://app.prolific.com/submissions/complete?cc=C1Q8MWKX")
 PROLIFIC_SCREENOUT_URL = _env(
     "STUDY_PROLIFIC_SCREENOUT_URL",
-    "https://app.prolific.com/submissions/complete?cc=C1L7XBXC")
+    "https://app.prolific.com/submissions/complete?cc=C1Q8MWKX")
 
 # Codes inherited from the source survey; used only to warn at startup.
 _SOURCE_SURVEY_CODES = ("C1CRO5LN", "C1L7XBXC")
