@@ -196,8 +196,8 @@ FAILURE_SUBTEXT = "This is a problem on our end, not yours. You can try again."
 FAILURE_RETRY_LABEL = "Try again"
 FAILURE_EXHAUSTED = (
     "We were unable to generate a response after several attempts. "
-    "Please contact the researchers at myra@cs.stanford.edu so we can make sure "
-    "you are compensated for your time."
+    "Please contact the researchers at stephhk@cs.stanford.edu or reach out on "
+    "Prolific so we can make sure you are compensated for your time."
 )
 
 
