@@ -112,14 +112,19 @@ INSECURE_WORKER_TOKEN = "dev-insecure-worker-token"
 
 
 # --- Prolific --------------------------------------------------------------
-# FLAGGED_FOR_REVIEW: these completion codes are carried over from the SOURCE
-# survey's .qsf (screen-out cc=C1L7XBXC, completion cc=C1CRO5LN). They belong
-# to that Prolific study, not to this one. Replace them with the codes for the
-# new Prolific study before launch, via the environment.
+# The COMPLETION code is this study's own (cc=C1Q8MWKX, set 2026-07-31).
+#
+# FLAGGED_FOR_REVIEW: the SCREEN-OUT code is still the source survey's
+# (cc=C1L7XBXC) and pays that Prolific study, not this one. Replace it before
+# launch — screen-outs are shown it on the terminal page.
+#
+# An environment variable still wins over either default, so a stale
+# STUDY_PROLIFIC_COMPLETION_URL/_CODE in the Amplify console would silently
+# override the value below.
 
 PROLIFIC_COMPLETION_URL = _env(
     "STUDY_PROLIFIC_COMPLETION_URL",
-    "https://app.prolific.com/submissions/complete?cc=C1CRO5LN")
+    "https://app.prolific.com/submissions/complete?cc=C1Q8MWKX")
 PROLIFIC_SCREENOUT_URL = _env(
     "STUDY_PROLIFIC_SCREENOUT_URL",
     "https://app.prolific.com/submissions/complete?cc=C1L7XBXC")

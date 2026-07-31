@@ -764,9 +764,18 @@ text is your call, not mine.
 1. **Consent says "approximately twenty minutes" and "$2 USD"**
    (`content.py: CONSENT_BODY`). Without the 8-turn chat and demographics this
    study is roughly 8–10 minutes. Both are IRB-facing.
-2. **Prolific completion codes are the source survey's**
-   (`cc=C1CRO5LN` for completion, `cc=C1L7XBXC` for screen-out). They pay the
-   *old* study. Production startup refuses to boot until you override them.
+2. **The SCREEN-OUT code is still the source survey's** (`cc=C1L7XBXC`), so a
+   screened-out participant is shown a code that pays the *old* study. The
+   completion code is this study's own as of 2026-07-31 (`cc=C1Q8MWKX`).
+
+   **Nothing enforces this any more.** README used to say "production startup
+   refuses to boot until you override them", and that was true when `server.py`
+   called `config.check_production_config()` at boot. There is no server now:
+   `check_production_config()` is called by nothing, and `tools/build_static.py`
+   never looks at the codes, so whatever is in `config.py` (or in an Amplify
+   environment variable, which wins) ships to participants silently. Either
+   restore that check at build time or treat the codes as a manual pre-launch
+   step.
 3. **DV stems say "in this conversation" and "responses" (plural)** — e.g.
    *"Rate how objective the AI chatbot's responses seemed in this
    conversation."* Participants now see one response. Left verbatim to preserve
