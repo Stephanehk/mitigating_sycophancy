@@ -112,15 +112,18 @@ INSECURE_WORKER_TOKEN = "dev-insecure-worker-token"
 
 
 # --- Prolific --------------------------------------------------------------
-# ONE CODE FOR BOTH PATHS: cc=C1Q8MWKX, this study's own (set 2026-07-31).
-# Completers and screened-out participants are shown the same code, at your
-# instruction — Prolific issued one code, and the alternative was leaving
-# screen-outs with the SOURCE survey's cc=C1L7XBXC, which credits that study.
+# TWO CODES, ONE PER PATH (changed 2026-08-01):
+#   cc=C1Q8MWKX  completed the study — they saw a response and answered the battery
+#   cc=C1IXI2WK  screened out — they never got as far as sending anything to the model
 #
-# WHAT THAT MEANS DOWNSTREAM. Prolific cannot tell the two apart, so it cannot
-# pay them differently and its dashboard will not show a screen-out rate. Your
-# own data still can: `eligibility` is 'eligible' vs 'screened_out' on every
-# submission row, so the funnel is recoverable from the export, not from Prolific.
+# This replaces the single shared code set on 2026-07-31. Prolific can now tell
+# the two groups apart and pay them differently, and its dashboard shows a real
+# screen-out rate. Your own data could always tell them apart — `eligibility` is
+# 'eligible' vs 'screened_out' on every submission row — so the export's funnel
+# is a cross-check on Prolific's, not the only copy of it.
+#
+# A DECLINER STILL GETS NO CODE (see views.content_bundle): they did not consent,
+# so there is nothing to pay for and they return the submission instead.
 #
 # An environment variable still wins over either default, so a stale
 # STUDY_PROLIFIC_COMPLETION_URL/_CODE or _SCREENOUT_URL/_CODE in the Amplify
@@ -131,7 +134,7 @@ PROLIFIC_COMPLETION_URL = _env(
     "https://app.prolific.com/submissions/complete?cc=C1Q8MWKX")
 PROLIFIC_SCREENOUT_URL = _env(
     "STUDY_PROLIFIC_SCREENOUT_URL",
-    "https://app.prolific.com/submissions/complete?cc=C1Q8MWKX")
+    "https://app.prolific.com/submissions/complete?cc=C1IXI2WK")
 
 # Codes inherited from the source survey; used only to warn at startup.
 _SOURCE_SURVEY_CODES = ("C1CRO5LN", "C1L7XBXC")
