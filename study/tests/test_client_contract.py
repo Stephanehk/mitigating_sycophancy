@@ -169,8 +169,10 @@ def test_the_client_makes_exactly_the_expected_kinds_of_call(trees):
     regressed into a round trip.
 
     `response_flow` is the newest and the only one that is not strictly about
-    data: it asks which flow this arm walks, because two of the six drop the
-    review page and a page that is not rendered cannot be hidden.
+    data: it asks which flow this arm walks, because two arms drop the review
+    page and a page that is not rendered cannot be hidden. Those two are no
+    longer drawn, but a debug session can still be one, and the call is also
+    where the arm is drawn at eligibility.
     """
     called = set()
     for tree in trees.values():

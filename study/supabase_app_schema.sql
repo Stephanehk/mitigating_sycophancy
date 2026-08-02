@@ -418,6 +418,10 @@ $$;
 
 -- Draw this session's arm, ONCE, and return it.
 --
+-- A UNIFORM THREE-WAY DRAW over prompts.RANDOMIZED_ARMS (ours / untrained /
+-- syco). The retired arms are still legal column values but are never sampled;
+-- only a debug link can produce one.
+--
 -- Sticky by construction: the update only fires while `arm` is null, and the
 -- value is re-read afterwards so a caller that lost a concurrent race still
 -- gets the arm that actually landed. That is what stops a participant re-rolling
@@ -437,7 +441,7 @@ begin
     select arm into v_arm from public.study_sessions where session_id = p_session_id;
     if v_arm is null then
         update public.study_sessions
-           set arm = (array['ours', 'untrained', 'syco', 'neutral', 'ours_noreview', 'untrained_noreview'])[1 + floor(random() * 6)],
+           set arm = (array['ours', 'untrained', 'syco'])[1 + floor(random() * 3)],
                updated_at = now()
          where session_id = p_session_id and arm is null;
         select arm into v_arm from public.study_sessions where session_id = p_session_id;
@@ -472,8 +476,9 @@ $$;
 -- p_debug_condition IS THE ONE WAY TO CHOOSE AN ARM, and it is for walking a
 -- condition by hand (see prompts.DEBUG_CONDITIONS and the /debug_<key> pages).
 -- Random assignment is precisely what you cannot work around when you need to
--- SEE a condition: the two flow arms are 2 of 6, so checking the no-review flow
--- otherwise means restarting until the coin lands.
+-- SEE a condition, and since the draw narrowed to three model arms it is worse
+-- than a coin: no participant is ever assigned a no-review arm, so restarting
+-- the study will never show you that flow.
 --
 -- WHAT KEEPS IT FROM CORRUPTING THE DATA. The session is stamped is_debug, and
 -- the export drops those rows by default, so a forced arm is quarantined rather
@@ -526,20 +531,19 @@ $$;
 
 -- Which flow this participant walks: with the review-and-edit page, or without.
 --
--- WHY THE CLIENT HAS TO ASK. Two of the six arms (SKIP_REVIEW_ARMS) remove the
--- page that shows the participant their concatenated writing and offers it for
--- editing. Skipping a visible page cannot be hidden from the browser, so the
--- arm is drawn here — one page before it is needed — and exactly one bit of it
--- is returned: `show_review`. The arm ITSELF is still never sent.
+-- WHY THE CLIENT HAS TO ASK. Two arms (SKIP_REVIEW_ARMS) remove the page that
+-- shows the participant their concatenated writing and offers it for editing.
+-- Skipping a visible page cannot be hidden from the browser, so the arm is
+-- drawn here — one page before it is needed — and exactly one bit of it is
+-- returned: `show_review`. The arm ITSELF is still never sent.
 --
--- WHAT THAT BIT COSTS, STATED PLAINLY: it partitions the six arms into two
--- observable groups (4 with the page, 2 without). A participant who cleared
--- localStorage and restarted could therefore re-roll until they landed in the
--- group they preferred — which they could always do, but until now could not
--- observe. The within-session guarantees are unchanged: the draw is sticky
--- (session_arm), the job is one-per-session, and which of the four (or which of
--- the two) they got is still unknowable. The alternative — hiding the bit — is
--- not available, because the manipulation IS a visible page.
+-- SINCE THE DRAW NARROWED TO THREE MODEL ARMS this bit is constant for real
+-- participants: none of RANDOMIZED_ARMS skips the page, so every one of them
+-- gets `true` and the bit partitions nothing. It stays because a debug session
+-- can still be a no-review one, and because this call is where the arm is drawn
+-- at the moment of eligibility. The within-session guarantees are unchanged:
+-- the draw is sticky (session_arm), the job is one-per-session, and which of
+-- the three arms a participant got is unknowable to the browser.
 create or replace function public.response_flow(p_token text)
 returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
@@ -556,12 +560,13 @@ $$;
 
 -- Enqueue the generation from the text the participant CONFIRMED.
 --
--- Takes the finished user turn, not the two halves. On the four review arms a
--- page shows the participant exactly what will be sent and lets them edit it
--- before pressing Confirm, so the composition happens in the browser and what
--- arrives here is what they approved; composing it server-side would silently
--- discard their edits. On the two no-review arms the browser composes the same
--- string and sends it without showing it — identical input, one fewer page.
+-- Takes the finished user turn, not the two halves. On the review arms — which
+-- is every arm a participant can now be drawn into — a page shows them exactly
+-- what will be sent and lets them edit it before pressing Confirm, so the
+-- composition happens in the browser and what arrives here is what they
+-- approved; composing it server-side would silently discard their edits. On the
+-- two no-review arms (debug links only) the browser composes the same string
+-- and sends it without showing it — identical input, one fewer page.
 --
 -- The floor is min_describe + min_perspective, i.e. the same total the two
 -- separate pages already enforced, so editing cannot be used to get past the

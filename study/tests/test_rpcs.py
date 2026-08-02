@@ -34,7 +34,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import questionnaires
 import scenarios
-from prompts import ARMS, DEBUG_CONDITIONS, SKIP_REVIEW_ARMS
+from prompts import (ARMS, DEBUG_CONDITIONS, RANDOMIZED_ARMS, RETIRED_ARMS,
+                     SKIP_REVIEW_ARMS)
 
 DESC = "I did not invite my sibling to my birthday party because I only had six seats."
 PERS = "My side is that the table was genuinely too small and I meant no slight by it."
@@ -189,17 +190,24 @@ def test_screening_order_is_a_permutation_and_varies(anon, service, clean):
     assert len(orders) > 1, "screening order never changed across 12 sessions"
 
 
-def test_every_arm_is_reachable(anon, service, worker_token, clean):
-    # 60 draws for 6 arms: missing one has probability 6*(5/6)^60 ≈ 1e-4, so a
-    # failure here means an arm is genuinely unreachable, not bad luck.
+def test_the_draw_reaches_every_randomized_arm_and_no_other(
+        anon, service, worker_token, clean):
+    """Both halves of the 2026-08-01 narrowing, in one loop.
+
+    REACHABLE: 60 draws over 3 arms — missing one has probability
+    3*(2/3)^60 ≈ 1e-10, so a failure is a genuinely unreachable arm, not bad
+    luck. NOT DRAWN: a retired arm appearing even once means the deployed
+    session_arm is still sampling prompts.ARMS, which would put participants
+    into conditions the study no longer runs.
+    """
     drawn = set()
     for _ in range(60):
         session = start(anon)
         request_generation(anon, session)
         drawn.add(arm_of(service, session))
-        if drawn == set(ARMS):
-            break
-    assert drawn == set(ARMS), "only drew %s in 60 sessions" % sorted(drawn)
+    assert drawn == set(RANDOMIZED_ARMS), "drew %s in 60 sessions" % sorted(drawn)
+    assert not (drawn & set(RETIRED_ARMS)), (
+        "a retired arm was drawn: %s" % sorted(drawn & set(RETIRED_ARMS)))
 
 
 # --- 2b. The flow fork: which arms show the review page --------------------
@@ -207,21 +215,21 @@ def test_every_arm_is_reachable(anon, service, worker_token, clean):
 def test_the_flow_answer_matches_the_arm_that_was_drawn(anon, service, clean):
     """The whole contract of response_flow, checked against the arm it drew.
 
-    Two of the six arms drop the review-and-edit page. Loops until both answers
-    have been observed, so this cannot pass by only ever seeing `true`.
+    Since the draw narrowed to three model arms, none of which skips the page,
+    a real participant always gets `true` — so this asserts the CONSISTENCY
+    (the answer is a function of the arm) and pins the constant. The `false`
+    branch is exercised by the debug-link tests below, which are now the only
+    way to reach it at all.
     """
-    seen = set()
-    for _ in range(60):
+    for _ in range(20):
         session = start(anon)
         flow = ask_flow(anon, session)
         arm = arm_of(service, session)
         assert arm is not None, "response_flow returned without drawing an arm"
         assert flow["show_review"] is (arm not in SKIP_REVIEW_ARMS), (
             "arm %s got show_review=%s" % (arm, flow["show_review"]))
-        seen.add(flow["show_review"])
-        if seen == {True, False}:
-            break
-    assert seen == {True, False}, "only ever saw show_review=%s" % sorted(seen)
+        assert flow["show_review"] is True, (
+            "a randomized participant skipped the review page on arm %s" % arm)
 
 
 def test_the_flow_call_leaks_nothing_but_the_bit(anon, clean):
@@ -272,7 +280,7 @@ def test_a_client_that_never_asks_the_flow_still_gets_an_arm(anon, service, clea
     still draw, or the job would carry a null arm."""
     session = start(anon)
     request_generation(anon, session)
-    assert arm_of(service, session) in set(ARMS)
+    assert arm_of(service, session) in set(RANDOMIZED_ARMS)
 
 
 def test_the_flow_rejects_an_unknown_token(anon, clean):

@@ -2,6 +2,8 @@
 
 The arm definitions are the study's independent variable, so the properties
 that make the manipulation valid are asserted here rather than trusted:
+  - assignment draws from three arms only (RANDOMIZED_ARMS), and the three
+    retired ones stay defined so old rows and the debug links keep working
   - every arm receives the SAME shared system prompt ([ETHICS] only)
   - `syco` differs from that shared prompt by exactly one appended section
   - the removed sections ([ROLE], [CONTEXT], [GUIDING PRINCIPLES],
@@ -32,6 +34,50 @@ USER_TEXT = prompts.build_user_turn(OWN_DESCRIPTION, PERSPECTIVE)
 
 REMOVED_SECTIONS = ("[ROLE]", "[CONTEXT]", "[GUIDING PRINCIPLES]",
                     "[TONE AND FORMATTING - IMPORTANT]", "[TOPIC]")
+
+
+# --- What random assignment draws from -------------------------------------
+# Narrowed on 2026-08-01 to the three model conditions. These pin the narrowing
+# itself, since nothing else in Python would notice it being undone: the draw
+# lives in SQL, and ARMS deliberately still lists all six.
+
+def test_assignment_draws_the_three_model_arms():
+    assert set(prompts.RANDOMIZED_ARMS) == {prompts.ARM_OURS,
+                                            prompts.ARM_UNTRAINED,
+                                            prompts.ARM_SYCO}
+    assert set(prompts.RETIRED_ARMS) == set(prompts.ARMS) - set(prompts.RANDOMIZED_ARMS)
+
+
+def test_the_retired_arms_are_still_defined_and_still_buildable():
+    """Retired, not deleted. Rows already collected under them have to stay
+    legal values, and the debug links still force the two no-review ones."""
+    assert set(prompts.RETIRED_ARMS) == {prompts.ARM_NEUTRAL,
+                                         prompts.ARM_OURS_NOREVIEW,
+                                         prompts.ARM_UNTRAINED_NOREVIEW}
+    for arm in prompts.RETIRED_ARMS:
+        assert arm in prompts.ARMS
+        plan = prompts.build_generation_plan(arm, USER_TEXT)
+        assert plan["arm"] == arm and plan["stages"]
+
+
+def test_no_randomized_arm_manipulates_the_flow():
+    """Why response_flow now answers True for every real participant: the flow
+    fork is reachable only through a debug link."""
+    assert not (set(prompts.RANDOMIZED_ARMS) & set(prompts.SKIP_REVIEW_ARMS))
+    for arm in prompts.RANDOMIZED_ARMS:
+        assert prompts.shows_review(arm) is True
+
+
+def test_every_randomized_arm_is_a_distinct_single_stage_generation():
+    """The three-way contrast is one model call each, differing in adapter and
+    system prompt — so nothing in the draw shares a generation with anything
+    else, the way the no-review pairs deliberately do."""
+    plans = [prompts.build_generation_plan(arm, USER_TEXT)
+             for arm in prompts.RANDOMIZED_ARMS]
+    for plan in plans:
+        assert len(plan["stages"]) == 1
+    signatures = {(p["adapter"], p["stages"][0]["system"]) for p in plans}
+    assert len(signatures) == len(plans), "two drawable arms generate identically"
 
 
 # --- The shared system prompt ---------------------------------------------

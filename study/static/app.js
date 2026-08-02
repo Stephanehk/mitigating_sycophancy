@@ -43,9 +43,11 @@
  * dataset; that is what makes it safe to leave unsecured.
  *
  * The ONE thing the database now tells this file about the arm is `show_review`
- * — two of the six arms drop the review-and-edit page, and a page that is not
- * rendered cannot be hidden from the browser. It is a single bit that separates
- * four arms from two; which arm inside either group is still unknowable here.
+ * — two arms drop the review-and-edit page, and a page that is not rendered
+ * cannot be hidden from the browser. Since assignment narrowed to the three
+ * model arms (2026-08-01) that bit is constant `true` for real participants:
+ * only a debug session can be a no-review one. Which of the three arms this
+ * participant got is still unknowable here.
  *
  * Resilience:
  *   - Session token AND the answer payload live in localStorage, so a refresh
@@ -425,10 +427,10 @@
 
   /* The condition key a /debug_<key> link is asking for, or null.
    *
-   * FOR WALKING A CONDITION BY HAND, not for participants. Two of the six arms
-   * remove a page, and random assignment is exactly what you cannot work around
-   * when you need to SEE that: otherwise you restart the study until the coin
-   * lands. start_session turns the key into an arm and flags the session, so
+   * FOR WALKING A CONDITION BY HAND, not for participants. Two arms remove a
+   * page, and they are no longer drawn at all — so these links are the only way
+   * to see that flow; restarting the study will never produce it.
+   * start_session turns the key into an arm and flags the session, so
    * these sessions are quarantined from the export (see prompts.py).
    *
    * TWO SPELLINGS, ON PURPOSE. `/debug_c1` is the link you type: Amplify serves

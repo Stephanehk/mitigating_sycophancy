@@ -3,8 +3,9 @@
 A self-contained web study adapted from `syco_label_mitigations_-_Copy_for_stephane.qsf`.
 Participants are screened onto an interpersonal dilemma they have personally
 experienced, write their side of the story, are shown **one** AI response
-generated live by one of six randomly assigned arms, and then answer the
-source survey's reflection battery about that response.
+generated live by one of **three** randomly assigned arms (our model, the
+untrained base, the sycophantic base), and then answer the source survey's
+reflection battery about that response.
 
 Everything — the app, the GPU worker, the tests, and the analysis export —
 lives in this directory.
@@ -114,20 +115,23 @@ pin the first row of that table.
 
 #### The one bit that does leak, and why it has to
 
-Two of the six arms remove the review-and-edit page. A page that is not
-rendered cannot be hidden from the browser, so `response_flow` returns
-`show_review` — one boolean that splits the six arms into an observable 4 and 2.
-Stated plainly:
+Two arms remove the review-and-edit page. A page that is not rendered cannot be
+hidden from the browser, so `response_flow` returns `show_review` — one boolean
+derived from the arm. Stated plainly:
 
-- **What it does not give up.** Which of the four, or which of the two, is still
+- **Since 2026-08-01 it leaks nothing.** No arm in the draw skips the page, so
+  every real participant gets `true` and the bit partitions nothing. The call
+  stays because a debug session can still be a no-review one, and because it is
+  where the arm is drawn at the moment of eligibility.
+- **What it does not give up.** Which of the three arms a participant got is
   unknowable client-side. The draw is sticky (`session_arm` only writes while
   `arm is null`), so pressing Continue again cannot re-roll it, and
   `start_response` reuses the same draw rather than making its own.
   `tests/test_rpcs.py` pins all three.
-- **What it does.** Someone who cleared `localStorage` and restarted the study
-  could re-roll until they landed in the group they preferred — possible before,
-  but not *observable* before. There is no design that both removes a visible
-  page and hides that it was removed.
+- **What it cost while the flow arms were live.** Someone who cleared
+  `localStorage` and restarted could re-roll until they landed in the group they
+  preferred — possible before, but not *observable* before. There is no design
+  that both removes a visible page and hides that it was removed.
 - **Fail-safe direction.** `S.showReview` is `null` until the call answers, and
   only an explicit `false` drops the page, so a failed or skipped call shows the
   review page rather than silently removing it from an arm that should have had
@@ -143,9 +147,10 @@ Two links enter the study with the condition **forced** instead of drawn:
 | `https://<host>/debug_c2` | C2 | `untrained_noreview` |
 
 They exist because a flow manipulation is the one kind of arm you cannot check by
-hand under random assignment: the no-review arms are 2 of 6, so seeing that page
-disappear otherwise means clearing `localStorage` and restarting until the coin
-lands. Both walk the identical no-review flow — only the model behind the
+hand under random assignment. Since 2026-08-01 they are the **only** way to reach
+that flow: the draw is over the three model arms, none of which skips the page,
+so no amount of restarting will show it to you. Both walk the identical
+no-review flow — only the model behind the
 response differs — so either link is enough to review the *flow*.
 
 How it works, and what keeps it contained:
@@ -231,22 +236,38 @@ relevant check fails.
 
 ---
 
-## 2. The six arms
+## 2. The arms
 
 All of them run on **one** vLLM engine: Qwen3-8B loaded once, with our LoRA
 registered as a hot-swappable named adapter. An arm is selected purely by which
 model name the request addresses.
 
-| Arm | Model addressed | System prompt | Stages | Review page |
-|---|---|---|---|---|
-| `ours` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 | yes |
-| `untrained` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 | yes |
-| `syco` | `Qwen/Qwen3-8B` | shared `[ETHICS]` + `[SYCOPHANCY POLICY]` | 1 | yes |
-| `neutral` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 2 (generate → neutrality edit) | yes |
-| `ours_noreview` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 | **no** |
-| `untrained_noreview` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 | **no** |
+| Arm | Model addressed | System prompt | Stages | Review page | Drawn? |
+|---|---|---|---|---|---|
+| `ours` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 | yes | **yes** |
+| `untrained` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 | yes | **yes** |
+| `syco` | `Qwen/Qwen3-8B` | shared `[ETHICS]` + `[SYCOPHANCY POLICY]` | 1 | yes | **yes** |
+| `neutral` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 2 (generate → neutrality edit) | yes | retired |
+| `ours_noreview` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 | **no** | retired |
+| `untrained_noreview` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 | **no** | retired |
 
-### The last two manipulate the flow, not the model (added 2026-07-30)
+### Assignment is a three-way draw (changed 2026-08-01)
+
+`prompts.RANDOMIZED_ARMS` — `ours`, `untrained`, `syco` — is what the generated
+`session_arm` RPC samples, uniformly. The other three are **retired, not
+deleted**: they keep their prompts and stay in `prompts.ARMS`, which is the
+legal domain of the `arm` column, because rows collected before the change carry
+them and because the `/debug_<key>` links still force the two no-review ones.
+`prompts.RETIRED_ARMS` names them, and
+`tests/test_views.py::test_the_retired_arms_stay_legal_but_undrawable` pins both
+halves of that.
+
+Consequences: every real participant now walks the review-and-edit page, so
+`response_flow` answers `show_review: true` for all of them; and the analysis is
+a three-cell comparison, with any `neutral`/`*_noreview` row in the export
+predating 2026-08-01 or coming from a debug link.
+
+### Two arms manipulate the flow, not the model (added 2026-07-30, retired 2026-08-01)
 
 `ours_noreview` and `untrained_noreview` generate **identically** to `ours` and
 `untrained` — `build_generation_plan` maps each onto its twin's plan rather than
@@ -257,9 +278,10 @@ never get to edit it. The browser composes the same string with the same
 `composeModelInput()` and sends it straight to `start_response`.
 
 So `ours` vs `ours_noreview` isolates the review-and-edit step alone, and
-likewise for `untrained`. It is not a full factorial — `syco` and `neutral` have
-no no-review counterpart — so the review factor is estimable only within those
-two model conditions.
+likewise for `untrained`. It was never a full factorial — `syco` and `neutral`
+have no no-review counterpart — and since the draw narrowed on 2026-08-01 the
+review factor is no longer estimable at all from new data: the only rows in it
+are the ones collected between 07-30 and 08-01.
 
 For the GPU this means four distinct generations, not six:
 `prompts.GENERATION_ARMS` drops the flow-only duplicates, and the smoke test
@@ -786,12 +808,14 @@ text is your call, not mine.
 1. **Consent says "approximately twenty minutes" and "$2 USD"**
    (`content.py: CONSENT_BODY`). Without the 8-turn chat and demographics this
    study is roughly 8–10 minutes. Both are IRB-facing.
-2. **Both paths now show the same code**, `cc=C1Q8MWKX`, this study's own
-   (2026-07-31). Prolific issued one code, so completers and screen-outs are
-   indistinguishable *to Prolific* — it cannot pay them differently and shows no
-   screen-out rate. Recover the funnel from the export instead: `eligibility` is
-   `eligible` vs `screened_out` on every submission row. Decliners still get no
-   code and return the submission.
+2. **Two codes, one per path** (2026-08-01): `cc=C1Q8MWKX` for a completer,
+   `cc=C1IXI2WK` for someone screened out before anything was sent to the model.
+   This replaces the single shared code of 2026-07-31, so Prolific can pay the
+   two groups differently and its dashboard shows a real screen-out rate; the
+   export's `eligibility` column (`eligible` vs `screened_out`) is now a
+   cross-check rather than the only copy of the funnel. **Both codes must exist
+   in the Prolific study** — a code Prolific does not know is a participant who
+   cannot submit. Decliners still get no code and return the submission.
 
    **Nothing enforces this any more.** README used to say "production startup
    refuses to boot until you override them", and that was true when `server.py`
@@ -836,7 +860,7 @@ study/
 ├── content.py            All participant-facing prose, lifted from the .qsf
 ├── questionnaires.py     Scale definitions (DVs, attention check, AI use, Big Five)
 ├── scenarios.py          The four dilemmas + similarity options
-├── prompts.py            The six arms; shared [ETHICS] prompt + composed user turn
+├── prompts.py            The arms (3 drawn, 3 retired); shared [ETHICS] prompt + user turn
 ├── flow.py               Randomization + submission validation (pure logic, no I/O)
 ├── views.py              The one-shot content bundle + the response state
 ├── store.py              The only module that speaks SQL — job queue ONLY

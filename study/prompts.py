@@ -1,5 +1,9 @@
 """Model arms and their prompts for the sycophancy user study.
 
+RANDOM ASSIGNMENT DRAWS FROM THREE ARMS (changed 2026-08-01): `ours`,
+`untrained` and `syco`. The other three are retired but still defined — see
+RANDOMIZED_ARMS below for what that means and why they were not deleted.
+
 Six arms, all served from ONE engine running Qwen/Qwen3-8B with our LoRA
 adapter loaded as a hot-swappable adapter (see worker/vllm_server.py and
 worker/hf_backend.py):
@@ -67,6 +71,36 @@ ARM_UNTRAINED_NOREVIEW = "untrained_noreview"
 ARMS = (ARM_OURS, ARM_UNTRAINED, ARM_SYCO, ARM_NEUTRAL,
         ARM_OURS_NOREVIEW, ARM_UNTRAINED_NOREVIEW)
 
+#: THE ARMS A PARTICIPANT CAN BE DRAWN INTO (changed 2026-08-01). Assignment is
+#: now a three-way draw between our model, the untrained base and the
+#: sycophantic base. This tuple — not ARMS — is what the generated `session_arm`
+#: RPC samples from, so it is the single definition of the randomization.
+#:
+#: THE OTHER THREE ARE RETIRED, NOT DELETED, and the distinction matters in two
+#: places. (1) ARMS is the legal domain of the `arm` column on study_sessions and
+#: study_submissions (emit_arm_domain), and rows collected before this change
+#: carry `neutral`, `ours_noreview` and `untrained_noreview`; narrowing the
+#: constraint to three names would fail against them, which is the correct way
+#: for that to go wrong but not something to provoke. (2) The /debug_<key> links
+#: still force the two no-review arms, so their generation plans and the flow
+#: fork must keep working. What changed is only that nobody is DRAWN into them.
+#:
+#: CONSEQUENCE FOR THE FLOW FORK: no randomized arm skips the review page any
+#: more, so every real participant now walks it and response_flow answers
+#: `show_review: true` for all of them. The call is kept because a debug session
+#: can still be a no-review one — and because removing it would move the arm
+#: draw back to start_response, one page later than eligibility.
+RANDOMIZED_ARMS = (ARM_OURS, ARM_UNTRAINED, ARM_SYCO)
+
+#: Defined arms that assignment no longer reaches. Analysis-facing: a row with
+#: one of these predates 2026-08-01 or came from a debug link.
+RETIRED_ARMS = tuple(a for a in ARMS if a not in RANDOMIZED_ARMS)
+
+assert set(RANDOMIZED_ARMS) <= set(ARMS), "a drawable arm must be a defined arm"
+assert len(set(RANDOMIZED_ARMS)) == len(RANDOMIZED_ARMS), (
+    "a duplicated arm would be drawn at twice the rate of the others"
+)
+
 #: Arms whose participants never see the review page — the composed user turn
 #: goes straight to the model. Consumed by the browser (through the
 #: `response_flow` RPC, which is generated from this tuple) and by nothing else:
@@ -94,11 +128,13 @@ assert set(GENERATION_TWIN.values()) <= set(ARMS)
 #: `/debug_c1` is DEBUG_CONDITIONS["c1"].
 #:
 #: WHY THIS EXISTS. Random assignment is exactly what you cannot work around
-#: when checking a condition by hand: the flow arms are 2 of 6, so walking the
-#: no-review flow means restarting the study until the coin lands. These links
-#: hand `start_session` a condition key, which sets the arm directly INSTEAD of
-#: drawing it — and stamps `is_debug` on the session, so the resulting row is
-#: quarantined from the export rather than counted as a participant.
+#: when checking a condition by hand. Since 2026-08-01 these links are the ONLY
+#: way to reach the no-review flow at all: the draw is a three-way one over
+#: RANDOMIZED_ARMS, none of which skip the review page, so no amount of
+#: restarting the study will show it to you. These links hand `start_session` a
+#: condition key, which sets the arm directly INSTEAD of drawing it — and stamps
+#: `is_debug` on the session, so the resulting row is quarantined from the
+#: export rather than counted as a participant.
 #:
 #: Deliberately NOT secret. The link is powerless against the data because every
 #: session it creates is flagged; a token would add a thing to leak without

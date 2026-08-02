@@ -20,7 +20,7 @@ import content
 import questionnaires
 import scenarios
 import views
-from prompts import ARMS
+from prompts import ARMS, RANDOMIZED_ARMS, RETIRED_ARMS
 
 
 # --- Content bundle --------------------------------------------------------
@@ -61,9 +61,8 @@ def test_the_bundle_never_carries_the_arm_or_any_prompt():
 def test_the_bundle_carries_a_completion_code_where_one_is_owed():
     """Nothing redirects any more; each terminal page shows a code instead.
 
-    Screen-outs and decliners get the SCREEN-OUT code — that is the one Prolific
-    expects for a returned slot, and paying them the completion code would be
-    wrong.
+    Completers and screen-outs get DIFFERENT codes (2026-08-01), so Prolific can
+    pay the two groups differently; a decliner gets none.
     """
     terminal = views.content_bundle()["terminal"]
     assert set(terminal) == {"complete", "screened_out", "declined"}
@@ -71,6 +70,17 @@ def test_the_bundle_carries_a_completion_code_where_one_is_owed():
     assert terminal["screened_out"]["code"] == config.PROLIFIC_SCREENOUT_CODE
     for name, entry in terminal.items():
         assert "redirect_url" not in entry, "%s still carries a redirect URL" % name
+
+
+def test_a_screen_out_and_a_completer_are_paid_under_different_codes():
+    """The 2026-08-01 change. Sharing one code was deliberate before, so this
+    pins the split: a completer's code on a screen-out would pay a full
+    completion for a screening, and Prolific's screen-out rate would vanish
+    again."""
+    assert config.PROLIFIC_SCREENOUT_CODE != config.PROLIFIC_COMPLETION_CODE, (
+        "screen-outs and completers are sharing a Prolific code again")
+    assert config.PROLIFIC_COMPLETION_CODE == "C1Q8MWKX"
+    assert config.PROLIFIC_SCREENOUT_CODE == "C1IXI2WK"
 
 
 def test_a_decliner_is_given_no_completion_code():
@@ -150,6 +160,32 @@ def test_the_generated_schema_constrains_the_arm_column_to_exactly_the_arms():
     assert sql.count(expected) == 2, (
         "the generated arm domain does not match prompts.ARMS; expected %r"
         % (expected,))
+
+
+def test_the_generated_draw_samples_exactly_the_randomized_arms():
+    """The 2026-08-01 narrowing lives in ONE emitted expression, so this is the
+    only place it can be checked without a database.
+
+    Pinned against RANDOMIZED_ARMS *and* against the count, because the array
+    and the modulus are written separately: an array of three with a `* 6` would
+    index past the end a third of the time and set the arm to null.
+    """
+    sql = _sql("supabase_app_schema.sql")
+    expected = ("set arm = (array[%s])[1 + floor(random() * %d)]"
+                % (", ".join("'%s'" % arm for arm in RANDOMIZED_ARMS),
+                   len(RANDOMIZED_ARMS)))
+    assert expected in sql, "the generated draw is not prompts.RANDOMIZED_ARMS"
+
+
+def test_the_retired_arms_stay_legal_but_undrawable():
+    """Both halves of retiring an arm rather than deleting it: it must still
+    pass the column constraint (rows collected under it exist, and a debug link
+    still forces one) while never appearing in the draw."""
+    sql = _sql("supabase_app_schema.sql")
+    draw = sql.split("set arm = ")[1].split("\n")[0]
+    for arm in RETIRED_ARMS:
+        assert "'%s'" % arm in sql, "%s is no longer a legal arm value" % arm
+        assert "'%s'" % arm not in draw, "%s is still being drawn" % arm
 
 
 def test_no_hand_written_schema_file_hardcodes_the_arm_list():
