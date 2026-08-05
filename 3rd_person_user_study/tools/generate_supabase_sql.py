@@ -149,6 +149,12 @@ create table if not exists public.pref_items (
            = (cat_a = target_cat_a and cat_b = target_cat_b))
 );
 
+-- For a project whose pref_items predates the column: the `create table if not
+-- exists` above is a no-op there, so the column has to be added explicitly.
+-- NULLABLE here and tightened after the seed below, because the rows that exist
+-- at this point have no set yet.
+alter table public.pref_items add column if not exists set_index integer;
+
 -- The per-session draw: presentation order, and which arm went on which side.
 -- WHY THIS TABLE EXISTS AT ALL rather than the browser shuffling locally: it is
 -- the record of the randomization. A client-side shuffle would mean the side a
@@ -214,6 +220,12 @@ Q2_MIGRATION = """
 -- well as in the create above so an existing project gains them; they sit AFTER
 -- the item truncate in the assembled file, where the table is already empty, so
 -- `set not null` cannot fail against rows that never had a Q2 answer.
+-- pref_items is freshly seeded by the block above, so every row has a set now.
+alter table public.pref_items alter column set_index set not null;
+alter table public.pref_items drop constraint if exists pref_items_set_index_check;
+alter table public.pref_items add constraint pref_items_set_index_check
+    check (set_index >= 1);
+
 alter table public.pref_judgments add column if not exists realize_choice text;
 alter table public.pref_judgments add column if not exists realize_model text;
 alter table public.pref_judgments add column if not exists reasoning text;

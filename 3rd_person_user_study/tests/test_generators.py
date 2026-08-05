@@ -322,3 +322,54 @@ def test_the_build_path_imports_without_pandas():
     assert done.returncode == 0, (
         "the static build needs pandas, so the Pages deploy will fail:\n"
         + done.stderr)
+
+
+#: Columns added to a table AFTER it first shipped, and so present in some
+#: projects and not others. Every one needs an `add column if not exists`; a
+#: column from a table's original shape does not, which is why this is a list
+#: and not a rule derived from the create blocks.
+#:
+#: ADD TO THIS WHEN YOU ADD A COLUMN.
+LATER_COLUMNS = [
+    ("pref_sessions", "prolific_pid"),
+    ("pref_sessions", "set_index"),
+    ("pref_items", "set_index"),
+    ("pref_judgments", "realize_choice"),
+    ("pref_judgments", "realize_model"),
+    ("pref_judgments", "reasoning"),
+]
+
+
+def test_later_columns_reach_a_database_that_already_has_the_table(schema_sql):
+    """THE BUG THIS EXISTS FOR. Every table here is `create table if not
+    exists`, so against a project that already has the table the create is a
+    NO-OP and a newly-declared column is never added. The failure lands at the
+    first statement that references it -- for set_index that was the item seed,
+    hundreds of lines later, with the schema half-applied and the run aborted.
+    """
+    for table, column in LATER_COLUMNS:
+        assert f"alter table public.{table} add column if not exists {column}" \
+            in schema_sql, f"{table}.{column} never reaches an existing project"
+
+
+def test_the_later_column_list_is_not_stale(schema_sql):
+    """A name that has been renamed or dropped would sit in LATER_COLUMNS
+    forever, and the test above would keep passing on an alter for a column
+    nothing else mentions."""
+    for table, column in LATER_COLUMNS:
+        block = re.search(
+            r"create table if not exists public\.%s \(\n(.*?)\n\);" % table,
+            schema_sql, re.S)
+        assert block, f"no create-table for {table}"
+        assert re.search(r"^\s*%s\s" % column, block.group(1), re.M), \
+            f"{table}.{column} is in LATER_COLUMNS but not in the table"
+
+
+def test_set_index_is_populated_before_it_is_required(schema_sql):
+    """Order matters as much as presence: the column is added nullable, the seed
+    fills it, and only then is it made NOT NULL. Tightening it first would fail
+    on the rows already there."""
+    added = schema_sql.index("alter table public.pref_items add column if not exists set_index")
+    seeded = schema_sql.index("insert into public.pref_items (")
+    required = schema_sql.index("alter table public.pref_items alter column set_index set not null")
+    assert added < seeded < required, (added, seeded, required)
