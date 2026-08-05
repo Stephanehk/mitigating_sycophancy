@@ -10,18 +10,46 @@ split, which judged files) is here, so `build_items.py` contains only sampling
 logic and the SQL/static generators contain only serialization.
 """
 
+import hashlib
+import json
 import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 
-# The canonical condition -> scored-file map, imported rather than copied so the
-# item set cannot drift from the files the paper's tables are computed over.
-# `endorse_labels()` in training_mitigations/eval/build_results_tables.py reads
-# exactly these files for exactly these condition keys.
-sys.path.insert(0, os.path.join(REPO, "training_mitigations", "eval"))
-from run_quality_judges_pas import CONDITIONS_BY_ENV, V5_DIR  # noqa: E402
+def scored_sources():
+    """(CONDITIONS_BY_ENV, V5_DIR) — the canonical condition -> scored-file map.
+
+    Imported rather than copied so the item set cannot drift from the files the
+    paper's tables are computed over: `endorse_labels()` in
+    training_mitigations/eval/build_results_tables.py reads exactly these files
+    for exactly these condition keys.
+
+    IMPORTED LAZILY, and that is load-bearing. run_quality_judges_pas pulls in
+    pandas, which only building the item set needs -- the deploy workflow
+    installs nothing and just serializes an already-built data/items.json. While
+    this was a module-level import, every Pages run died here on
+    `ModuleNotFoundError: No module named 'pandas'` before reaching the build.
+    """
+    sys.path.insert(0, os.path.join(REPO, "training_mitigations", "eval"))
+    from run_quality_judges_pas import CONDITIONS_BY_ENV, V5_DIR
+    return CONDITIONS_BY_ENV, V5_DIR
+
+
+def items_digest(items):
+    """sha256 over the item set, so a session can pin the exact text it showed
+    without the database having to store any of it.
+
+    Here rather than in build_items.py because the digest is the CONTRACT
+    between the page, the schema and the database -- and because the two tools
+    that check it (build_static.py, local_server.py) must not have to import the
+    sampling pipeline, and its pandas dependency, to do so.
+    """
+    payload = json.dumps(items, ensure_ascii=False, sort_keys=True,
+                         separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
 
 DATA_DIR = os.path.join(HERE, "data")
 STATIC_DIR = os.path.join(HERE, "static")

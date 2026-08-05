@@ -23,7 +23,6 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _STUDY = os.path.dirname(_HERE)
 sys.path.insert(0, _STUDY)
 
-import build_items
 import config
 
 LABELS_JS = os.path.join(_HERE, "debug_labels.js")
@@ -57,7 +56,7 @@ def load_items():
         f"missing {config.ITEMS_PATH} -- run build_items.py first")
     with open(config.ITEMS_PATH, encoding="utf-8") as handle:
         bundle = json.load(handle)
-    digest = build_items.items_digest(bundle["items"])
+    digest = config.items_digest(bundle["items"])
     assert digest == bundle["items_sha256"], "data/items.json digest is stale"
     return bundle
 

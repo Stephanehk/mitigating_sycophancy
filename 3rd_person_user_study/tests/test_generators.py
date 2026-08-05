@@ -14,6 +14,9 @@ ones that a syntax check would NOT catch anyway and that matter most:
 import json
 import os
 import re
+import subprocess
+import sys
+import textwrap
 
 import pytest
 
@@ -306,3 +309,32 @@ def test_the_generated_files_are_not_committed():
         ignored = handle.read()
     for name in ("static/__debug_arms.json", "static/debug_labels.js"):
         assert name in ignored, f"{name} is not gitignored"
+
+
+def test_the_build_path_imports_without_pandas():
+    """The deploy workflow installs nothing and only serializes an already-built
+    data/items.json, so nothing it imports may need the sampling pipeline.
+
+    This is not hypothetical: config.py imported run_quality_judges_pas at module
+    scope, and every Pages run died on `No module named 'pandas'` before reaching
+    the build. Run in a subprocess with the import blocked, because pandas IS
+    importable in the dev env -- checking sys.modules here would prove nothing.
+    """
+    guard = textwrap.dedent("""
+        import builtins, sys
+        real_import = builtins.__import__
+        def guard(name, *a, **k):
+            if name.split(".")[0] == "pandas":
+                raise ModuleNotFoundError("No module named 'pandas'")
+            return real_import(name, *a, **k)
+        builtins.__import__ = guard
+        sys.path.insert(0, %r)
+        sys.path.insert(0, %r)
+        import config, debug_arms, build_static
+        build_static.client_bundle()
+    """) % (os.path.join(config.HERE, "tools"), config.HERE)
+    done = subprocess.run([sys.executable, "-c", guard], capture_output=True,
+                          text=True)
+    assert done.returncode == 0, (
+        "the static build needs pandas, so the Pages deploy will fail:\n"
+        + done.stderr)

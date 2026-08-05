@@ -58,10 +58,11 @@ def load_arm(env, arm):
     Concatenates the arm's scored shards in the order CONDITIONS_BY_ENV lists
     them. Asserts assumptions 1-4 for this arm.
     """
-    files = config.CONDITIONS_BY_ENV[env][config.ARMS[arm]]
+    conditions_by_env, v5_dir = config.scored_sources()
+    files = conditions_by_env[env][config.ARMS[arm]]
     frames = []
     for name in files:
-        path = os.path.join(config.V5_DIR, name)
+        path = os.path.join(v5_dir, name)
         assert os.path.exists(path), f"missing scored frame: {path}"
         frames.append(pd.read_csv(path, usecols=["sentence", "response",
                                                  "endorse_response"]))
@@ -290,12 +291,11 @@ def draw(pools_by_block, seed):
     return items, manifest
 
 
-def items_digest(items):
-    """sha256 over the item set, so a session can pin the exact text it showed
-    without the database having to store any of it."""
-    payload = json.dumps(items, ensure_ascii=False, sort_keys=True,
-                         separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+#: Re-exported from config, where it moved so that build_static.py and
+#: local_server.py can check a digest without importing this module and its
+#: pandas dependency. Existing `build_items.items_digest(...)` callers keep
+#: working, and there is still only one definition.
+items_digest = config.items_digest
 
 
 def main():
