@@ -3,9 +3,9 @@
 A self-contained web study adapted from `syco_label_mitigations_-_Copy_for_stephane.qsf`.
 Participants are screened onto an interpersonal dilemma they have personally
 experienced, write their side of the story, are shown **one** AI response
-generated live by one of **three** randomly assigned arms (our model, the
-untrained base, the sycophantic base), and then answer the source survey's
-reflection battery about that response.
+generated live by one of **two** randomly assigned arms (our model or the
+untrained base — in both cases what they wrote goes to the model unedited), and
+then answer the source survey's reflection battery about that response.
 
 Everything — the app, the GPU worker, the tests, and the analysis export —
 lives in this directory.
@@ -17,7 +17,7 @@ lives in this directory.
 | | Source `.qsf` | This study |
 |---|---|---|
 | Interaction | 8-turn chat with gpt-4o | **One** response, no follow-up |
-| Randomized factor | 4-way sycophancy *label* (3 banners + unlabeled) | 6-way **arm**: 4 model arms + 2 no-review variants |
+| Randomized factor | 4-way sycophancy *label* (3 banners + unlabeled) | 2-way **arm**: our model vs the untrained base, both no-review (6 arms defined, 4 retired) |
 | Disclaimer | Varied by condition | **Fixed** for everyone: *"Note: This chatbot is AI, not human."* |
 | Demographics (age/gender/race) | Present | **Removed** |
 | Debrief | Two variants (syco / non-syco) | **One shared** debrief |
@@ -39,12 +39,13 @@ prolific_id ─▶ prelude ─▶ screening (4 scenarios, random order, one per 
               ┌──────────────┴───────────── no "Very similar" ──▶ screened_out ──▶ Prolific
               │ first "Very similar" selects the scenario
               ▼
-        perspective ─▶ response_intro ─┬─▶ review_input ─▶ response (loading ─▶ reply)
-                            │          │      4 review arms: the composed text is
-                            │          │      shown and can be edited before Confirm
-                            │          └─▶ response
-                            │                 2 no-review arms: the same text is sent
-                            │                 without being shown
+        perspective ─▶ response_intro ─┬─▶ response (loading ─▶ reply)
+                            │          │      both drawn arms (no-review): the two
+                            │          │      halves are composed and sent unshown
+                            │          └─▶ review_input ─▶ response
+                            │                 4 retired review arms only: the
+                            │                 composed text is shown and can be
+                            │                 edited before Confirm
                             │
                             │  the arm is drawn HERE, server-side, on the
                             │  response_flow call — so screen-outs consume no
@@ -103,7 +104,7 @@ the response page, not that people wandered off.
 | Fact | Where | Why it cannot move to the browser |
 |---|---|---|
 | **model arm** | drawn in `response_flow` (or `start_response`, whichever comes first), stored on the session, **never sent to the client** | a client-side draw could be re-rolled from devtools until the participant got the arm they wanted |
-| **a forced arm** | `start_session(p_debug_condition => 'c1')`, from a `/debug_c1` link; stamps `is_debug` on the session | the one sanctioned override, for walking a flow condition by hand — see below |
+| **a forced arm** | `start_session(p_debug_condition => 'c1')`, from a `/debug_c1` link; stamps `is_debug` on the session | the one sanctioned override, for walking a condition by hand with the model named — see below |
 | **which flow** | derived from the arm inside `response_flow`, which returns the single boolean `show_review` | this one bit *is* visible — see below |
 | **one job per session** | `/api/response/start` is idempotent | otherwise the response could be regenerated until they liked it |
 | `user_text`, `shown_response`, `stages` | read off the job row at submit | the client's copy is display-only; the merged row uses the server's |
@@ -119,23 +120,26 @@ Two arms remove the review-and-edit page. A page that is not rendered cannot be
 hidden from the browser, so `response_flow` returns `show_review` — one boolean
 derived from the arm. Stated plainly:
 
-- **Since 2026-08-01 it leaks nothing.** No arm in the draw skips the page, so
-  every real participant gets `true` and the bit partitions nothing. The call
-  stays because a debug session can still be a no-review one, and because it is
-  where the arm is drawn at the moment of eligibility.
-- **What it does not give up.** Which of the three arms a participant got is
+- **Since 2026-08-05 it leaks nothing.** *Both* arms in the draw skip the page, so
+  every real participant gets `false` and the bit partitions nothing. The call is
+  still load-bearing: `false` is what tells the browser to drop the page and
+  enqueue the generation itself, and it is where the arm is drawn at the moment of
+  eligibility.
+- **What it does not give up.** *Which* of the two arms a participant got is
   unknowable client-side. The draw is sticky (`session_arm` only writes while
   `arm is null`), so pressing Continue again cannot re-roll it, and
   `start_response` reuses the same draw rather than making its own.
   `tests/test_rpcs.py` pins all three.
-- **What it cost while the flow arms were live.** Someone who cleared
-  `localStorage` and restarted could re-roll until they landed in the group they
-  preferred — possible before, but not *observable* before. There is no design
-  that both removes a visible page and hides that it was removed.
+- **What it cost while both flows were live (2026-07-30 → 08-01).** Someone who
+  cleared `localStorage` and restarted could re-roll until they landed in the
+  group they preferred — possible before, but not *observable* before. There is no
+  design that both removes a visible page and hides that it was removed. With the
+  flow now constant, the bit distinguishes nobody from nobody.
 - **Fail-safe direction.** `S.showReview` is `null` until the call answers, and
-  only an explicit `false` drops the page, so a failed or skipped call shows the
-  review page rather than silently removing it from an arm that should have had
-  one.
+  only an explicit `false` drops the page. The failure mode that matters is a
+  client proceeding *without* an answer, and this default makes it show a page
+  rather than send text nobody confirmed. In practice a failed call does not
+  proceed at all: `response_intro` re-enables Continue and surfaces the error.
 
 #### Walking a condition by hand
 
@@ -146,12 +150,17 @@ Two links enter the study with the condition **forced** instead of drawn:
 | `https://<host>/debug_c1` | C1 | `ours_noreview` |
 | `https://<host>/debug_c2` | C2 | `untrained_noreview` |
 
-They exist because a flow manipulation is the one kind of arm you cannot check by
-hand under random assignment. Since 2026-08-01 they are the **only** way to reach
-that flow: the draw is over the three model arms, none of which skips the page,
-so no amount of restarting will show it to you. Both walk the identical
-no-review flow — only the model behind the
-response differs — so either link is enough to review the *flow*.
+They exist because random assignment is exactly what stops you looking at a
+condition on purpose. Since 2026-08-05 the draw is over these same two arms, so a
+link no longer reaches a flow you could not otherwise see — what it gives you is
+**knowing which model is answering**, which the draw hides. Both walk the
+identical no-review flow that every participant walks; only the model behind the
+response differs.
+
+Note the flip side: the review-and-edit page is now reachable by **nobody** — no
+arm in the draw shows it and no debug link forces one that does. Add a key to
+`prompts.DEBUG_CONDITIONS` (and re-run `tools/build_static.py`) if it needs
+walking again.
 
 How it works, and what keeps it contained:
 
@@ -244,30 +253,44 @@ model name the request addresses.
 
 | Arm | Model addressed | System prompt | Stages | Review page | Drawn? |
 |---|---|---|---|---|---|
-| `ours` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 | yes | **yes** |
-| `untrained` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 | yes | **yes** |
-| `syco` | `Qwen/Qwen3-8B` | shared `[ETHICS]` + `[SYCOPHANCY POLICY]` | 1 | yes | **yes** |
+| `ours` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 | yes | retired |
+| `untrained` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 | yes | retired |
+| `syco` | `Qwen/Qwen3-8B` | shared `[ETHICS]` + `[SYCOPHANCY POLICY]` | 1 | yes | retired |
 | `neutral` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 2 (generate → neutrality edit) | yes | retired |
-| `ours_noreview` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 | **no** | retired |
-| `untrained_noreview` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 | **no** | retired |
+| `ours_noreview` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 | **no** | **yes** |
+| `untrained_noreview` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 | **no** | **yes** |
 
-### Assignment is a three-way draw (changed 2026-08-01)
+### Assignment is a two-way draw (changed 2026-08-05)
 
-`prompts.RANDOMIZED_ARMS` — `ours`, `untrained`, `syco` — is what the generated
-`session_arm` RPC samples, uniformly. The other three are **retired, not
-deleted**: they keep their prompts and stay in `prompts.ARMS`, which is the
-legal domain of the `arm` column, because rows collected before the change carry
-them and because the `/debug_<key>` links still force the two no-review ones.
-`prompts.RETIRED_ARMS` names them, and
+`prompts.RANDOMIZED_ARMS` — `ours_noreview` and `untrained_noreview` — is what the
+generated `session_arm` RPC samples, uniformly. Our model against the untrained
+base, with **neither group editing the model's input**: the composed user turn
+goes straight to the model, so nothing about what the model sees is under the
+participant's control after they finish writing.
+
+That leaves **one factor**. Both arms share their system prompt, their stage
+count, their flow and their user turn, and differ only in which model the request
+addresses — so a difference in the DVs cannot be attributed to the sycophancy
+policy, to a second editing stage, or to one group having reworded their prompt.
+`tests/test_prompts.py::test_every_randomized_arm_skips_the_review_page` and
+`::test_every_randomized_arm_is_a_distinct_single_stage_generation` pin both
+halves; the draw itself is pinned in SQL by
+`tests/test_views.py::test_the_generated_draw_samples_exactly_the_randomized_arms`.
+
+The other four are **retired, not deleted**: they keep their prompts and stay in
+`prompts.ARMS`, which is the legal domain of the `arm` column, because rows
+collected before the change carry them — and because keeping them buildable makes
+re-widening the draw a one-line edit. `prompts.RETIRED_ARMS` names them, and
 `tests/test_views.py::test_the_retired_arms_stay_legal_but_undrawable` pins both
 halves of that.
 
-Consequences: every real participant now walks the review-and-edit page, so
-`response_flow` answers `show_review: true` for all of them; and the analysis is
-a three-cell comparison, with any `neutral`/`*_noreview` row in the export
-predating 2026-08-01 or coming from a debug link.
+Consequences: no real participant walks the review-and-edit page any more, so
+`response_flow` answers `show_review: false` for all of them; the analysis is a
+two-cell comparison; and any `syco`/`neutral`/`ours`/`untrained` row in the export
+predates 2026-08-05. The draw history is layered — four arms until 2026-07-30, six
+until 08-01, three until 08-05, two after — which matters when pooling.
 
-### Two arms manipulate the flow, not the model (added 2026-07-30, retired 2026-08-01)
+### The two drawn arms manipulate the flow, not the model (added 2026-07-30, the only drawn arms since 2026-08-05)
 
 `ours_noreview` and `untrained_noreview` generate **identically** to `ours` and
 `untrained` — `build_generation_plan` maps each onto its twin's plan rather than
@@ -279,9 +302,11 @@ never get to edit it. The browser composes the same string with the same
 
 So `ours` vs `ours_noreview` isolates the review-and-edit step alone, and
 likewise for `untrained`. It was never a full factorial — `syco` and `neutral`
-have no no-review counterpart — and since the draw narrowed on 2026-08-01 the
-review factor is no longer estimable at all from new data: the only rows in it
-are the ones collected between 07-30 and 08-01.
+have no no-review counterpart — and the review factor is not estimable from new
+data: it was in the draw only between 07-30 and 08-01, and since 08-05 the
+no-review side of it is *all* that is drawn. The comparison the study now runs
+(`ours_noreview` vs `untrained_noreview`) is the model contrast, on the flow where
+the model's input is fixed at what the participant wrote.
 
 For the GPU this means four distinct generations, not six:
 `prompts.GENERATION_ARMS` drops the flow-only duplicates, and the smoke test
@@ -409,8 +434,9 @@ browser and costs no HTTP at all.
 
 **Request lifecycle.** The participant presses Continue on the response-intro
 page → the client asks `response_flow` which flow this arm walks → it posts the
-composed text, either straight away (no-review arms) or after the participant
-confirms it on the review page → the database inserts a `pending` job → the
+composed text, straight away on the no-review arms (which since 2026-08-05 is
+everyone) or after the participant confirms it on the review page → the database
+inserts a `pending` job → the
 worker's next poll returns it → the worker generates locally → posts the text
 back → the participant's next 1.2s status poll renders it. Typical end-to-end
 latency is one generation (plus a second one for `neutral`).

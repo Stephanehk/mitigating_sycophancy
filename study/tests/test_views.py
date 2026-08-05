@@ -163,12 +163,13 @@ def test_the_generated_schema_constrains_the_arm_column_to_exactly_the_arms():
 
 
 def test_the_generated_draw_samples_exactly_the_randomized_arms():
-    """The 2026-08-01 narrowing lives in ONE emitted expression, so this is the
-    only place it can be checked without a database.
+    """The narrowing (to three arms on 2026-08-01, to two on 2026-08-05) lives in
+    ONE emitted expression, so this is the only place it can be checked without a
+    database.
 
     Pinned against RANDOMIZED_ARMS *and* against the count, because the array
-    and the modulus are written separately: an array of three with a `* 6` would
-    index past the end a third of the time and set the arm to null.
+    and the modulus are written separately: an array of two with a `* 6` would
+    index past the end two thirds of the time and set the arm to null.
     """
     sql = _sql("supabase_app_schema.sql")
     expected = ("set arm = (array[%s])[1 + floor(random() * %d)]"
@@ -178,9 +179,9 @@ def test_the_generated_draw_samples_exactly_the_randomized_arms():
 
 
 def test_the_retired_arms_stay_legal_but_undrawable():
-    """Both halves of retiring an arm rather than deleting it: it must still
-    pass the column constraint (rows collected under it exist, and a debug link
-    still forces one) while never appearing in the draw."""
+    """Both halves of retiring an arm rather than deleting it: it must still pass
+    the column constraint (rows collected under it exist) while never appearing in
+    the draw."""
     sql = _sql("supabase_app_schema.sql")
     draw = sql.split("set arm = ")[1].split("\n")[0]
     for arm in RETIRED_ARMS:

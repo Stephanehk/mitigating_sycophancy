@@ -192,12 +192,12 @@ def test_screening_order_is_a_permutation_and_varies(anon, service, clean):
 
 def test_the_draw_reaches_every_randomized_arm_and_no_other(
         anon, service, worker_token, clean):
-    """Both halves of the 2026-08-01 narrowing, in one loop.
+    """Both halves of the narrowing (two arms since 2026-08-05), in one loop.
 
-    REACHABLE: 60 draws over 3 arms — missing one has probability
-    3*(2/3)^60 ≈ 1e-10, so a failure is a genuinely unreachable arm, not bad
+    REACHABLE: 60 draws over 2 arms — missing one has probability
+    2*(1/2)^60 ≈ 2e-18, so a failure is a genuinely unreachable arm, not bad
     luck. NOT DRAWN: a retired arm appearing even once means the deployed
-    session_arm is still sampling prompts.ARMS, which would put participants
+    session_arm is still sampling a wider list, which would put participants
     into conditions the study no longer runs.
     """
     drawn = set()
@@ -215,11 +215,11 @@ def test_the_draw_reaches_every_randomized_arm_and_no_other(
 def test_the_flow_answer_matches_the_arm_that_was_drawn(anon, service, clean):
     """The whole contract of response_flow, checked against the arm it drew.
 
-    Since the draw narrowed to three model arms, none of which skips the page,
-    a real participant always gets `true` — so this asserts the CONSISTENCY
-    (the answer is a function of the arm) and pins the constant. The `false`
-    branch is exercised by the debug-link tests below, which are now the only
-    way to reach it at all.
+    Since the draw narrowed to the two no-review arms (2026-08-05) a real
+    participant always gets `false` — so this asserts the CONSISTENCY (the answer
+    is a function of the arm) and pins the constant. Pinning it is the point: a
+    `true` here would mean a live participant was being offered the chance to edit
+    the model's input, which is exactly what the design removed.
     """
     for _ in range(20):
         session = start(anon)
@@ -228,8 +228,8 @@ def test_the_flow_answer_matches_the_arm_that_was_drawn(anon, service, clean):
         assert arm is not None, "response_flow returned without drawing an arm"
         assert flow["show_review"] is (arm not in SKIP_REVIEW_ARMS), (
             "arm %s got show_review=%s" % (arm, flow["show_review"]))
-        assert flow["show_review"] is True, (
-            "a randomized participant skipped the review page on arm %s" % arm)
+        assert flow["show_review"] is False, (
+            "a randomized participant was shown the review page on arm %s" % arm)
 
 
 def test_the_flow_call_leaks_nothing_but_the_bit(anon, clean):
@@ -288,10 +288,11 @@ def test_the_flow_rejects_an_unknown_token(anon, clean):
 
 
 # --- 2c. Walking a condition by hand (the /debug_<key> links) --------------
-# The one sanctioned way to choose an arm. It exists because the flow arms are
-# the only ones a person can verify by looking, and random assignment is exactly
-# what stops you looking. Everything here is about the trade being contained:
-# the arm is forced, the session is FLAGGED, and nothing else changes.
+# The one sanctioned way to choose an arm. Since the draw narrowed to the two
+# no-review arms these links walk the same flow a participant does; what they add
+# is knowing which model is answering, which random assignment hides on purpose.
+# Everything here is about the trade being contained: the arm is forced, the
+# session is FLAGGED, and nothing else changes.
 
 def test_a_debug_link_forces_exactly_the_condition_it_names(anon, service, clean):
     """The whole point: no restarting the study until the coin lands."""

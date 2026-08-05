@@ -37,17 +37,17 @@
  *
  * THE ONE EXCEPTION IS A DEBUG LINK. `/debug_c1` and `/debug_c2` (see
  * debugConditionFromUrl) pass a condition KEY to start_session, which sets the
- * arm instead of drawing it — because a flow manipulation cannot be checked by
- * hand under random assignment. Every such session is stamped `is_debug` in the
+ * arm instead of drawing it — because a condition cannot be checked by hand
+ * under random assignment. Every such session is stamped `is_debug` in the
  * database and dropped from the export, so the escape hatch cannot reach the
  * dataset; that is what makes it safe to leave unsecured.
  *
  * The ONE thing the database now tells this file about the arm is `show_review`
  * — two arms drop the review-and-edit page, and a page that is not rendered
- * cannot be hidden from the browser. Since assignment narrowed to the three
- * model arms (2026-08-01) that bit is constant `true` for real participants:
- * only a debug session can be a no-review one. Which of the three arms this
- * participant got is still unknowable here.
+ * cannot be hidden from the browser. Since assignment narrowed to those two arms
+ * (2026-08-05) that bit is constant `false` for real participants: nobody is
+ * offered the chance to edit what is sent to the model. WHICH of the two arms
+ * this participant got is still unknowable here.
  *
  * Resilience:
  *   - Session token AND the answer payload live in localStorage, so a refresh
@@ -130,8 +130,12 @@
    *
    * `review_input` is on it for everyone UNTIL response_flow says otherwise:
    * S.showReview is null before that call, and only an explicit false drops the
-   * page. So a failed or missing flow call degrades to showing the review page
-   * rather than silently skipping it for an arm that should have had it. */
+   * page. Since 2026-08-05 every drawn arm answers false, so the page is on the
+   * spine and then removed rather than never added — the default is the SAFE one
+   * for the failure mode that matters, which is a client that proceeds without an
+   * answer: it would show a page rather than send text nobody confirmed. In
+   * practice a failed flow call does not proceed at all (response_intro re-enables
+   * Continue and shows the error), so no participant reaches the page by accident. */
   var SPINE = [];
 
   /* The stage the two no-review arms drop. Named so the one place that removes

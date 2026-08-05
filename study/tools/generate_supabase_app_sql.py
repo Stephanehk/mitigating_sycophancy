@@ -230,9 +230,11 @@ $$;
 
 -- Draw this session's arm, ONCE, and return it.
 --
--- A UNIFORM THREE-WAY DRAW over prompts.RANDOMIZED_ARMS (ours / untrained /
--- syco). The retired arms are still legal column values but are never sampled;
--- only a debug link can produce one.
+-- A UNIFORM TWO-WAY DRAW over prompts.RANDOMIZED_ARMS (ours_noreview /
+-- untrained_noreview): our model vs the untrained base, both on the flow where
+-- the participant never edits the model's input. The four retired arms are still
+-- legal column values but are never sampled, and no debug link forces one, so
+-- nothing new can land in them.
 --
 -- Sticky by construction: the update only fires while `arm` is null, and the
 -- value is re-read afterwards so a caller that lost a concurrent race still
@@ -288,9 +290,9 @@ $$;
 -- p_debug_condition IS THE ONE WAY TO CHOOSE AN ARM, and it is for walking a
 -- condition by hand (see prompts.DEBUG_CONDITIONS and the /debug_<key> pages).
 -- Random assignment is precisely what you cannot work around when you need to
--- SEE a condition, and since the draw narrowed to three model arms it is worse
--- than a coin: no participant is ever assigned a no-review arm, so restarting
--- the study will never show you that flow.
+-- SEE a condition. Since the draw narrowed to the two no-review arms these links
+-- reach the same flow a participant does; what they add is knowing which model
+-- is answering, which the draw hides on purpose.
 --
 -- WHAT KEEPS IT FROM CORRUPTING THE DATA. The session is stamped is_debug, and
 -- the export drops those rows by default, so a forced arm is quarantined rather
@@ -348,13 +350,13 @@ $$;
 -- drawn here — one page before it is needed — and exactly one bit of it is
 -- returned: `show_review`. The arm ITSELF is still never sent.
 --
--- SINCE THE DRAW NARROWED TO THREE MODEL ARMS this bit is constant for real
--- participants: none of RANDOMIZED_ARMS skips the page, so every one of them
--- gets `true` and the bit partitions nothing. It stays because a debug session
--- can still be a no-review one, and because this call is where the arm is drawn
--- at the moment of eligibility. The within-session guarantees are unchanged:
--- the draw is sticky (session_arm), the job is one-per-session, and which of
--- the three arms a participant got is unknowable to the browser.
+-- SINCE THE DRAW NARROWED TO THE TWO NO-REVIEW ARMS (2026-08-05) this bit is
+-- constant for real participants — every one of them gets `false` — so it
+-- partitions nothing and leaks nothing. It is still what makes the flow happen:
+-- `false` is the instruction to drop the page and enqueue the generation
+-- straight from response_intro. The within-session guarantees are unchanged: the
+-- draw is sticky (session_arm), the job is one-per-session, and WHICH of the two
+-- arms a participant got is unknowable to the browser.
 create or replace function public.response_flow(p_token text)
 returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
@@ -371,13 +373,13 @@ $$;
 
 -- Enqueue the generation from the text the participant CONFIRMED.
 --
--- Takes the finished user turn, not the two halves. On the review arms — which
--- is every arm a participant can now be drawn into — a page shows them exactly
--- what will be sent and lets them edit it before pressing Confirm, so the
--- composition happens in the browser and what arrives here is what they
--- approved; composing it server-side would silently discard their edits. On the
--- two no-review arms (debug links only) the browser composes the same string
--- and sends it without showing it — identical input, one fewer page.
+-- Takes the finished user turn, not the two halves. On the no-review arms — which
+-- since 2026-08-05 is every arm a participant can be drawn into — the browser
+-- composes the two halves and sends the result without showing it. On the review
+-- arms (retired) a page showed them exactly what would be sent and let them edit
+-- it before pressing Confirm, which is why the composition lives in the browser
+-- at all: composing it server-side afterwards would have discarded those edits.
+-- The string is the same either way.
 --
 -- The floor is min_describe + min_perspective, i.e. the same total the two
 -- separate pages already enforced, so editing cannot be used to get past the

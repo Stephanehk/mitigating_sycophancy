@@ -1,8 +1,10 @@
 """Model arms and their prompts for the sycophancy user study.
 
-RANDOM ASSIGNMENT DRAWS FROM THREE ARMS (changed 2026-08-01): `ours`,
-`untrained` and `syco`. The other three are retired but still defined — see
-RANDOMIZED_ARMS below for what that means and why they were not deleted.
+RANDOM ASSIGNMENT DRAWS FROM TWO ARMS (changed 2026-08-05): `ours_noreview` and
+`untrained_noreview` — our model and the untrained base, both on the flow where
+the participant never edits what is sent to the model. The other four are
+retired but still defined — see RANDOMIZED_ARMS below for what that means and
+why they were not deleted.
 
 Six arms, all served from ONE engine running Qwen/Qwen3-8B with our LoRA
 adapter loaded as a hot-swappable adapter (see worker/vllm_server.py and
@@ -17,14 +19,20 @@ worker/hf_backend.py):
   ours_noreview      — generation identical to `ours`.
   untrained_noreview — generation identical to `untrained`.
 
-TWO OF THE SIX MANIPULATE THE FLOW, NOT THE MODEL. `ours_noreview` and
-`untrained_noreview` produce byte-identical generation plans to `ours` and
-`untrained`; what differs is that the participant is NOT shown the review page
-where the two halves of their writing are concatenated and offered for editing.
-The text is composed and sent without them seeing it. So `ours` vs
-`ours_noreview` isolates the review step alone, and likewise for `untrained`.
-The plans are MAPPED onto their twin (GENERATION_TWIN) rather than duplicated,
-so a prompt change cannot apply to one and not the other.
+TWO OF THE SIX MANIPULATE THE FLOW, NOT THE MODEL — AND SINCE 2026-08-05 THOSE
+TWO ARE THE ONLY ONES DRAWN. `ours_noreview` and `untrained_noreview` produce
+byte-identical generation plans to `ours` and `untrained`; what differs is that
+the participant is NOT shown the review page where the two halves of their
+writing are concatenated and offered for editing. The text is composed and sent
+without them seeing it. The plans are MAPPED onto their twin (GENERATION_TWIN)
+rather than duplicated, so a prompt change cannot apply to one and not the other.
+
+So the design is now one factor: the two drawn arms share their system prompt,
+their stage count, their flow and their user turn, and differ only in which model
+the request addresses. `ours_noreview` vs `untrained_noreview` is the
+trained-vs-base contrast with the model's input held at exactly what the
+participant wrote. (While the review arms were drawn, `ours` vs `ours_noreview`
+isolated the review step alone; that factor is no longer in the draw.)
 
 SYSTEM PROMPT (changed 2026-07-27): every arm now receives the SAME shared
 system prompt, BASE_SYSTEM_PROMPT, which is the source survey's [ETHICS]
@@ -41,7 +49,8 @@ Consequences worth keeping in mind for analysis:
     the bare arms. `shown_response_chars` is still exported.
   - `neutral` Stage 1 is now byte-identical to `untrained`, so neutral-vs-
     untrained isolates the editing pass alone.
-  - `ours`/`untrained` are no longer a byte-exact match for
+  - `ours`/`untrained` — and so their no-review twins, which reuse those exact
+    plans — are no longer a byte-exact match for
     eval/eval_endorsement_heldout.py, which generates with `system=None`. The
     ours-vs-untrained contrast still isolates the training (both arms get the
     same system prompt), but it is no longer the same inference condition the
@@ -71,29 +80,37 @@ ARM_UNTRAINED_NOREVIEW = "untrained_noreview"
 ARMS = (ARM_OURS, ARM_UNTRAINED, ARM_SYCO, ARM_NEUTRAL,
         ARM_OURS_NOREVIEW, ARM_UNTRAINED_NOREVIEW)
 
-#: THE ARMS A PARTICIPANT CAN BE DRAWN INTO (changed 2026-08-01). Assignment is
-#: now a three-way draw between our model, the untrained base and the
-#: sycophantic base. This tuple — not ARMS — is what the generated `session_arm`
-#: RPC samples from, so it is the single definition of the randomization.
+#: THE ARMS A PARTICIPANT CAN BE DRAWN INTO (changed 2026-08-05; was a three-way
+#: draw over `ours`/`untrained`/`syco` from 2026-08-01, and all six before that).
+#: Assignment is now a two-way draw between our model and the untrained base, on
+#: the flow where NEITHER group edits the model's input: the composed user turn
+#: goes straight to the model with no page in between offering it for editing.
+#: This tuple — not ARMS — is what the generated `session_arm` RPC samples from,
+#: so it is the single definition of the randomization.
 #:
-#: THE OTHER THREE ARE RETIRED, NOT DELETED, and the distinction matters in two
+#: WHAT THE NARROWING BUYS: one factor. Both drawn arms share a system prompt, a
+#: stage count, a flow and a user turn, so a difference in the DVs cannot be
+#: attributed to the sycophancy policy, to a second editing stage, or to one
+#: group having reworded their prompt before sending it.
+#:
+#: THE OTHER FOUR ARE RETIRED, NOT DELETED, and the distinction matters in two
 #: places. (1) ARMS is the legal domain of the `arm` column on study_sessions and
 #: study_submissions (emit_arm_domain), and rows collected before this change
-#: carry `neutral`, `ours_noreview` and `untrained_noreview`; narrowing the
-#: constraint to three names would fail against them, which is the correct way
-#: for that to go wrong but not something to provoke. (2) The /debug_<key> links
-#: still force the two no-review arms, so their generation plans and the flow
-#: fork must keep working. What changed is only that nobody is DRAWN into them.
+#: carry `ours`, `untrained`, `syco` and `neutral`; narrowing the constraint to
+#: two names would fail against them, which is the correct way for that to go
+#: wrong but not something to provoke. (2) They keep their prompts and their
+#: generation plans, so re-widening the draw is this one line.
 #:
-#: CONSEQUENCE FOR THE FLOW FORK: no randomized arm skips the review page any
-#: more, so every real participant now walks it and response_flow answers
-#: `show_review: true` for all of them. The call is kept because a debug session
-#: can still be a no-review one — and because removing it would move the arm
-#: draw back to start_response, one page later than eligibility.
-RANDOMIZED_ARMS = (ARM_OURS, ARM_UNTRAINED, ARM_SYCO)
+#: CONSEQUENCE FOR THE FLOW FORK: every randomized arm now skips the review page,
+#: so response_flow answers `show_review: false` for all of them and the page is
+#: rendered for nobody. The call is load-bearing, not vestigial: `false` is what
+#: tells the browser to drop the page and enqueue the generation itself, and it
+#: is where the arm is drawn at the moment of eligibility.
+RANDOMIZED_ARMS = (ARM_OURS_NOREVIEW, ARM_UNTRAINED_NOREVIEW)
 
 #: Defined arms that assignment no longer reaches. Analysis-facing: a row with
-#: one of these predates 2026-08-01 or came from a debug link.
+#: one of these predates 2026-08-05. No debug link forces one either, so nothing
+#: new can land in them at all.
 RETIRED_ARMS = tuple(a for a in ARMS if a not in RANDOMIZED_ARMS)
 
 assert set(RANDOMIZED_ARMS) <= set(ARMS), "a drawable arm must be a defined arm"
@@ -106,6 +123,14 @@ assert len(set(RANDOMIZED_ARMS)) == len(RANDOMIZED_ARMS), (
 #: `response_flow` RPC, which is generated from this tuple) and by nothing else:
 #: the generation is unaffected.
 SKIP_REVIEW_ARMS = (ARM_OURS_NOREVIEW, ARM_UNTRAINED_NOREVIEW)
+
+#: THE DESIGN RULE ADDED 2026-08-05: nobody edits the model's input. Asserted
+#: rather than commented, because putting a review arm back into the draw would
+#: otherwise silently reintroduce a second factor.
+assert set(RANDOMIZED_ARMS) <= set(SKIP_REVIEW_ARMS), (
+    "every drawable arm must skip the review page: the study no longer lets any "
+    "participant edit what is sent to the model"
+)
 
 #: The arm each no-review arm is a flow-only variant of. Its generation plan is
 #: reused verbatim, which is what makes the pair a clean one-factor contrast.
@@ -128,29 +153,30 @@ assert set(GENERATION_TWIN.values()) <= set(ARMS)
 #: `/debug_c1` is DEBUG_CONDITIONS["c1"].
 #:
 #: WHY THIS EXISTS. Random assignment is exactly what you cannot work around
-#: when checking a condition by hand. Since 2026-08-01 these links are the ONLY
-#: way to reach the no-review flow at all: the draw is a three-way one over
-#: RANDOMIZED_ARMS, none of which skip the review page, so no amount of
-#: restarting the study will show it to you. These links hand `start_session` a
-#: condition key, which sets the arm directly INSTEAD of drawing it — and stamps
-#: `is_debug` on the session, so the resulting row is quarantined from the
-#: export rather than counted as a participant.
+#: when checking a condition by hand. Since 2026-08-05 the draw is over these
+#: same two arms, so what a link buys is no longer a flow you could not otherwise
+#: reach — it is knowing WHICH MODEL you are looking at, which the draw hides on
+#: purpose. These links hand `start_session` a condition key, which sets the arm
+#: directly INSTEAD of drawing it — and stamps `is_debug` on the session, so the
+#: resulting row is quarantined from the export rather than counted as a
+#: participant.
 #:
 #: Deliberately NOT secret. The link is powerless against the data because every
 #: session it creates is flagged; a token would add a thing to leak without
 #: adding a guarantee. See README "Walking a condition by hand".
 #:
-#: Only the flow arms are listed, because they are the only ones a person can
-#: verify by looking: the other four differ in what the model writes, which the
-#: smoke test checks far better than a human clicking through can.
+#: Exactly the drawable arms are listed, so a hand-walk is a walk of the real
+#: participant experience with the model named. NOT listed: the four retired
+#: arms — which means the review-and-edit page is now reachable by nobody, by
+#: draw or by hand. Add a key here if it needs walking again.
 DEBUG_CONDITIONS = {
     "c1": ARM_OURS_NOREVIEW,
     "c2": ARM_UNTRAINED_NOREVIEW,
 }
 
-assert set(DEBUG_CONDITIONS.values()) == set(SKIP_REVIEW_ARMS), (
-    "every flow-manipulating arm needs a manual-entry link, since random "
-    "assignment is what makes it unreachable by hand"
+assert set(DEBUG_CONDITIONS.values()) == set(RANDOMIZED_ARMS), (
+    "the links exist to say which model you are looking at, so they must cover "
+    "exactly the arms a participant can be drawn into"
 )
 assert all(key.replace("_", "").isalnum() for key in DEBUG_CONDITIONS), (
     "a condition key becomes a URL path segment (/debug_<key>) and a static "
