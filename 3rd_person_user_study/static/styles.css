@@ -360,19 +360,18 @@ body {
    Spacing is deliberately tight. Under the viewport-filling layout every pixel
    of question furniture is taken off the response panels, and there are two
    questions, so it is charged twice. */
+/* STACKED, one question above the other, at every width.
+   They were side by side above 1100px, which bought back ~60px of response-panel
+   height -- but it put "Which response do you prefer?" in the left half rather
+   than centred on the page, and read as two parallel choices rather than a first
+   question and a follow-up. Asked for stacked (2026-08-05); the panel height it
+   costs is measured in
+   test_the_panels_keep_a_usable_height_on_a_tall_viewport. */
 .questions {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 8px 24px;
+  gap: 8px;
   margin-top: 8px;
-}
-
-/* Side by side once there is width for it -- the single biggest saving
-   available, because it halves the vertical cost of the second question. Below
-   this the long Q2 option would wrap to three lines in a half-width column and
-   give the saving straight back. */
-@media (min-width: 1100px) {
-  .questions { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
 
 .ask {

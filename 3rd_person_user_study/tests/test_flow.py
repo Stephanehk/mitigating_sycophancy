@@ -30,6 +30,14 @@ import debug_arms
 
 PID = "FLOWTESTPID"
 
+#: The measured worst case for a response panel, with a little slack: min 215px
+#: over all 72 items at 1280x900 with the questions stacked. ONE constant for
+#: both layout tests -- they had drifted to 240 and 280, so a layout change
+#: failed one and passed the other and the pair no longer said anything
+#: coherent about how small a panel may get. The history behind the number is on
+#: test_the_panels_keep_a_usable_height_on_a_tall_viewport.
+PANEL_FLOOR = 200
+
 #: The intro is two slides. Asserted rather than discovered, so adding one to
 #: app.js without updating these tests fails instead of going untested.
 SLIDE_COUNT = 2
@@ -366,7 +374,7 @@ def test_the_panels_are_equal_and_the_buttons_stay_on_screen(server, browser,
         assert len(heights) == 2
         assert len(set(heights)) == 1, f"unequal panel heights {heights}"
         assert len(set(widths)) == 1, f"unequal panel widths {widths}"
-        assert heights[0] >= 240, f"panel crushed to {heights[0]}px"
+        assert heights[0] >= PANEL_FLOOR, f"panel crushed to {heights[0]}px"
         if height >= 820:
             assert not geometry["scrolls"], "a tall viewport should not scroll"
             assert geometry["bottom"] <= geometry["viewport"], \
@@ -381,28 +389,35 @@ def test_the_panels_are_equal_and_the_buttons_stay_on_screen(server, browser,
 def test_the_panels_keep_a_usable_height_on_a_tall_viewport(server, browser):
     """A floor on panel height, measured rather than guessed.
 
-    HISTORY, because the number moved and the reason matters. The layout was
-    asked for as "make the display boxes bigger" and the bar was the previous
-    fixed rule, max-height: 44vh -- a flat 396px at 900. The second question
-    (2026-08-05) took height back: two question blocks and Continue sit between
-    the panels and the bottom of the screen.
+    HISTORY, because the number has moved twice and both moves were deliberate.
+    The layout was originally asked for as "make the display boxes bigger", and
+    the bar was the previous fixed rule -- max-height: 44vh, a flat 396px at 900.
 
-    Measured over ALL 72 items at 1280x900 after laying the questions out side by
-    side: min 295px, median 391px, max 416px. So the median is a wash against the
-    old flat cap and the best case beats it, but an item whose prompt takes its
-    full 20vh now leaves ~295px. The floor here is that worst case with a little
-    slack; it is NOT 44vh any more, and pretending otherwise would mean either a
-    test that fails on the long-prompt items or a silently shrinking panel.
+    Then the panels paid for two things, in order:
+      1. a SECOND QUESTION (2026-08-05). Two question blocks and Continue sit
+         between the panels and the bottom of the screen. Laid out side by side
+         above 1100px this measured min 295 / median 391 / max 416 over all 72
+         items at 1280x900 -- a wash against the old cap.
+      2. STACKING those questions (2026-08-05), so that "Which response do you
+         prefer?" is centred on the page and the follow-up sits under it rather
+         than beside it. Re-measured the same way: min 215 / median 271 /
+         max 297. Stacking costs ~120px of median panel height.
 
-    To get 44vh back the prompt cap has to come down from 20vh -- that trades a
-    scroll on the long prompts for panel height on every item, which is a call
-    about the instrument, not something to bury in a stylesheet.
+    The floor here is that worst case with a little slack. It is deliberately not
+    44vh and not the side-by-side number either; asserting a height the current
+    layout cannot deliver would only mean a test that fails on the long-prompt
+    items, and quietly lowering it every time something is added is how a panel
+    ends up unreadable.
+
+    The remaining lever is the prompt cap, currently 20vh: dropping it to 15vh
+    buys back ~45px on every item and costs a scroll on the long prompts. That is
+    a call about the instrument, not something to bury in a stylesheet.
     """
     base, _ = server
     page = open_page(browser, base, width=1280, height=900)
     enter_id(page)
     pass_slides(page)
-    floor = 280
+    floor = PANEL_FLOOR
     for _ in range(8):
         height = page.evaluate(
             "() => document.querySelector('.pair .response')"
