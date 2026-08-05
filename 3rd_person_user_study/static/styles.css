@@ -51,7 +51,7 @@ body {
   font-variant-numeric: tabular-nums;
   font-size: 13px;
   letter-spacing: 0.02em;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
 /* The wrapper that carries the scroll cue. It must NOT scroll -- the gradient and
@@ -135,18 +135,57 @@ body {
   max-height: 20vh;
 }
 
-/* The two lines the prompt is quoted between. Set ABOVE body size (15.5px) so the
-   question reads as the instruction it is -- it was 14.5px, which made the framing
-   quieter than the prompt it frames. Still `--muted`: the lines are identical on
-   all 120 items, so full-contrast body weight would have them competing for
-   attention with the text that actually changes. */
-.framing {
-  color: var(--muted);
-  margin: 0 0 6px;
-  font-size: 17.5px;
+/* The prompt is the first thing to give up height when there is not much: it
+   scrolls on its own, so a lower cap costs a scroll on the long prompts rather
+   than hiding anything. */
+@media (max-height: 820px) {
+  .prompt { max-height: 15vh; }
 }
 
-.framing.ask { margin: 8px 0 10px; }
+/* "Prompt", and "Response 1" / "Response 2" above their panels. These replaced
+   the two framing lines the prompt used to be quoted between (the "if your
+   friend asked..." wording), so they carry no instruction -- they only name the
+   thing beneath them, which is what the questions refer to by name.
+
+   Small, uppercase and `--muted` on purpose: they are identical on every item,
+   so anything louder would compete for attention with the text that changes. */
+.prompt-label,
+.response-label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin: 0 0 4px;
+}
+
+/* A response panel and the heading naming it, as one grid item, so the heading
+   travels with its own column and cannot end up over the other one. Flex column
+   with a zero min-height: that is what lets the panel below take the leftover
+   height under the viewport-filling rules. */
+.response-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.response-column .pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+/* EQUAL HEIGHT WITHOUT THE FILL LAYOUT. The grid row is as tall as the taller
+   column and both columns stretch to it, but the bordered scroller inside would
+   still stop at its own content -- so a short response would end higher than a
+   long one, which is a cue about which arm wrote it (ours is markedly shorter on
+   PAS). `height: 100%` makes the scroller take the row; `max-height` below still
+   caps how tall the row can get. Measured [364, 210] before this rule at
+   1280x700, i.e. visibly unequal. */
+.response-column .response {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+}
 
 .pair {
   display: grid;
@@ -186,7 +225,12 @@ body {
  * is one column (two stacked panels splitting the leftovers would make both
  * small), and below 640px tall there is no remainder worth dividing. Those fall
  * back to the max-height rules and a scrolling page. */
-@media (min-width: 821px) and (min-height: 640px) {
+/* min-height RAISED from 640px (2026-08-05, with the second question). Two
+   question blocks and a Continue button are ~150px of furniture on top of the
+   prompt; below this the remainder left for the panels was 53px at 700px tall
+   and zero at 650px, i.e. the fill layout was actively worse than letting the
+   page scroll. Under the threshold the max-height rules below apply instead. */
+@media (min-width: 821px) and (min-height: 820px) {
   body.compare {
     height: 100vh;
     /* The page itself must not scroll -- that is the whole guarantee. Each panel
@@ -215,8 +259,14 @@ body {
     grid-template-rows: minmax(0, 1fr);
   }
 
+  body.compare .response-column { height: 100%; }
+
+  /* A floor, so the panels can never be squeezed to nothing by furniture: past
+     this the page scrolls instead, which is recoverable in a way a 0px panel is
+     not. */
+  body.compare .pair { min-height: 240px; }
+
   body.compare .pair .pane {
-    height: 100%;
     min-height: 0;
   }
 
@@ -225,10 +275,15 @@ body {
     max-height: none;
   }
 
+  /* Everything that is not a response panel takes only what it needs; the pair
+     gets the remainder. The two question blocks and Continue are part of that
+     fixed furniture now, which is why the panels are shorter than they were with
+     a single question -- the alternative is buttons below the fold. */
   body.compare .counter,
-  body.compare .framing,
+  body.compare .prompt-label,
   body.compare .prompt,
-  body.compare .choices { flex: 0 0 auto; }
+  body.compare .questions,
+  body.compare .actions { flex: 0 0 auto; }
 }
 
 /* --- rendered markdown ---------------------------------------------------
@@ -301,23 +356,65 @@ body {
  * widest label and shift it off centre. `justify-content: center` centres the
  * whole grid, and `width: max-content` keeps it from stretching to the full
  * 1180px -- without it 1fr columns would space the buttons right across the page. */
+/* One question: its text, then its buttons.
+   Spacing is deliberately tight. Under the viewport-filling layout every pixel
+   of question furniture is taken off the response panels, and there are two
+   questions, so it is charged twice. */
+.questions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px 24px;
+  margin-top: 8px;
+}
+
+/* Side by side once there is width for it -- the single biggest saving
+   available, because it halves the vertical cost of the second question. Below
+   this the long Q2 option would wrap to three lines in a half-width column and
+   give the saving straight back. */
+@media (min-width: 1100px) {
+  .questions { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+
+.ask {
+  margin: 0 0 5px;
+  font-size: 15px;
+  text-align: center;
+}
+
 .choices {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  gap: 8px;
   width: max-content;
   max-width: 100%;
-  margin: 16px auto 0;
+  margin: 0 auto;
   justify-items: center;
 }
 
 .choices button { width: 100%; }
 
-/* Middle column of the second row. Named rather than :nth-child(4) so it stays
-   put if a button is ever added. */
-.choices .cant-tell { grid-column: 2; }
+/* Options that are not one of the three side/Same buttons -- "Can't tell", and
+   Q2's "I don't think the person should feel like they were wrong". They span
+   the full width on their own row beneath, because the long one cannot fit a
+   third of the block and a grid column sized to hold it would push Same off
+   centre. Class-based rather than :nth-child so adding an option does not
+   silently re-target the rule. */
+.choices .wide {
+  grid-column: 1 / -1;
+  width: auto;
+  max-width: 100%;
+}
 
-/* One line of instruction, on the ID screen and the three intro slides. */
+/* The selected option. Selecting no longer advances the page, so the button has
+   to say so itself -- with the border as well as the fill, since a fill alone is
+   the one cue that disappears in a high-contrast forced-colours mode. */
+.choices button.chosen {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+/* One line of instruction, on the ID screen and the intro slides. */
 .slide {
   max-width: 620px;
   margin: 12vh auto 0;
@@ -331,6 +428,10 @@ body {
   justify-content: center;
   margin-top: 26px;
 }
+
+/* 26px of air above Continue is right on a slide, where it is the only thing on
+   screen; on the rating screen it is 26px taken off both response panels. */
+body.compare .actions { margin-top: 12px; }
 
 input[type="text"] {
   display: block;

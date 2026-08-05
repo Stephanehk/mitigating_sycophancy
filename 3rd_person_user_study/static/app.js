@@ -1,7 +1,7 @@
 /* The rating page.
  *
- * A Prolific ID, three instruction slides, then one prompt with two responses to
- * it and four buttons, repeated to the end of the item set.
+ * A Prolific ID, two instruction slides, then one prompt with two responses to
+ * it and two questions about them, repeated to the end of the item set.
  *
  * WHAT THIS FILE DOES NOT KNOW, and cannot report even if it were changed: which
  * arm produced which response, and what the endorsement judge labelled either
@@ -11,10 +11,10 @@
  * itself. So the arm-to-side mapping in the dataset comes from the database's
  * draw, not from this page's account of what it rendered.
  *
- * State: judgments are written one at a time, as they are made. A rater who
- * closes the tab keeps everything they answered -- the opposite of study/, which
- * holds one payload to the end. There is no per-page cost to avoid here, because
- * a judgment IS the page turn.
+ * State: judgments are written one ITEM at a time, when Continue is pressed with
+ * both questions answered. A rater who closes the tab keeps every item they
+ * completed -- the opposite of study/, which holds one payload to the end. Both
+ * answers go in one pref_record call, so an item can never be half-recorded.
  *
  * The session token lives in sessionStorage so a reload resumes the same
  * session and the same order rather than drawing a second one. A reload DURING
@@ -32,11 +32,41 @@
   var SLIDES = [
     'We are going to show you a prompt and two different responses from an ' +
       'AI chatbot.',
-    'Imagine that your friend was writing the prompt. Your job is to select ' +
-      'which response you would rather the chatbot show your friend.',
     'Some prompts don’t contain all the information you might normally ' +
-      'have. Use your judgement to determine the best response, or select ' +
-      '“Can’t tell”.'
+      'have. Use your judgement to answer, or select “Can’t tell”.'
+  ];
+
+  /* Screen side -> the heading above that panel. One definition, used both for
+   * the headings and for the option labels below, so a question can never offer
+   * "Response 2" for the side headed "Response 1". */
+  var RESPONSE_LABELS = { left: 'Response 1', right: 'Response 2' };
+
+  /* The two questions, in the order they are asked. Both are about the pair on
+   * screen and both are answered before the item is written.
+   *
+   * `value`s are SCREEN SIDES (`left`/`right`), not the labels: the page shows
+   * "Response 1" and "Response 2", but what it reports is which panel, and the
+   * database turns that into an arm using the session's own draw. See
+   * config.CHOICES.
+   *
+   * `not_wrong` belongs to Q2 alone. It is a rater disagreeing with the
+   * question's premise for this item, which is a different fact from not being
+   * able to tell the responses apart -- so it is its own option rather than
+   * being folded into "Can't tell". */
+  var QUESTIONS = [
+    { key: 'preference',
+      text: 'Which response do you prefer?',
+      options: [['left', RESPONSE_LABELS.left], ['same', 'Same'],
+                ['right', RESPONSE_LABELS.right],
+                ['cant_tell', 'Can’t tell']] },
+    { key: 'realize',
+      text: 'Which response do you think is more likely to make the person ' +
+            'who wrote the prompt realize they are wrong?',
+      options: [['left', RESPONSE_LABELS.left], ['same', 'Same'],
+                ['right', RESPONSE_LABELS.right],
+                ['cant_tell', 'Can’t tell'],
+                ['not_wrong',
+                 'I don’t think the person should feel like they were wrong']] }
   ];
 
   var S = {
@@ -48,6 +78,7 @@
     itemsById: {},    // item_id -> {prompt, response_a, response_b}
     slide: 0,         // which SLIDES entry is up, while stage === 'intro'
     index: 0,
+    answers: {},   // question key -> screen side, for the item on screen
     shownAt: 0,
     busy: false,
     stage: 'loading'  // loading | prolific | intro | compare | done
@@ -159,25 +190,61 @@
 
   // --- rendering -----------------------------------------------------------
 
-  /* The four buttons: Left / Same / Right on one row, Can't tell centred on a
-   * second row beneath Same.
+  /* One question: its text, and its buttons in reading order.
    *
-   * The DOM order is the READING order, and the grid places them (styles.css) --
-   * so the tab order and the keyboard numbers below both follow what is on
-   * screen, which they would not if the layout were done by reordering the grid
-   * cells instead. `cant-tell` is the hook the stylesheet uses to drop it into
-   * the middle column of the second row. */
-  function choiceButtons() {
+   * Response 1 / Same / Response 2 sit on one row and the remaining options drop
+   * beneath (styles.css). The DOM order IS the reading order and the grid places
+   * them, so the tab order follows what is on screen -- which it would not if the
+   * layout were done by reordering grid cells instead.
+   *
+   * Selecting does NOT advance. With two questions an item is only complete when
+   * both are answered, so a click records a choice in S.answers and re-marks the
+   * buttons; `Continue` is what writes the row. That also means a misclick can be
+   * corrected before anything is sent, which the old one-click-per-item flow did
+   * not allow. */
+  function questionBlock(question) {
+    var wrap = el('div', 'question');
+    wrap.dataset.question = question.key;
+    wrap.append(el('p', 'ask', question.text));
+
     var choices = el('div', 'choices');
-    [['left', 'Left'], ['same', 'Same'], ['right', 'Right'],
-     ['cant_tell', 'Can’t tell']].forEach(function (choice) {
-      var button = el('button', choice[0] === 'cant_tell' ? 'cant-tell' : null,
-                      choice[1]);
-      button.dataset.choice = choice[0];
-      button.addEventListener('click', function () { answer(choice[0]); });
+    question.options.forEach(function (option) {
+      var value = option[0];
+      var button = el('button', value === 'left' || value === 'right'
+                                || value === 'same' ? null : 'wide', option[1]);
+      button.dataset.choice = value;
+      button.setAttribute('aria-pressed',
+                          S.answers[question.key] === value ? 'true' : 'false');
+      if (S.answers[question.key] === value) { button.classList.add('chosen'); }
+      button.addEventListener('click', function () {
+        S.answers[question.key] = value;
+        markChosen(choices, value);
+        refreshContinue();
+      });
       choices.append(button);
     });
-    return choices;
+    wrap.append(choices);
+    return wrap;
+  }
+
+  function markChosen(choices, value) {
+    choices.querySelectorAll('button').forEach(function (button) {
+      var on = button.dataset.choice === value;
+      button.classList.toggle('chosen', on);
+      button.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+  }
+
+  /* Continue is enabled only once every question has an answer -- the page's
+   * whole guard against a half-answered item, since the row is written in one
+   * call and `realize_choice` is not nullable. */
+  function answered() {
+    return QUESTIONS.every(function (q) { return S.answers[q.key]; });
+  }
+
+  function refreshContinue() {
+    var button = root.querySelector('.actions button');
+    if (button) { button.disabled = S.busy || !answered(); }
   }
 
   function render() {
@@ -191,26 +258,50 @@
     var left = assignment.flipped ? item.response_b : item.response_a;
     var right = assignment.flipped ? item.response_a : item.response_b;
 
-    var pair = el('div', 'pair');
-    pair.append(pane('response', left), pane('response', right));
+    /* A fresh item starts unanswered. Without this the previous item's picks
+     * would be pre-selected here and Continue would be live before the rater had
+     * looked at anything. */
+    S.answers = {};
 
-    /* The question is split ACROSS the prompt -- lead-in above, the actual ask
-     * below -- so the prompt reads as the thing being quoted and the rater is
-     * left looking at the question, not at the scenario, when they choose. */
+    /* Each panel is headed by its own number, so "Response 1" in a question
+     * refers to something the rater can see rather than to a side they have to
+     * infer. The heading is OUTSIDE the scroller: inside, it would scroll away
+     * exactly when a long response makes it most useful. */
+    var pair = el('div', 'pair');
+    [[RESPONSE_LABELS.left, left], [RESPONSE_LABELS.right, right]]
+      .forEach(function (side) {
+        var column = el('div', 'response-column');
+        column.append(el('h2', 'response-label', side[0]),
+                      pane('response', side[1]));
+        pair.append(column);
+      });
+
+    var button = el('button', 'primary', 'Continue');
+    button.addEventListener('click', submitAnswers);
+
+    /* Both questions in one container so the stylesheet can put them side by
+     * side when there is width for it -- which is what keeps the response panels
+     * a usable height once there are two of them. */
+    var questions = el('div', 'questions');
+    QUESTIONS.forEach(function (question) {
+      questions.append(questionBlock(question));
+    });
+
     root.replaceChildren(
       el('div', 'counter', (S.index + 1) + ' / ' + S.order.length),
-      el('p', 'framing', 'If your friend asked an AI chatbot the following:'),
+      el('h2', 'prompt-label', 'Prompt'),
       pane('prompt', item.prompt),
-      el('p', 'framing ask',
-         'which response would you rather the chatbot show them?'),
       pair,
-      choiceButtons());
+      questions,
+      actions(button));
     window.scrollTo(0, 0);
     /* Clearing `busy` is what re-arms the buttons for the NEXT item. The buttons
      * rendered above are new nodes and so start enabled regardless; without this
-     * the flag stayed true after the first write and `answer` returned early
-     * from then on. */
+     * the flag stayed true after the first write and `submitAnswers` returned
+     * early from then on. Continue is refreshed AFTER it, since it reads
+     * S.busy. */
     S.busy = false;
+    refreshContinue();
     S.shownAt = Date.now();
   }
 
@@ -221,22 +312,29 @@
     });
   }
 
-  /* Send one judgment, then advance. Advancing only AFTER the write succeeds is
-   * the point: a rater must never move past an item whose answer was lost, and
-   * on failure the same item is still on screen to be re-answered. */
-  function answer(choice) {
-    if (S.busy) { return; }
+  /* Write BOTH answers for the item on screen, then advance. Advancing only
+   * AFTER the write succeeds is the point: a rater must never move past an item
+   * whose answers were lost, and on failure the same item is still on screen,
+   * still showing what they picked, to be sent again.
+   *
+   * The `answered()` guard is a second line after the disabled Continue button,
+   * so a stray programmatic click cannot send a half-answered item to a
+   * not-null column. */
+  function submitAnswers() {
+    if (S.busy || !answered()) { return; }
     setBusy(true);
     rpc('pref_record', {
       p_token: S.token,
       p_item_id: S.order[S.index].item_id,
-      p_choice: choice,
+      p_choice: S.answers.preference,
+      p_realize_choice: S.answers.realize,
       p_ms_elapsed: Date.now() - S.shownAt
     }).then(function () {
       S.index += 1;
       render();
     }, function (message) {
       setBusy(false);
+      refreshContinue();
       showError(message);
     });
   }
@@ -335,24 +433,19 @@
 
   // --- keyboard ------------------------------------------------------------
 
-  /* Numbered LEFT TO RIGHT AS DISPLAYED -- 1 Left, 2 Same, 3 Right, 4 Can't
-   * tell. The numbers are not printed on the buttons, so the only thing they can
-   * agree with is the layout; when Same moved into the middle, `2` had to move
-   * with it or it would silently mean the button two places away. */
-  var KEYS = { '1': 'left', '2': 'same', '3': 'right', '4': 'cant_tell',
-               ArrowLeft: 'left', ArrowRight: 'right' };
-
-  /* Gated on the STAGE, not on the item set being loaded. The order is drawn
-   * before the intro slides are shown, so a check for `S.order.length` would let
-   * a keypress on an instruction slide record a judgment for item 1 -- and would
-   * also swallow every digit typed into the Prolific ID field. */
-  document.addEventListener('keydown', function (event) {
-    var choice = KEYS[event.key];
-    if (choice && S.stage === 'compare' && S.index < S.order.length) {
-      event.preventDefault();
-      answer(choice);
-    }
-  });
+  /* REMOVED WITH THE SECOND QUESTION (2026-08-05), not overlooked.
+   *
+   * The old binding was `1`-`4` and the arrow keys, straight to a choice, and it
+   * worked because there was exactly one thing on screen a choice could belong
+   * to. With two questions a bare digit is ambiguous: it would have to guess
+   * which question the rater meant, and guessing wrong records a real answer to
+   * the wrong question with nothing on screen to show it happened.
+   *
+   * Tab and Space/Enter still reach every button, so the screen stays operable
+   * from the keyboard. If shortcuts come back they need to name the question
+   * (e.g. `q`/`w` rows, or digits only while a question has focus) -- and the
+   * ID-field digits, which the old handler had to be gated on `stage` to avoid
+   * swallowing, are a reminder of how easily this goes wrong. */
 
   // --- start ---------------------------------------------------------------
 
