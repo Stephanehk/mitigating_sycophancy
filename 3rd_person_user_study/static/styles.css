@@ -501,17 +501,18 @@ button:disabled { opacity: 0.45; cursor: default; }
  * The first thing a rater sees, and the same form study/ shows -- the text is
  * imported from study/content.py at build time, not written here.
  *
- * The body scrolls in its own box rather than the page, so the two options and
- * Continue stay put while it is read; a consent form that pushes its own accept
- * button below the fold invites clicking without reading. */
+ * THE WHOLE FORM IS ON THE PAGE, with no inner scroll box. It was in a 46vh
+ * scroller, which kept the two options and Continue in view -- but it also meant
+ * the form was read through a letterbox, and the part of a consent form a person
+ * has to scroll a nested box to reach is the part they do not read. The page
+ * itself scrolls instead, so agreeing means having scrolled past the whole
+ * document to get to the button. */
 .consent-title {
   font-size: 22px;
   margin: 0 0 14px;
 }
 
 .consent-body {
-  max-height: 46vh;
-  overflow-y: auto;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
