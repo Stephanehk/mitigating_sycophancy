@@ -396,6 +396,26 @@
     });
   }
 
+  /* `?labels=1` loads the arm-label overlay. FOR LOOKING AT THE STUDY, never for
+   * a rater: it names the arm behind each response above the two panels.
+   *
+   * WHAT THIS FILE LEARNS IS A FILENAME, not an arm. The mapping lives in
+   * __debug_arms.json and the labelling in debug_labels.js, both of which this
+   * page only fetches when the flag is present -- so the rating page a rater
+   * loads makes no request for either and renders exactly as before. Keeping the
+   * arm names out of app.js and items.json is what lets that stay true; see
+   * tools/build_static.py for what is published and tools/debug_labels.js for
+   * why the labels are bolted on from outside rather than built into a render. */
+  function labelsRequested() {
+    return new URLSearchParams(window.location.search).get('labels') === '1';
+  }
+
+  if (labelsRequested()) {
+    var tag = document.createElement('script');
+    tag.src = 'debug_labels.js';
+    document.head.append(tag);
+  }
+
   Promise.all([asset('config.json'), asset('items.json')]).then(function (loaded) {
     var conf = loaded[0];
     var bundle = loaded[1];

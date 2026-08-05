@@ -239,7 +239,7 @@ def test_the_page_sends_only_configured_choices():
         assert f"'{choice}'" in source, f"app.js has no button for {choice!r}"
 
 
-# --- the console label snippet ---------------------------------------------
+# --- the ?labels=1 arm overlay ---------------------------------------------
 
 def test_arms_map_names_both_arms_of_every_item(bundle):
     mapping = debug_arms.arms_map(bundle["items"])
@@ -258,42 +258,51 @@ def test_arms_map_refuses_the_published_bundle():
         debug_arms.arms_map(published["items"])
 
 
-def test_the_snippet_carries_the_mapping_and_the_labelling_code(bundle):
-    snippet = debug_arms.console_snippet(bundle)
-    assert "window.__DEBUG_ARMS = {" in snippet
-    assert bundle["items_sha256"] in snippet, "snippet does not pin the build"
-    with open(debug_arms.LABELS_JS, encoding="utf-8") as handle:
-        assert handle.read() in snippet, "snippet is not debug_labels.js"
-
-    body = snippet.split("window.__DEBUG_ARMS = ", 1)[1]
-    mapping = json.loads(body.split(";\n", 1)[0])
-    assert mapping == debug_arms.arms_map(bundle["items"])
-
-
-def test_the_snippet_reads_the_mapping_it_is_given():
-    """debug_labels.js has to prefer window.__DEBUG_ARMS over the fetch: the
-    deployed site serves no __debug_arms.json and must not start to."""
-    with open(debug_arms.LABELS_JS, encoding="utf-8") as handle:
-        source = handle.read()
-    assert "window.__DEBUG_ARMS" in source
-    assert (source.index("window.__DEBUG_ARMS")
-            < source.index("fetch('__debug_arms.json')")), \
-        "the fetch would run before the injected mapping is consulted"
-
-
-def test_the_snippet_is_not_reachable_from_the_deployed_page():
-    """The labels are pasted in by hand, from a file that is never published.
-    If either of these ended up in static/, every rater would be unblinded."""
-    for name in ("debug_labels.js", "debug_arms.py"):
-        assert not os.path.exists(os.path.join(config.STATIC_DIR, name)), \
-            f"{name} is in static/ and would be deployed"
+def test_the_published_item_set_still_carries_no_arm_names(bundle):
+    """The mapping is published in its OWN file. That must not become an excuse
+    for items.json to start carrying arm names: the plain rating page fetches
+    items.json and nothing else, so this is what keeps it blind."""
     published = build_static.client_bundle()
-    assert "__DEBUG_ARMS" not in json.dumps(published)
-    for name in os.listdir(config.STATIC_DIR):
-        path = os.path.join(config.STATIC_DIR, name)
-        if not name.endswith((".js", ".html")):
-            continue
-        with open(path, encoding="utf-8") as handle:
-            source = handle.read()
-        assert "__DEBUG_ARMS" not in source, f"static/{name} reads the mapping"
-        assert "debug_labels" not in source, f"static/{name} loads the labels"
+    blob = json.dumps(published)
+    for arm in config.ARMS:
+        assert f'"{arm}"' not in blob, f"items.json names the arm {arm!r}"
+
+
+def test_the_page_loads_the_overlay_only_behind_the_flag():
+    """app.js may know the FILENAME; it must not know an arm, and it must not
+    request the overlay unasked. test_the_page_never_names_an_arm_or_a_category
+    pins the first half; this pins the second."""
+    path = os.path.join(config.STATIC_DIR, "app.js")
+    with open(path, encoding="utf-8") as handle:
+        source = handle.read()
+    assert "debug_labels.js" in source, "app.js can never load the overlay"
+    assert "labels" in source and "URLSearchParams" in source
+    guard = source.index("labelsRequested")
+    injection = source.index("'debug_labels.js'")
+    assert guard < injection, "the overlay is injected before the flag is read"
+
+
+def test_the_build_publishes_the_mapping_and_the_overlay(bundle, tmp_path,
+                                                         monkeypatch):
+    """Both files have to be emitted, or `?labels=1` 404s on the deployed site."""
+    monkeypatch.setattr(config, "STATIC_DIR", str(tmp_path))
+    arms_path, labels_path = build_static.write_debug_labels()
+
+    with open(arms_path, encoding="utf-8") as handle:
+        assert json.load(handle) == debug_arms.arms_map(bundle["items"])
+    with open(labels_path, encoding="utf-8") as handle:
+        published = handle.read()
+    with open(debug_arms.LABELS_JS, encoding="utf-8") as handle:
+        assert published == handle.read(), (
+            "the published overlay is not a copy of tools/debug_labels.js, so "
+            "the two could drift")
+
+
+def test_the_generated_files_are_not_committed():
+    """They are build output. Committing them would let the mapping fall behind
+    data/items.json and label the wrong arms."""
+    path = os.path.join(config.HERE, ".gitignore")
+    with open(path, encoding="utf-8") as handle:
+        ignored = handle.read()
+    for name in ("static/__debug_arms.json", "static/debug_labels.js"):
+        assert name in ignored, f"{name} is not gitignored"

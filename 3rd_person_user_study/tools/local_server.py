@@ -16,15 +16,15 @@ side-to-arm resolution, upsert on re-answer, and next-unanswered resume. A
 divergence here would mean the page looked fine locally and broke against
 Postgres.
 
-    python 3rd_person_user_study/tools/local_server.py [--port 8000] [--label-arms]
+    python 3rd_person_user_study/tools/local_server.py [--port 8000]
 
 Then open http://localhost:8000/. Over SSH:
     ssh -L 8000:localhost:8000 <host>
 
---label-arms is a DEBUG view: it names the arm behind each response above the two
-panels. It is off by default and changes nothing in static/ -- see
-tools/debug_labels.js for how, and why it is bolted on from outside the page
-rather than added to it.
+`?labels=1` names the arm behind each response above the two panels, exactly as
+it does on the deployed site -- the stub serves the same two files the build
+publishes, so there is no local-only debug path to get out of step. Off unless
+the flag is in the URL; see tools/debug_labels.js.
 """
 
 import argparse
@@ -47,10 +47,6 @@ import debug_arms
 SESSIONS = {}
 #: (session_id, item_id) -> the recorded row, as pref_judgments would hold it
 JUDGMENTS = {}
-
-#: --label-arms. OFF by default, and the default has to stay the blind page: the
-#: whole value of this stub is that what you look at locally is what a rater gets.
-LABEL_ARMS = False
 
 
 def load_items():
@@ -180,25 +176,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                                  "supabase_anon_key": "local-stub"})
             return
 
-        # The two debug routes 404 unless --label-arms, so the arm names are not
-        # reachable at all on the default (blind) page.
+        # The `?labels=1` pair, served here rather than read off static/ so the
+        # stub works in a checkout that has not run build_static.py. Same bytes
+        # either way: both come from tools/, which is the single copy.
         if path == "/__debug_arms.json":
-            if not LABEL_ARMS:
-                self.send_json(404, {"message": "run with --label-arms"})
-                return
             self.send_json(200, debug_arms.arms_map(ITEMS.values()))
             return
 
-        if path == "/__debug_labels.js":
-            if not LABEL_ARMS:
-                self.send_error(404)
-                return
+        if path == "/debug_labels.js":
             self.send_asset(os.path.join(_HERE, "debug_labels.js"),
                             "application/javascript")
-            return
-
-        if LABEL_ARMS and path in ("/", "/index.html"):
-            self.send_index_with_labels()
             return
 
         super().do_GET()
@@ -208,26 +195,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             body = handle.read()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def send_index_with_labels(self):
-        """static/index.html with the debug script appended.
-
-        Injected here rather than added to static/: the file on disk stays exactly
-        the one that gets deployed, so --label-arms cannot leak into a build.
-        """
-        path = os.path.join(config.STATIC_DIR, "index.html")
-        with open(path, encoding="utf-8") as handle:
-            html = handle.read()
-        marker = "</body>"
-        assert marker in html, f"no {marker} in index.html to inject before"
-        html = html.replace(
-            marker, '  <script src="__debug_labels.js"></script>\n' + marker, 1)
-        body = html.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -248,21 +215,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 
 def main():
-    global LABEL_ARMS
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--label-arms", action="store_true",
-                        help="DEBUG: name the arm above each response. Not the "
-                             "page a rater sees -- never use it to judge items.")
     parsed = parser.parse_args()
-    LABEL_ARMS = parsed.label_arms
     assert os.path.exists(os.path.join(config.STATIC_DIR, "items.json")), (
         "run tools/build_static.py first")
     print(f"{len(ITEMS)} items, digest {DIGEST[:12]}")
-    if LABEL_ARMS:
-        print("--label-arms: ARM NAMES ARE ON SCREEN. This is not the page a "
-              "rater sees; anything you judge here is judged unblinded.")
     print(f"IN-MEMORY STUB -- nothing is saved. http://localhost:{parsed.port}/")
+    print(f"  ?labels=1 names the arms: http://localhost:{parsed.port}/?labels=1")
     http.server.ThreadingHTTPServer(("127.0.0.1", parsed.port), Handler).serve_forever()
 
 

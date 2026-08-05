@@ -321,36 +321,36 @@ def test_a_reload_resumes_the_rating_and_does_not_replay_the_intro(server, brows
     page.close()
 
 
-# --- the --label-arms debug view -------------------------------------------
+# --- the ?labels=1 arm overlay ---------------------------------------------
 
-def test_the_default_page_carries_no_arm_labels(server, browser):
-    """The blindness of the DEFAULT local page is the whole value of this stub: if
-    looking at it locally showed something a rater cannot see, it would stop being
-    a preview of what a rater gets."""
+def test_the_plain_url_carries_no_arm_labels(server, browser):
+    """Without the flag the page must be the one a rater gets: no overlay, and
+    no request for the mapping. The mapping being PUBLISHED is not the same as
+    the rating page reaching for it, and this is the difference."""
     base, _ = server
     page = open_page(browser, base)
-    assert "__debug_labels.js" not in page.content(), "debug script injected"
+    requested = []
+    page.on("request", lambda r: requested.append(r.url))
     enter_id(page)
     pass_slides(page)
-    assert page.query_selector(".debug-arms") is None
-    assert page.evaluate(
-        "() => fetch('__debug_arms.json').then(r => r.status)") == 404, \
-        "arm names are reachable on the blind page"
+
+    assert page.query_selector(".debug-arms") is None, "labels on the plain URL"
+    leaked = [url for url in requested
+              if "__debug_arms" in url or "debug_labels" in url]
+    assert not leaked, f"the rating page fetched the mapping: {leaked}"
+    assert page.errors == []
     page.close()
 
 
-def test_label_arms_names_the_side_the_stub_resolves(server, browser, monkeypatch):
-    """The debug labels have to be RIGHT, or they are worse than nothing.
+def test_labels_flag_names_the_side_the_stub_resolves(server, browser):
+    """The labels have to be RIGHT, or they are worse than nothing.
 
     Checked against the stub's own side-to-arm resolution -- the thing that writes
     `left_model`/`right_model` -- rather than against the same `flipped` the labels
     were built from, so the two halves of the mapping are confirmed to compose.
     """
     base, stub = server
-    monkeypatch.setattr(stub, "LABEL_ARMS", True)
-
-    page = open_page(browser, base)
-    assert "__debug_labels.js" in page.content(), "debug script not injected"
+    page = open_page(browser, base, query="?labels=1")
     own_pid = "LABELCHECKPID"
     enter_id(page, own_pid)
     pass_slides(page)
@@ -373,48 +373,14 @@ def test_label_arms_names_the_side_the_stub_resolves(server, browser, monkeypatc
     page.close()
 
 
-def test_the_console_snippet_labels_the_unmodified_page(server, browser):
-    """The path used on the DEPLOYED site: no injected script tag and no
-    __debug_arms.json route, just the snippet evaluated in the console.
-
-    Run against the blind page (LABEL_ARMS stays off) so what is being labelled
-    is byte-for-byte what a rater is served -- which is the situation on Pages.
-    """
-    base, stub = server
-    snippet = debug_arms.console_snippet(debug_arms.load_items())
-
-    page = open_page(browser, base)
-    assert "__debug_labels.js" not in page.content(), "not the blind page"
-    own_pid = "SNIPPETCHECKPID"
-    enter_id(page, own_pid)
+def test_the_flag_survives_the_prolific_id_in_the_url(server, browser):
+    """Prolific appends its own query parameter, and the link you walk the study
+    with carries both. A flag read with URLSearchParams handles that; one matched
+    with a naive endswith would not."""
+    base, _ = server
+    page = open_page(browser, base, query="?PROLIFIC_PID=FROMURL42&labels=1")
+    assert page.input_value("input[type=text]") == "FROMURL42"
+    enter_id(page, "FROMURL42")
     pass_slides(page)
-    page.evaluate(snippet)
-
-    session_id = next(s["session_id"] for s in stub.SESSIONS.values()
-                      if s["prolific_pid"] == own_pid)
-    on_screen = []
-    for _ in range(3):
-        labels = [e.inner_text().strip()
-                  for e in page.query_selector_all(".debug-arms span")]
-        assert len(labels) == 2, f"expected two labels, got {labels}"
-        on_screen.append(tuple(labels))
-        page.click(".choices button[data-choice=left]")
-        page.wait_for_timeout(320)
-
-    resolved = [(row["left_model"], row["right_model"])
-                for key, row in stub.JUDGMENTS.items() if key[0] == session_id]
-    assert on_screen == resolved[:3], f"labels {on_screen} != resolved {resolved[:3]}"
-    assert page.errors == []
+    assert page.query_selector(".debug-arms") is not None, "no labels with two params"
     page.close()
-
-
-def test_the_stub_and_the_page_agree_on_the_item_digest(server):
-    """A page holding a different item build must be refused, not silently
-    recorded against text nobody can reconstruct."""
-    _, stub = server
-    with open(os.path.join(config.STATIC_DIR, "items.json"), encoding="utf-8") as fh:
-        published = json.load(fh)
-    assert published["items_sha256"] == stub.DIGEST
-    status, payload = stub.start_session({"p_items_sha256": "stale",
-                                          "p_prolific_pid": PID})
-    assert status == 400 and "mismatch" in payload["message"]

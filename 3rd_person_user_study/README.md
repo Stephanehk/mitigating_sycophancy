@@ -446,57 +446,57 @@ a hardcoded `localhost`: whatever name the page was fetched under is the one the
 RPCs must go back to, or the browser calls them cross-origin and CORS blocks every
 one. Reaching the server as `127.0.0.1` used to be enough to break it.
 
-#### `--label-arms`: seeing which arm wrote which response
+#### `?labels=1`: seeing which arm wrote which response
 
-```bash
-$PY 3rd_person_user_study/tools/local_server.py --port 8000 --label-arms
+Add `?labels=1` to the URL — the deployed one or the local stub — and the arm
+name appears above each panel:
+
+```
+https://stephanehk.github.io/mitigating_sycophancy/3rd_person_user_study/static/?labels=1
+http://localhost:8000/?labels=1
 ```
 
-Puts the arm name above each panel. **Off by default, and the default must stay
-the blind page** — a local view that showed something a rater cannot see would
-stop being a preview of what a rater gets.
+Nothing to paste and nothing to build locally: `tools/build_static.py` publishes
+`static/__debug_arms.json` (the item → arm mapping) and `static/debug_labels.js`
+(the overlay) next to the page, and `tools/local_server.py` serves both at the
+same paths, so what you look at locally is what is deployed.
 
-It is bolted on from *outside* the page, not added to it. `tools/debug_labels.js`
-lives in `tools/`, never in `static/`; the stub injects a script tag for it into
-`index.html` on the way out and serves the arm names from a `/__debug_arms.json`
-route that **404s unless the flag is set**. So `static/` is byte-identical either
-way and no deployment can pick the labels up. Adding a labelled mode to `app.js`
-instead would put the arm names into the deployed bundle and make blindness a
-runtime flag rather than a property of what is published — see §2's
-"The page is blind, and so is the dataset".
+**Which of these is a rater's page.** The plain URL is. `app.js` injects the
+overlay only when the flag is present, so a rater's page requests neither file
+and renders exactly as it did before the flag existed —
+`test_the_plain_url_carries_no_arm_labels` watches the network to confirm that,
+rather than just checking that no labels appear.
 
-The mapping is composed from two halves, neither of which `app.js` knows: which
-arms an item's `a`/`b` are (from the full `data/items.json`, server-side) and which
-one is on the left (from `flipped` in the session the page stored, i.e. the same
-draw the database made). `test_label_arms_names_the_side_the_stub_resolves` checks
-the on-screen names against the stub's own `left_model`/`right_model` — the values
-that get written — rather than against the `flipped` the labels were built from, so
-the two halves are confirmed to compose rather than to agree with themselves.
+**What it costs.** The mapping is now publicly fetchable by anyone who knows the
+filename, so the item set is no longer secret from a determined visitor — only
+from the rating page, which never asks for it. That is a real reduction and it
+was a deliberate trade for a labelled view that works on the deployed site with
+nothing pasted into a console. What it does *not* touch is the data: `pref_record`
+resolves a screen side to a model inside the database, from the session's own
+draw, so nothing a rater could learn changes what their judgment is recorded as.
+If a rater reading the mapping ever becomes a real concern, the answer is a
+per-item random `item_id`, not hiding the file.
 
-Anything you judge in this mode is judged unblinded; the server prints a warning
-saying so.
+**The labels are still bolted on from outside the render.** `app.js` renders `a`
+and `b`, sends a screen side, and knows a *filename* — never an arm; the published
+`items.json` still carries no arm names, pinned by
+`test_the_published_item_set_still_carries_no_arm_names`. `debug_labels.js`
+watches the DOM and adds a bar above it, so there is one render path rather than
+a labelled and an unlabelled one.
 
-#### The same labels on the deployed page
+The mapping composes two halves, neither of which `app.js` knows: which arms an
+item's `a`/`b` are (from the full `data/items.json`, via `arms_map()`) and which
+one is on the left (from `flipped` in the stored session — the same draw the
+database made). `test_labels_flag_names_the_side_the_stub_resolves` checks the
+on-screen names against the stub's own `left_model`/`right_model` — the values
+that actually get written — rather than against the `flipped` the labels were
+built from, so the two halves are confirmed to compose rather than to agree with
+themselves.
 
-The published site cannot serve the labels — `static/items.json` carries no arm
-names and must not start to, since it is publicly fetchable by the raters
-themselves. So the mapping is pasted in from your own machine instead:
-
-```bash
-$PY 3rd_person_user_study/tools/debug_arms.py     # copy the output
-```
-
-Then open the devtools console on the live page and paste it. (Chrome makes you
-type `allow pasting` into the console once before it will accept a paste.) The
-snippet is `tools/debug_labels.js` with `window.__DEBUG_ARMS` prepended, so the
-labelling code is the one the local stub uses and the arm names come from
-`data/items.json` on your disk — nothing is uploaded and the deployed bundle is
-untouched. Re-paste after a reload.
-
-Labels only appear once a session exists, because the left/right half of the
-mapping comes from `flipped` in `sessionStorage`. On the live page that means
-entering an ID first, which **writes a real row** to `pref_sessions` — use an
-obviously fake ID and delete it before recruiting:
+Labels only appear once a session exists, since the left/right half comes from
+`sessionStorage`. On the live page that means entering an ID first, which **writes
+a real row** to `pref_sessions` — use an obviously fake ID and delete it before
+recruiting:
 
 ```sql
 delete from public.pref_sessions where prolific_pid = '<the fake id>';
@@ -504,6 +504,8 @@ delete from public.pref_sessions where prolific_pid = '<the fake id>';
 
 (`pref_assignments` and `pref_judgments` are `on delete cascade` from
 `session_id`, so that one statement is enough.)
+
+Anything you judge with the flag on is judged unblinded.
 
 `static/config.json` currently points at the **same Supabase project as
 `study/`**. The `pref_*` tables do not collide with the `study_*` ones, but note

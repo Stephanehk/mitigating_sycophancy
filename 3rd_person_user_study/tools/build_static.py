@@ -1,4 +1,4 @@
-"""Emit the two static assets the rating page fetches at load.
+"""Emit the static assets the rating page fetches at load.
 
   static/items.json   the item set, STRIPPED of every label. The page gets
                       item_id, the prompt and the two responses keyed `a`/`b`
@@ -8,9 +8,24 @@
   static/config.json  the Supabase project URL and anon key, from the
                       environment so real values are never committed.
 
-Both are read with a relative path from index.html, so the directory can be
+  static/__debug_arms.json  the item -> arm mapping, and
+  static/debug_labels.js    the overlay that renders it.
+                      Published, but fetched ONLY by `?labels=1` (see app.js).
+                      A rater on the plain URL requests neither, so the page
+                      they load is unchanged by their existence.
+
+All are read with a relative path from index.html, so the directory can be
 opened directly during development and served as a site root in production --
 the same arrangement as study/static.
+
+WHY THE MAPPING IS PUBLISHED AT ALL. `?labels=1` has to work on the deployed
+site, with no local checkout and nothing pasted into a console. That means the
+names have to be fetchable, so the item set is no longer secret from a
+determined visitor -- only from the rating page itself, which never asks for
+them. The protection that remains is that a rater has no reason to, and the
+data-side protection is unchanged: `pref_record` resolves a screen side to a
+model in the database from the session's own draw, so what a rater could learn
+cannot alter what their judgment is recorded as.
 
 Run:
     python 3rd_person_user_study/tools/build_static.py
@@ -18,6 +33,7 @@ Run:
 
 import json
 import os
+import shutil
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -25,6 +41,10 @@ _STUDY = os.path.dirname(_HERE)
 sys.path.insert(0, _STUDY)
 
 import config
+
+sys.path.insert(0, _HERE)
+
+import debug_arms
 
 # Exactly the keys the page may see. Anything not listed -- comparison, env,
 # model_a, model_b, cat_a, cat_b -- stays server-side.
@@ -88,11 +108,34 @@ def write_config():
     return path
 
 
+def write_debug_labels():
+    """The `?labels=1` pair: the arm mapping, and the overlay that renders it.
+
+    Both are generated (and gitignored) rather than committed into static/, so
+    tools/debug_labels.js stays the single copy of the labelling code and cannot
+    drift from the one tools/local_server.py serves.
+
+    Assumes the FULL data/items.json -- debug_arms.arms_map asserts on a bundle
+    with no arm names, which is what the published items.json is.
+    """
+    bundle = debug_arms.load_items()
+    arms_path = os.path.join(config.STATIC_DIR, "__debug_arms.json")
+    with open(arms_path, "w", encoding="utf-8") as handle:
+        json.dump(debug_arms.arms_map(bundle["items"]), handle,
+                  ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    labels_path = os.path.join(config.STATIC_DIR, "debug_labels.js")
+    shutil.copyfile(debug_arms.LABELS_JS, labels_path)
+    return arms_path, labels_path
+
+
 def main():
     os.makedirs(config.STATIC_DIR, exist_ok=True)
     path, size = write_items()
     print(f"wrote {path} ({size / 1024:.0f} KB)")
     print(f"wrote {write_config()}")
+    for path in write_debug_labels():
+        print(f"wrote {path}")
 
 
 if __name__ == "__main__":

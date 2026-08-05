@@ -1,30 +1,28 @@
 /* DEBUG ONLY -- names the arm behind each response on screen.
  *
- * THIS FILE IS NOT PART OF THE PAGE. It lives in tools/, never in static/, and no
- * deployment can pick it up. Two things run it, neither of which changes what is
- * published:
- *   - tools/local_server.py --label-arms, which injects a script tag for it into
- *     index.html on the way out;
- *   - the console snippet printed by tools/debug_arms.py, which is pasted into
- *     devtools on the DEPLOYED page. The snippet is this file with the mapping
- *     prepended, so the labels come from the viewer's own machine rather than
- *     from anything the site serves.
+ * LOADED ONLY BY `?labels=1`. app.js injects a script tag for this file when the
+ * flag is in the URL and never otherwise, so the plain rating URL a rater opens
+ * requests neither this nor the mapping, and renders exactly as it did before the
+ * flag existed. It is published (by tools/build_static.py) but not reached.
  *
- * That indirection is the point. The rating page is blind by construction:
- * static/items.json is published with the responses keyed `a`/`b` and no arm
- * names, app.js is tested to never mention an arm, and the database resolves a
- * screen side to a model itself. Adding a labelled mode to app.js would put the
- * arm names into the deployed bundle and make the blindness a runtime flag rather
- * than a property of what is published. So the labels are bolted on from outside
- * instead, and the file a rater is served stays the blind one.
+ * IT IS STILL BOLTED ON FROM OUTSIDE, and that is deliberate. app.js renders `a`
+ * and `b` and sends a screen side; it has no notion of an arm, and the published
+ * items.json carries no arm names. Teaching the renderer about arms would make
+ * every code path a labelled-or-not path. Instead this watches the DOM app.js
+ * produced and adds a bar above it, so there is one render, one item set, and one
+ * thing that knows the mapping -- this file.
  *
  * WHERE THE MAPPING COMES FROM. Two halves, neither of which app.js knows:
- *   - which arms an item's `a`/`b` are: from window.__DEBUG_ARMS if the snippet
- *     already set it, else the stub's /__debug_arms.json. Both are built by
- *     arms_map() in tools/debug_arms.py out of the FULL data/items.json;
+ *   - which arms an item's `a`/`b` are: from __debug_arms.json, built by
+ *     arms_map() in tools/debug_arms.py out of the FULL data/items.json, and
+ *     served both by tools/local_server.py and from the deployed site;
  *   - which of the two is on the left: from `flipped` in the session the page
  *     stored in sessionStorage, i.e. the same per-session draw the database made.
- * Composing them here reproduces exactly what pref_record does server-side.
+ * Composing them here reproduces exactly what pref_record does server-side --
+ * which is why a label can be trusted to name the arm the judgment is recorded
+ * against, rather than merely agreeing with itself.
+ *
+ * `window.__DEBUG_ARMS`, if something has already set it, wins over the fetch.
  */
 (function () {
   'use strict';
@@ -92,9 +90,7 @@
   new MutationObserver(label).observe(document.getElementById('root'),
                                       { childList: true, subtree: true });
 
-  /* The deployed site has no __debug_arms.json route and must not grow one, so
-   * the console snippet puts the mapping on window before this runs. Only the
-   * stub has to fetch it. */
+  /* Beside index.html on the deployed site, and a route on the local stub. */
   if (window.__DEBUG_ARMS) {
     arms = window.__DEBUG_ARMS;
     label();
