@@ -1,39 +1,48 @@
 # AWS Amplify build spec for the THIRD-PERSON preference study.
 #
-# SEPARATE FROM THE ROOT amplify.yml, which builds study/. Two Amplify apps
-# serve out of this one repo, and Amplify reads a single build spec per app --
-# so this file is the second app's, and the app must be told where its root is:
+# THIS FILE IS NOT READ BY AMPLIFY. Paste the `version:`-onwards block into the
+# new app's console, under App settings -> Build settings -> Edit. It lives here
+# so the spec is version-controlled and reviewable, and so the two apps' specs
+# sit next to the code they build.
 #
-#   App settings -> Environment variables
-#     AMPLIFY_MONOREPO_APP_ROOT = 3rd_person_user_study
+# WHY NOT MONOREPO MODE. Amplify's monorepo support does NOT look for an
+# amplify.yml inside the app root -- it reads the REPO-ROOT amplify.yml and
+# requires it to be an `applications:` list, one entry per app:
 #
-# Without that variable Amplify reads the repo-root amplify.yml and would deploy
-# study/ under this app's domain. If you would rather not use monorepo mode,
-# paste the `version:`-onwards block below into App settings -> Build settings
-# instead; it is the same spec, and then this file is documentation.
+#     !!! CustomerError: Monorepo spec provided without "applications" key
 #
-# REQUIRED ENVIRONMENT VARIABLES, same console page:
+# Converting the root file to that form would mean setting
+# AMPLIFY_MONOREPO_APP_ROOT on the EXISTING study/ app too -- a console change
+# and a redeploy of a live instrument, to gain nothing this app needs. A console
+# build spec overrides the repo's amplify.yml outright, so the study/ app keeps
+# reading the root file exactly as it does today and is not touched at all.
 #
-#   PREF_SUPABASE_URL        https://<project-ref>.supabase.co
-#   PREF_SUPABASE_ANON_KEY   the PUBLIC anon / sb_publishable_ key
+# So, in the new app's console:
+#   - App settings -> Build settings -> Edit: paste the block below.
+#   - App settings -> Environment variables:
+#         PREF_SUPABASE_URL        https://<project-ref>.supabase.co
+#         PREF_SUPABASE_ANON_KEY   the PUBLIC anon / sb_publishable_ key
+#   - DO NOT set AMPLIFY_MONOREPO_APP_ROOT. That is what produced the error
+#     above; with a console spec there is no app root for Amplify to resolve,
+#     and the paths below are relative to the repo root instead.
 #
 # NEVER set a service_role key here. tools/build_static.py refuses a value that
 # looks like a secret, so a slip fails the build rather than shipping a
 # privileged credential in page source.
 #
 # THE BUILD STEP IS NOT OPTIONAL. static/config.json (Supabase URL, anon key,
-# the pacing floors and the Prolific completion code) and static/consent.json
-# (imported from study/content.py) are both gitignored and generated here. A
-# deploy without them serves a page that loads and then fails on its first call.
+# the pacing floors, the Prolific completion code) and static/consent.json
+# (imported from study/content.py) are gitignored and generated here. A deploy
+# without them serves a page that loads and then fails on its first call.
 #
-# It needs no pip install: build_static.py and everything it imports are
-# stdlib-only, which tests/test_generators.py pins.
+# No pip install: build_static.py and everything it imports are stdlib-only,
+# which tests/test_generators.py pins.
 #
 # NO REWRITE RULES ARE NEEDED. The eight recruitment links are hash fragments --
 # /#set_1 through /#set_8 -- which never reach the server. That is why they are
 # hashes and not paths: /set_3 would need a rewrite to index.html, and Amplify's
-# rewrites live in the console rather than in this file, so a fresh app would
-# 404 on every link.
+# rewrites live in the console rather than in a file, so a fresh app would 404
+# on every link.
 
 version: 1
 frontend:
@@ -41,13 +50,13 @@ frontend:
     build:
       commands:
         - python3 --version
-        - python3 tools/build_static.py
+        - python3 3rd_person_user_study/tools/build_static.py
   artifacts:
     # Only static/ is served. The Python modules stay in the repo as the source
     # of truth for the instrument and are never deployed -- which also keeps
     # data/items.json, the file that says which arm wrote which response, off
     # the site.
-    baseDirectory: static
+    baseDirectory: 3rd_person_user_study/static
     files:
       - '**/*'
   cache:
