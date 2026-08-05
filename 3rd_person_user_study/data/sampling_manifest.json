@@ -1,5 +1,5 @@
 {
- "items_sha256": "c8ec23e3e43f4b37f41572cd2472f3e0ab554ca4eaa0af954c9b7504635723ee",
+ "items_sha256": "b3540a4d70b1532f12724f73a2c3661c88fe7cc970e60942ea222ab247f19e85",
  "substitution_rule": "A cell short of n_per_cell is topped up with items drawn from a DIFFERENT ordered category pair WITHIN THE SAME (comparison, env) block: a pair is drawn uniformly from the 12 ordered pairs (so the two categories always differ), then a prompt uniformly from that pair, rejecting any prompt already used anywhere in the item set. Pairs with no unused prompts left are excluded from the draw rather than drawn and rejected. A substitute never crosses an env or a comparison, so it is still the same two models on the same env as the cell it fills -- only the category pair differs. Each item records the pair actually drawn (cat_a/cat_b), the cell it stands in for (target_cat_a/target_cat_b) and origin='substitute', so substitutes can be separated out. Every cell therefore holds n_per_cell items, but a short cell's items are NOT all instances of its category pair: the data does not contain them.",
  "cells": [
   {

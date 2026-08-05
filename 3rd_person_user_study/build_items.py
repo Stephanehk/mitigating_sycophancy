@@ -298,6 +298,45 @@ def draw(pools_by_block, seed):
 items_digest = config.items_digest
 
 
+def assign_sets(items, seed):
+    """Partition `items` into disjoint sets of config.SET_SIZE, one per link.
+
+    BALANCED BY COMPARISON, randomised within it. A uniform shuffle of all 72
+    would leave some sets lopsided -- and a set that came out all-`untrained`
+    would contribute nothing at all to the `neutral_mixed` comparison, so the
+    raters who got that link would be wasted on half the design. Dealing each
+    comparison's items round-robin across the sets gives every set 4 or 5 of
+    each, and the shuffle inside a comparison is what makes WHICH items land
+    together arbitrary.
+
+    Mutates each item, adding `set_index` (1-based). Asserts the partition is
+    exact: every item placed once, every set the same size.
+    """
+    assert len(items) % config.SET_SIZE == 0, (
+        f"{len(items)} items does not divide into sets of {config.SET_SIZE}")
+    n_sets = len(items) // config.SET_SIZE
+
+    by_comparison = {}
+    for item in items:
+        by_comparison.setdefault(item["comparison"], []).append(item)
+
+    rng = random.Random(seed + 991)   # not the sampling stream
+    slot = 0
+    for comparison in sorted(by_comparison):
+        group = by_comparison[comparison][:]
+        rng.shuffle(group)
+        for item in group:
+            item["set_index"] = (slot % n_sets) + 1
+            slot += 1
+
+    counts = {}
+    for item in items:
+        counts[item["set_index"]] = counts.get(item["set_index"], 0) + 1
+    assert sorted(counts) == list(range(1, n_sets + 1)), counts
+    assert set(counts.values()) == {config.SET_SIZE}, counts
+    return n_sets
+
+
 def main():
     pools_by_block = {(baseline, env): cell_pools(env, baseline)
                       for _, baseline in config.COMPARISONS
@@ -318,8 +357,11 @@ def main():
         assert matched == (item["origin"] == "matched"), (
             f"{item['item_id']}: origin disagrees with its categories")
 
+    n_sets = assign_sets(items, config.SAMPLE_SEED)
+
     os.makedirs(config.DATA_DIR, exist_ok=True)
     bundle = {"seed": config.SAMPLE_SEED, "n_per_cell": config.N_PER_CELL,
+              "set_size": config.SET_SIZE, "n_sets": n_sets,
               "unique_prompts": config.UNIQUE_PROMPTS,
               "substitution_rule": config.SUBSTITUTION_RULE,
               "arms": config.ARMS, "envs": config.ENVS,

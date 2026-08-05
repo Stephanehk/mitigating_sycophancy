@@ -33,7 +33,7 @@
     'We are going to show you a prompt and two different responses from an ' +
       'AI chatbot.',
     'We will ask you questions about the two responses. For each pair, you ' +
-      'will not be allowed to press continue until 1 minute has elapsed.',
+      'will not be allowed to press continue until 45 seconds have elapsed.',
     'Some prompts don’t contain all the information you might normally ' +
       'have. Use your judgement to answer, or select “Can’t tell”.'
   ];
@@ -85,6 +85,8 @@
     digest: null,
     order: [],        // [{item_id, flipped}] in presentation order
     itemsById: {},    // item_id -> {prompt, response_a, response_b}
+    setIndex: null,   // which link's set of pairs this rater was sent to
+    completionCode: null,
     consent: null,    // 'agree' | 'decline', once the consent screen is answered
     consentText: null,// {title, body, choices} from consent.json
     slide: 0,         // which SLIDES entry is up, while stage === 'intro'
@@ -96,7 +98,7 @@
     minSeconds: null, // per-item floor, from config.json
     tick: null,       // interval re-evaluating the countdown
     busy: false,
-    stage: 'loading'  // loading | consent | prolific | intro | compare | done
+    stage: 'loading'  // loading | consent | prolific | intro | compare | submit | done
   };
 
   var root = document.getElementById('root');
@@ -312,7 +314,7 @@
   }
 
   function render() {
-    if (S.index >= S.order.length) { finish(); return; }
+    if (S.index >= S.order.length) { submitScreen(); return; }
     stage('compare');
 
     var assignment = S.order[S.index];
@@ -411,17 +413,42 @@
     });
   }
 
-  /* pref_complete only stamps a timestamp -- every judgment is already written --
-   * so a failure here costs a completion time, not data. It is still surfaced
-   * rather than swallowed, because a token that has stopped working is worth
-   * seeing. */
-  function finish() {
+  /* The last screen before the code: everything is answered, nothing has been
+   * finalised.
+   *
+   * EVERY JUDGMENT IS ALREADY IN SUPABASE by this point -- each one is written
+   * as it is made, so a rater who closes the tab at pair 7 keeps 7 pairs rather
+   * than losing 9. What Submit does is finalise the session (pref_complete) and
+   * release the completion code. Buffering all nine in the browser to post them
+   * here instead would make one dropped request cost the whole session, and
+   * would gain nothing a rater can see. */
+  function submitScreen() {
     if (S.tick) { window.clearInterval(S.tick); S.tick = null; }
-    stage('done');
-    root.replaceChildren(el('p', 'status', 'Done.'));
-    rpc('pref_complete', { p_token: S.token }).then(null, function (message) {
-      root.append(el('p', 'error', String(message)));
+    stage('submit');
+    var button = el('button', 'primary', 'Submit data');
+    button.addEventListener('click', function () {
+      button.disabled = true;
+      clearError();
+      rpc('pref_complete', { p_token: S.token }).then(finish, function (message) {
+        button.disabled = false;
+        showError(message);
+      });
     });
+    root.replaceChildren(
+      el('p', 'slide', 'That is all ' + S.order.length + ' pairs. Press Submit '
+         + 'data to record your responses and get your completion code.'),
+      actions(button));
+    window.scrollTo(0, 0);
+  }
+
+  /* The code, and nothing that can fail after it. */
+  function finish() {
+    stage('done');
+    root.replaceChildren(
+      el('p', 'slide', 'Your Prolific completion code is ' + S.completionCode),
+      el('p', 'status', 'Paste this into Prolific to be paid. '
+                        + 'You can close this tab afterwards.'));
+    window.scrollTo(0, 0);
   }
 
   // --- intro ---------------------------------------------------------------
@@ -564,6 +591,22 @@
     field.focus();
   }
 
+  /* Which set this link is for, from the URL hash: #set_1 .. #set_8.
+   *
+   * A HASH and not a path, because this is deployed as a static site: a path
+   * like /set_3 needs a rewrite rule to reach index.html, and Amplify's rewrites
+   * live in the console rather than in the repo, so a fresh app would 404. The
+   * hash is never sent to the server and needs no routing at all.
+   *
+   * Returns null for a missing or malformed hash. That is a REFUSAL, not a
+   * default: falling back to set 1 would silently pile every mis-linked rater
+   * onto the same nine items, and falling back to "all of them" would hand one
+   * rater 72. */
+  function setFromUrl() {
+    var match = /^#set_(\d+)$/.exec(window.location.hash || '');
+    return match ? parseInt(match[1], 10) : null;
+  }
+
   function prolificFromUrl() {
     var params = new URLSearchParams(window.location.search);
     return params.get('PROLIFIC_PID') || params.get('prolific_pid') || '';
@@ -607,7 +650,8 @@
     return rpc('pref_start_session', {
       p_user_agent: navigator.userAgent,
       p_items_sha256: S.digest,
-      p_prolific_pid: prolificPid
+      p_prolific_pid: prolificPid,
+      p_set_index: S.setIndex
     }).then(function (result) {
       var fresh = { session_token: result.session_token, items: result.items,
                     items_sha256: S.digest };
@@ -627,25 +671,15 @@
     });
   }
 
-  /* `?labels=1` loads the arm-label overlay. FOR LOOKING AT THE STUDY, never for
-   * a rater: it names the arm behind each response above the two panels.
+  /* THE `?labels=1` OVERLAY IS GONE FROM THE DEPLOYED PAGE (2026-08-05).
    *
-   * WHAT THIS FILE LEARNS IS A FILENAME, not an arm. The mapping lives in
-   * __debug_arms.json and the labelling in debug_labels.js, both of which this
-   * page only fetches when the flag is present -- so the rating page a rater
-   * loads makes no request for either and renders exactly as before. Keeping the
-   * arm names out of app.js and items.json is what lets that stay true; see
-   * tools/build_static.py for what is published and tools/debug_labels.js for
-   * why the labels are bolted on from outside rather than built into a render. */
-  function labelsRequested() {
-    return new URLSearchParams(window.location.search).get('labels') === '1';
-  }
-
-  if (labelsRequested()) {
-    var tag = document.createElement('script');
-    tag.src = 'debug_labels.js';
-    document.head.append(tag);
-  }
+   * It injected a script that named the arm above each panel, and the build
+   * published the mapping beside the page so it worked on the live site. With
+   * the study recruiting, that mapping is the answer key: this page must not be
+   * able to fetch it, and the build no longer emits it.
+   *
+   * tools/local_server.py still serves both files, so the labelled view still
+   * works against a local checkout -- which is where looking at it belongs. */
 
   Promise.all([asset('config.json'), asset('items.json'),
                asset('consent.json')]).then(function (loaded) {
@@ -655,8 +689,20 @@
     S.supabaseKey = conf.supabase_anon_key;
     S.minSeconds = conf.min_item_seconds;
     S.minChars = conf.min_reasoning_chars;
-    if (typeof S.minSeconds !== 'number' || typeof S.minChars !== 'number') {
-      return Promise.reject('config.json is missing a pacing value');
+    S.completionCode = conf.completion_code;
+    if (typeof S.minSeconds !== 'number' || typeof S.minChars !== 'number'
+        || !S.completionCode) {
+      return Promise.reject('config.json is missing a pacing value or the code');
+    }
+
+    /* No set means the link is wrong, and there is nothing sensible to show
+     * past this point -- so say so here rather than let someone consent and
+     * enter an ID before failing. */
+    S.setIndex = setFromUrl();
+    if (S.setIndex === null) {
+      fail('This link is incomplete. Please use the exact link from the study '
+           + 'listing, which ends in #set_1 through #set_8.');
+      return;
     }
     S.digest = bundle.items_sha256;
     S.consentText = loaded[2];

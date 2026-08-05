@@ -21,10 +21,11 @@ Postgres.
 Then open http://localhost:8000/. Over SSH:
     ssh -L 8000:localhost:8000 <host>
 
-`?labels=1` names the arm behind each response above the two panels, exactly as
-it does on the deployed site -- the stub serves the same two files the build
-publishes, so there is no local-only debug path to get out of step. Off unless
-the flag is in the URL; see tools/debug_labels.js.
+`?labels=1` names the arm behind each response above the two panels. LOCAL ONLY:
+the deployed build no longer emits the mapping or the overlay, and app.js no
+longer loads them, because on a live study that mapping is the answer key. The
+stub injects the script tag into index.html on the way out instead, so the
+labelled view exists here and nowhere a rater can reach.
 """
 
 import argparse
@@ -74,16 +75,22 @@ def start_session(args):
     prolific_pid = (args.get("p_prolific_pid") or "").strip()[:200]
     if not prolific_pid:
         return 400, {"message": "prolific id is required"}
+    set_index = args.get("p_set_index")
+    in_set = [i for i, item in ITEMS.items() if item["set_index"] == set_index]
+    if not in_set:
+        return 400, {"message": f"unknown item set: {set_index}"}
     session_id = "local%04d" % (len(SESSIONS) + 1)
     token = "tok-" + session_id
-    order = sorted(ITEMS)
+    order = sorted(in_set)
     random.shuffle(order)
     assignments = [{"item_id": item_id, "flipped": random.random() < 0.5,
                     "position": position}
                    for position, item_id in enumerate(order)]
     SESSIONS[token] = {"session_id": session_id, "assignments": assignments,
-                       "prolific_pid": prolific_pid, "completed": False}
-    print(f"[start] {session_id}: {len(assignments)} items, pid {prolific_pid!r}")
+                       "prolific_pid": prolific_pid, "set_index": set_index,
+                       "completed": False}
+    print(f"[start] {session_id}: set {set_index}, {len(assignments)} items, "
+          f"pid {prolific_pid!r}")
     return 200, {"session_id": session_id, "session_token": token,
                  "items": [{"item_id": a["item_id"], "flipped": a["flipped"]}
                            for a in assignments]}
@@ -201,12 +208,31 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                                  "supabase_anon_key": "local-stub",
                                  "min_item_seconds": LOCAL_MIN_ITEM_SECONDS,
                                  "min_reasoning_chars":
-                                     config.MIN_REASONING_CHARS})
+                                     config.MIN_REASONING_CHARS,
+                                 "completion_code": config.completion_code()})
             return
 
         # Served rather than read off static/ for the same reason as
         # config.json: a fresh checkout has not run build_static.py, and a page
         # that 404s here never gets past its first screen.
+        # index.html with the overlay bolted on. Injected HERE, never written
+        # into static/, so the file on disk stays exactly the one that deploys.
+        if path in ("/", "/index.html") and "labels=1" in (self.path.split("?", 1)[-1]):
+            with open(os.path.join(config.STATIC_DIR, "index.html"),
+                      encoding="utf-8") as handle:
+                html = handle.read()
+            marker = "</body>"
+            assert marker in html, f"no {marker} in index.html to inject before"
+            body = html.replace(
+                marker, '  <script src="debug_labels.js"></script>\n' + marker,
+                1).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if path == "/consent.json":
             self.send_json(200, build_static.consent())
             return

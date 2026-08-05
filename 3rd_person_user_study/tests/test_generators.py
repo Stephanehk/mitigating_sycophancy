@@ -82,12 +82,12 @@ def test_schema_allows_exactly_the_configured_choices(schema_sql):
 def test_schema_seeds_every_item_and_only_those(schema_sql, bundle):
     seeded = re.findall(
         r"^    \('([^']+)', '([^']+)', '([^']+)', '([^']+)', '([^']+)',"
-        r" (\d), (\d), (\d), (\d), '([^']+)', (\d+)\)", schema_sql, re.M)
+        r" (\d), (\d), (\d), (\d), '([^']+)', (\d+), (\d+)\)", schema_sql, re.M)
     assert len(seeded) == len(bundle["items"])
     by_id = {item["item_id"]: item for item in bundle["items"]}
     for position, row in enumerate(seeded):
         (item_id, comparison, env, model_a, model_b, cat_a, cat_b,
-         target_a, target_b, origin, pos) = row
+         target_a, target_b, origin, pos, set_index) = row
         item = by_id[item_id]
         assert (comparison, env, model_a, model_b) == (
             item["comparison"], item["env"], item["model_a"], item["model_b"])
@@ -96,6 +96,7 @@ def test_schema_seeds_every_item_and_only_those(schema_sql, bundle):
                                                  item["target_cat_b"])
         assert origin == item["origin"]
         assert int(pos) == position
+        assert int(set_index) == item["set_index"]
 
 
 def test_schema_can_separate_substitutes_from_matched_items(schema_sql, bundle):
@@ -131,17 +132,19 @@ def test_the_schema_stores_a_prolific_id_and_refuses_a_blank_one(schema_sql):
         "a project whose pref_sessions predates the column would not gain it"
     assert "p_prolific_pid text" in schema_sql
     assert "raise exception 'prolific id is required'" in schema_sql
-    assert "prolific_pid, user_agent" in schema_sql, "the id is not inserted"
+    assert "prolific_pid, set_index, user_agent" in schema_sql, "the id is not inserted"
 
 
-def test_the_two_argument_start_session_is_dropped(schema_sql):
+def test_superseded_start_session_signatures_are_dropped(schema_sql):
     """`create or replace` with a new argument list makes an OVERLOAD, not a
     replacement: without the drop the old function survives and a page still
     calling it keeps opening sessions with no ID to pay."""
     assert "drop function if exists public.pref_start_session(text, text);" in schema_sql
     assert "grant execute on function public.pref_start_session(text, text)" \
         not in schema_sql
-    assert "grant execute on function public.pref_start_session(text, text, text)" \
+    assert "drop function if exists public.pref_start_session(text, text, text);" \
+        in schema_sql, "the 3-arg form would survive as an overload"
+    assert "grant execute on function public.pref_start_session(text, text, text, integer)" \
         in schema_sql
 
     # The drop has to come BEFORE the create, or it removes what was just made.
@@ -271,34 +274,15 @@ def test_the_published_item_set_still_carries_no_arm_names(bundle):
         assert f'"{arm}"' not in blob, f"items.json names the arm {arm!r}"
 
 
-def test_the_page_loads_the_overlay_only_behind_the_flag():
-    """app.js may know the FILENAME; it must not know an arm, and it must not
-    request the overlay unasked. test_the_page_never_names_an_arm_or_a_category
-    pins the first half; this pins the second."""
-    path = os.path.join(config.STATIC_DIR, "app.js")
-    with open(path, encoding="utf-8") as handle:
-        source = handle.read()
-    assert "debug_labels.js" in source, "app.js can never load the overlay"
-    assert "labels" in source and "URLSearchParams" in source
-    guard = source.index("labelsRequested")
-    injection = source.index("'debug_labels.js'")
-    assert guard < injection, "the overlay is injected before the flag is read"
-
-
-def test_the_build_publishes_the_mapping_and_the_overlay(bundle, tmp_path,
-                                                         monkeypatch):
-    """Both files have to be emitted, or `?labels=1` 404s on the deployed site."""
-    monkeypatch.setattr(config, "STATIC_DIR", str(tmp_path))
-    arms_path, labels_path = build_static.write_debug_labels()
-
-    with open(arms_path, encoding="utf-8") as handle:
-        assert json.load(handle) == debug_arms.arms_map(bundle["items"])
-    with open(labels_path, encoding="utf-8") as handle:
-        published = handle.read()
-    with open(debug_arms.LABELS_JS, encoding="utf-8") as handle:
-        assert published == handle.read(), (
-            "the published overlay is not a copy of tools/debug_labels.js, so "
-            "the two could drift")
+def test_the_build_does_not_publish_the_arm_mapping():
+    """The mapping is the answer key for a live study, so the deployed bundle
+    must not contain it and build_static must not write it. `?labels=1` still
+    works locally -- tools/local_server.py injects the overlay itself."""
+    assert not hasattr(build_static, "write_debug_labels"), \
+        "build_static still emits the overlay"
+    for name in ("__debug_arms.json", "debug_labels.js"):
+        assert not os.path.exists(os.path.join(config.STATIC_DIR, name)), \
+            f"static/{name} would be deployed"
 
 
 def test_the_generated_files_are_not_committed():

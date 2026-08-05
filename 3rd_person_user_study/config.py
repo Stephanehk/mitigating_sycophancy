@@ -154,9 +154,46 @@ SUBSTITUTION_RULE = (
     "contain them."
 )
 
+# --- Sets: what one rater is asked to do ------------------------------------
+
+#: Pairs per rater. The 72 items are partitioned into disjoint sets of this
+#: size, one per recruitment link, so a rater sees SET_SIZE pairs and no item is
+#: rated by two links' worth of raters at once.
+SET_SIZE = 9
+
+#: The partition is BALANCED BY COMPARISON, not a free-for-all shuffle. 36 items
+#: pit us against `untrained` and 36 against `neutral_mixed`; a uniform random
+#: split of 72 into eights would leave some sets lopsided, and a set that
+#: happened to be all-untrained would contribute nothing at all to the other
+#: comparison. Randomised WITHIN each comparison instead, under SAMPLE_SEED, so
+#: each set carries 4 or 5 of each.
+
+#: The code a rater pastes into Prolific, imported from study/ rather than
+#: copied. The two studies pay from the same Prolific workspace, so a second
+#: literal here is a code that can silently fall out of step with the one that
+#: actually credits a submission.
+def completion_code():
+    """study/config.py's PROLIFIC_COMPLETION_CODE.
+
+    Loaded BY PATH under its own module name: both files are called `config`, so
+    a plain `import config` inside this module returns this one and the code
+    comes back missing.
+    """
+    import importlib.util
+    path = os.path.join(REPO, "study", "config.py")
+    assert os.path.exists(path), f"missing {path}"
+    spec = importlib.util.spec_from_file_location("study_config", path)
+    study_config = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(study_config)
+    code = study_config.PROLIFIC_COMPLETION_CODE
+    assert code, "study/config.py has no PROLIFIC_COMPLETION_CODE"
+    return code
+
+
 # --- Pacing -----------------------------------------------------------------
 
 #: Seconds an item must be on screen before Continue unlocks.
+#: 45 (was 60).
 #:
 #: The pair is ~1400 characters of response text on a median item; a rater who
 #: answers in five seconds has not read it, and unlike a screener there is no
@@ -171,7 +208,7 @@ SUBSTITUTION_RULE = (
 #: tools/local_server.py can hand a walkthrough a smaller value -- 60s x 72 items
 #: is 72 minutes to click through a change locally. The MECHANISM is the same in
 #: both; only the constant differs.
-MIN_ITEM_SECONDS = 60
+MIN_ITEM_SECONDS = 45
 
 #: Characters of free-text reasoning required per item, after trimming.
 #:

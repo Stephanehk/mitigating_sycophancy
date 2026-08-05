@@ -370,8 +370,12 @@ body {
 .questions {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 6px;
-  margin-top: 6px;
+  /* Generous between questions: three stacked asks with button rows between
+     them run together at a small gap, and a rater skimming needs to see where
+     one question ends and the next begins more than the panels need the
+     pixels. */
+  gap: 22px;
+  margin-top: 14px;
 }
 
 .ask {

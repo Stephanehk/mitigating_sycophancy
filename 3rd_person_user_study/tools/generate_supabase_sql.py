@@ -63,15 +63,15 @@ def items_seed(bundle):
              "truncate public.pref_items cascade;",
              "insert into public.pref_items"
              " (item_id, comparison, env, model_a, model_b, cat_a, cat_b,"
-             " target_cat_a, target_cat_b, origin, position) values"]
+             " target_cat_a, target_cat_b, origin, position, set_index) values"]
     values = []
     for position, item in enumerate(bundle["items"]):
-        values.append("    ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})".format(
+        values.append("    ({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})".format(
             sql_str(item["item_id"]), sql_str(item["comparison"]),
             sql_str(item["env"]), sql_str(item["model_a"]), sql_str(item["model_b"]),
             item["cat_a"], item["cat_b"],
             item["target_cat_a"], item["target_cat_b"], sql_str(item["origin"]),
-            position))
+            position, item["set_index"]))
     lines.append(",\n".join(values) + ";")
     return "\n".join(lines)
 
@@ -101,6 +101,7 @@ create table if not exists public.pref_sessions (
     session_token text not null unique,
     items_sha256  text not null,
     prolific_pid  text,
+    set_index     integer,
     user_agent    text,
     created_at    timestamptz not null default now(),
     completed_at  timestamptz
@@ -109,6 +110,8 @@ create table if not exists public.pref_sessions (
 -- For a project where pref_sessions predates the column: `create table if not
 -- exists` above is a no-op there and would leave it missing.
 alter table public.pref_sessions add column if not exists prolific_pid text;
+-- Which set this rater was given, for a project whose pref_sessions predates it.
+alter table public.pref_sessions add column if not exists set_index integer;
 
 create index if not exists idx_pref_sessions_prolific
     on public.pref_sessions (prolific_pid);
@@ -135,6 +138,10 @@ create table if not exists public.pref_items (
     target_cat_b integer not null check (target_cat_b between 0 and 3),
     origin       text not null check (origin in ('matched', 'substitute')),
     position     integer not null,
+    -- Which recruitment link shows this item. The 72 items are partitioned into
+    -- disjoint sets of @SET_SIZE@, so a rater sees one set and no item is served
+    -- by two links.
+    set_index    integer not null check (set_index >= 1),
     check (cat_a <> cat_b),
     check (target_cat_a <> target_cat_b),
     -- origin is not free to disagree with the labels it describes.
@@ -243,11 +250,12 @@ begin
 end;
 $$;
 
--- The two-argument version, from before the Prolific ID was collected. Dropped
--- rather than left in place: `create or replace` with a new argument list makes an
--- OVERLOAD, so without this the old function would survive and a page still
--- calling it would keep opening sessions with no ID to pay.
+-- Earlier argument lists, dropped rather than left in place: `create or replace`
+-- with a new list makes an OVERLOAD, so without these the old functions survive
+-- and a stale page keeps opening sessions the current one would refuse -- with
+-- no ID to pay, or over the whole item set instead of one link's set.
 drop function if exists public.pref_start_session(text, text);
+drop function if exists public.pref_start_session(text, text, text);
 
 -- Start a rater session: draw the presentation order and the per-item side flip,
 -- record both, and hand back only what the page needs to render.
@@ -256,7 +264,8 @@ drop function if exists public.pref_start_session(text, text);
 -- and different sides, so a systematic left-side preference cannot masquerade as
 -- a preference for one arm.
 create or replace function public.pref_start_session(
-    p_user_agent text, p_items_sha256 text, p_prolific_pid text)
+    p_user_agent text, p_items_sha256 text, p_prolific_pid text,
+    p_set_index integer)
 returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
@@ -278,14 +287,24 @@ begin
         raise exception 'prolific id is required' using errcode = 'P0001';
     end if;
 
+    -- The set is what the recruitment link selects, so an unknown one is a bad
+    -- link and must not quietly become "all the items" or "set 1".
+    if p_set_index is null
+       or not exists (select 1 from public.pref_items
+                       where set_index = p_set_index) then
+        raise exception 'unknown item set: %', coalesce(p_set_index::text, '(none)')
+            using errcode = 'P0001';
+    end if;
+
     insert into public.pref_sessions (session_id, session_token, items_sha256,
-                                      prolific_pid, user_agent)
-    values (v_id, v_token, p_items_sha256, v_pid,
+                                      prolific_pid, set_index, user_agent)
+    values (v_id, v_token, p_items_sha256, v_pid, p_set_index,
             left(coalesce(p_user_agent, ''), 500));
 
+    -- ONLY this set's items, and the order and side draw are still per session.
     insert into public.pref_assignments (session_id, item_id, position, flipped)
     select v_id, item_id, row_number() over (order by random()) - 1, random() < 0.5
-      from public.pref_items;
+      from public.pref_items where set_index = p_set_index;
 
     select jsonb_agg(jsonb_build_object('item_id', item_id, 'flipped', flipped)
                      order by position)
@@ -427,7 +446,7 @@ begin
 end;
 $$;
 
-grant execute on function public.pref_start_session(text, text, text) to anon, authenticated;
+grant execute on function public.pref_start_session(text, text, text, integer) to anon, authenticated;
 grant execute on function public.pref_record(text, text, text, text, text, integer) to anon, authenticated;
 grant execute on function public.pref_progress(text) to anon, authenticated;
 grant execute on function public.pref_complete(text) to anon, authenticated;
@@ -449,7 +468,8 @@ def main():
     realize = ", ".join(sql_str(c) for c in config.REALIZE_CHOICES)
 
     def fill(text):
-        return (text.replace("@CHOICES@", choices)
+        return (text.replace("@SET_SIZE@", str(config.SET_SIZE))
+                    .replace("@CHOICES@", choices)
                     .replace("@REALIZE_CHOICES@", realize)
                     .replace("@MIN_REASONING@", str(config.MIN_REASONING_CHARS)))
 

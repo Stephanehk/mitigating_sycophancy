@@ -89,6 +89,10 @@ def open_page(browser, base, width=1280, height=900, query=""):
     page.on("pageerror", lambda exc: page.errors.append(str(exc)))
     page.on("console",
             lambda msg: msg.type == "error" and page.errors.append(msg.text))
+    # Every rater arrives on a #set_N link; without one the page refuses to
+    # start, so the default here is a set rather than a bare URL.
+    if "#" not in query:
+        query = query + "#set_1"
     page.goto(base + "/" + query, wait_until="networkidle")
     return page
 
@@ -205,7 +209,7 @@ def test_the_intro_is_three_slides_then_the_rating_screen(server, browser):
 
     assert len(seen) == SLIDE_COUNT
     assert "two different responses" in seen[0]
-    assert "1 minute has elapsed" in seen[1]
+    assert "45 seconds have elapsed" in seen[1]
     assert "Can" in seen[2] and "tell" in seen[2]
     # The "imagine your friend was writing the prompt" slide was removed.
     assert not any("friend" in line for line in seen), seen
@@ -525,6 +529,21 @@ def test_a_reload_resumes_the_rating_and_does_not_replay_the_intro(server, brows
 
 # --- the ?labels=1 arm overlay ---------------------------------------------
 
+def test_the_deployed_build_has_no_arm_labels():
+    """The mapping is the answer key. The build must not emit it, and the page
+    must not be able to ask for it."""
+    for name in ("__debug_arms.json", "debug_labels.js"):
+        assert not os.path.exists(os.path.join(config.STATIC_DIR, name)), \
+            f"static/{name} would be deployed"
+    # The CODE, not the prose: a comment in app.js records why the overlay went
+    # and naturally mentions the flag by name.
+    with open(os.path.join(config.STATIC_DIR, "app.js"), encoding="utf-8") as h:
+        source = h.read()
+    assert "'debug_labels.js'" not in source, "the page can still load the overlay"
+    assert "__debug_arms.json" not in source, "the page can still fetch the mapping"
+    assert "createElement('script')" not in source
+
+
 def test_the_plain_url_carries_no_arm_labels(server, browser):
     """Without the flag the page must be the one a rater gets: no overlay, and
     no request for the mapping. The mapping being PUBLISHED is not the same as
@@ -746,7 +765,7 @@ def test_the_slide_tells_raters_about_the_wait(server, browser):
     page = open_page(browser, base)
     enter_id(page)
     seen = pass_slides(page)
-    assert any("1 minute has elapsed" in line for line in seen), seen
+    assert any("45 seconds have elapsed" in line for line in seen), seen
     assert any("not be allowed to press continue" in line for line in seen), seen
     page.close()
 
@@ -755,7 +774,7 @@ def test_production_holds_items_for_a_full_minute():
     """The stub serves a small floor so this suite is not 72 minutes long. The
     number a RATER gets comes from config, and that is the one the instruction
     slide promises."""
-    assert config.MIN_ITEM_SECONDS == 60
+    assert config.MIN_ITEM_SECONDS == 45
     assert local_server.LOCAL_MIN_ITEM_SECONDS < config.MIN_ITEM_SECONDS
 
 

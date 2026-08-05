@@ -244,6 +244,9 @@ def test_the_committed_item_set_is_what_the_seed_produces(bundle):
     pools = {(baseline, env): build_items.cell_pools(env, baseline)
              for _, baseline in config.COMPARISONS for env in config.ENVS}
     items, _ = build_items.draw(pools, config.SAMPLE_SEED)
+    # main() does both; the set partition is part of the artifact, so a redraw
+    # that skipped it would compare items missing their set_index.
+    build_items.assign_sets(items, config.SAMPLE_SEED)
     assert items == bundle["items"]
 
 
@@ -307,3 +310,33 @@ def test_items_come_from_both_envs(bundle):
     ever stopped contributing from one env, every cell would silently be
     single-env."""
     assert {item["env"] for item in bundle["items"]} == set(config.ENVS)
+
+
+def test_the_sets_partition_the_item_set(bundle):
+    """8 disjoint sets of SET_SIZE, every item in exactly one. A rater sees one
+    set, so an item in two sets would be rated by two links at once and one in
+    none would never be rated at all."""
+    n_sets = len(bundle["items"]) // config.SET_SIZE
+    assert bundle["n_sets"] == n_sets and bundle["set_size"] == config.SET_SIZE
+    members = {}
+    for item in bundle["items"]:
+        members.setdefault(item["set_index"], []).append(item["item_id"])
+    assert sorted(members) == list(range(1, n_sets + 1))
+    assert {len(v) for v in members.values()} == {config.SET_SIZE}
+    seen = [i for ids in members.values() for i in ids]
+    assert len(seen) == len(set(seen)) == len(bundle["items"])
+
+
+def test_every_set_carries_both_comparisons(bundle):
+    """The partition is balanced by comparison, not a free shuffle: a set that
+    came out all-`untrained` would contribute nothing to the `neutral_mixed`
+    contrast, and the raters sent to that link would be wasted on half the
+    design."""
+    per_set = {}
+    for item in bundle["items"]:
+        per_set.setdefault(item["set_index"], []).append(item["comparison"])
+    for index, comparisons in sorted(per_set.items()):
+        for _, baseline in config.COMPARISONS:
+            count = comparisons.count(baseline)
+            assert count >= config.SET_SIZE // len(config.COMPARISONS) - 1, \
+                f"set {index} has only {count} {baseline} items"
