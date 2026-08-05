@@ -1,29 +1,50 @@
-# AWS Amplify build spec for the sycophancy user study.
+# AWS Amplify build spec — THIS BRANCH DEPLOYS 3rd_person_user_study/.
 #
-# The study is a static site. There is no server, no Lambda and no API Gateway:
-# the page talks straight to Supabase RPCs. Amplify's whole job is to serve
-# study/static/ and to run one build step before it does.
+# WHY A BRANCH. Amplify reads exactly one build spec: the repo-root amplify.yml,
+# which takes PRECEDENCE over anything saved in an app's console build settings.
+# Two apps out of one repo therefore need either a monorepo `applications:` list
+# at the root -- which would mean setting AMPLIFY_MONOREPO_APP_ROOT on the LIVE
+# study/ app and redeploying it -- or two branches with different roots. This is
+# the second option, and it touches the first-person study not at all: `main`
+# keeps its study/-only amplify.yml, its app keeps watching `main`, and nothing
+# about it changes.
 #
-# THAT BUILD STEP IS NOT OPTIONAL. static/config.json carries the Supabase URL
-# and anon key and is gitignored, precisely so a key is never committed — so it
-# does not exist in a fresh checkout and must be generated here. Without it the
-# page loads and then fails on its first call. (static/content.json IS
-# committed, but is regenerated too so a change to questionnaires.py cannot ship
-# a stale bundle.)
+# THIS BRANCH IS FOR DEPLOYMENT ONLY. It is `main` plus this one file.
 #
-# REQUIRED ENVIRONMENT VARIABLES — set these in the Amplify console under
-# App settings -> Environment variables:
+#   Bring it up to date:   git checkout pref-study-deploy
+#                          git merge main            # conflicts ONLY on amplify.yml
+#                          git checkout --ours amplify.yml && git add amplify.yml
+#                          git commit && git push
 #
-#   STUDY_SUPABASE_URL        https://<project-ref>.supabase.co
-#   STUDY_SUPABASE_ANON_KEY   the PUBLIC anon / sb_publishable_ key
+#   NEVER merge this branch INTO main. It would replace main's spec with this
+#   one and the first-person app would start deploying the wrong study.
 #
-# NEVER set STUDY_SUPABASE_SERVICE_KEY here. It bypasses RLS, and anything the
-# build can read can end up in the bundle. tools/build_static.py refuses to run
-# if the value it is handed looks like a secret key, so a slip fails the build
-# rather than shipping a privileged credential in page source.
+# REQUIRED ENVIRONMENT VARIABLES, on the app watching this branch:
 #
-# The build needs no pip install: build_static.py and everything it imports are
-# stdlib-only.
+#   PREF_SUPABASE_URL        https://<project-ref>.supabase.co
+#   PREF_SUPABASE_ANON_KEY   the PUBLIC anon / sb_publishable_ key
+#
+# Do NOT set AMPLIFY_MONOREPO_APP_ROOT. There is no monorepo spec here, and
+# setting it produces "Monorepo spec provided without \"applications\" key".
+#
+# NEVER set a service_role key. tools/build_static.py refuses a value that looks
+# like a secret, so a slip fails the build rather than shipping a privileged
+# credential in page source.
+#
+# THE BUILD STEP IS NOT OPTIONAL. static/config.json (Supabase URL, anon key,
+# the pacing floors, the Prolific completion code) and static/consent.json
+# (imported from study/content.py, so the two studies cannot show differently
+# worded consent) are gitignored and generated here. A deploy without them
+# serves a page that loads and then fails on its first call.
+#
+# No pip install: build_static.py and everything it imports are stdlib-only,
+# which tests/test_generators.py pins.
+#
+# NO REWRITE RULES ARE NEEDED. The eight recruitment links are hash fragments --
+# /#set_1 through /#set_8 -- which never reach the server. That is why they are
+# hashes and not paths: /set_3 would need a rewrite to index.html, and Amplify's
+# rewrites live in the console rather than in this file, so a fresh app would
+# 404 on every link.
 
 version: 1
 frontend:
@@ -31,22 +52,22 @@ frontend:
     build:
       commands:
         - python3 --version
-        - python3 study/tools/build_static.py
+        - python3 3rd_person_user_study/tools/build_static.py
   artifacts:
-    # Only the static directory is served. The Python modules stay in the repo
-    # as the source of truth for the instrument but are never deployed.
-    baseDirectory: study/static
+    # Only static/ is served. The Python modules stay in the repo as the source
+    # of truth for the instrument and are never deployed -- which also keeps
+    # data/items.json, the file that says which arm wrote which response, off
+    # the site.
+    baseDirectory: 3rd_person_user_study/static
     files:
       - '**/*'
   cache:
     paths: []
 
-# Cache policy. content.json and config.json are regenerated on every deploy and
-# the SPA fetches them with cache: 'no-cache', but a CDN that had cached an old
-# config.json would point live participants at the wrong project, so they are
-# pinned to no-store. Everything else is small and changes together, so it is
-# simpler to revalidate than to reason about a stale app.js against a fresh
-# content.json.
+# config.json and consent.json are regenerated on every deploy and the page
+# fetches them with cache: 'no-cache', but a CDN holding an old config.json
+# would point live raters at the wrong project or an old completion code, so
+# they are pinned to no-store.
 customHeaders:
   - pattern: '**/*.json'
     headers:
@@ -56,9 +77,6 @@ customHeaders:
     headers:
       - key: Cache-Control
         value: 'no-cache'
-      # The page renders study-authored HTML from content.json and participant
-      # text as textContent only (see widgets.js), and talks to exactly one
-      # origin. Locking that down costs nothing here.
       - key: X-Content-Type-Options
         value: nosniff
       - key: Referrer-Policy
