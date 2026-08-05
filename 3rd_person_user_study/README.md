@@ -368,43 +368,51 @@ PREF_SUPABASE_ANON_KEY=<anon key> \
 
 ### Hosting on GitHub Pages
 
-`.github/workflows/pages.yml` deploys `3rd_person_user_study/static` on every push
-to `main` that touches this directory. The published site root **is** the study:
+**Live at** `https://stephanehk.github.io/mitigating_sycophancy/3rd_person_user_study/static/`
+(the shorter `/3rd_person_user_study/` redirects there).
+
+Pages for this repo is **"deploy from branch: `gh-pages`"**, and the root of that
+branch is the results artifact page — so the two sites live side by side:
 
 ```
-https://<owner>.github.io/mitigating_sycophancy/
+/mitigating_sycophancy/                          the results page (untouched)
+/mitigating_sycophancy/3rd_person_user_study/    this study
 ```
 
-not `/3rd_person_user_study/static/`. Every asset reference in the page is
-relative, so it works under that path prefix unchanged (verified by serving the
-bundle under a `/mitigating_sycophancy/` prefix in headless Chromium: all assets
-200, no console errors).
+`.github/workflows/pages.yml` republishes on every push to `main` that touches this
+directory. It **commits into a subdirectory of `gh-pages`** and replaces only
+`3rd_person_user_study/`; the root `index.html`, `robots.txt` and `.nojekyll` are
+left alone.
 
-**One-time setup:** Settings → Pages → Source → **GitHub Actions**, and add two
-repository secrets under Settings → Secrets and variables → Actions:
+**It deliberately does NOT use `actions/deploy-pages`.** That action switches the
+Pages source to "GitHub Actions", after which whatever artifact it uploads becomes
+the *whole* site — which would take the results page at the root down. Committing
+to the branch leaves the Pages setting alone. (It also rules out branch mode from
+the repo root, which would publish every committed file in this private repo.)
+
+**One-time setup** — two repository secrets under Settings → Secrets and variables
+→ Actions. No Pages setting needs changing:
 
 | secret | value |
 |---|---|
 | `PREF_SUPABASE_URL` | `https://<project-ref>.supabase.co` |
 | `PREF_SUPABASE_ANON_KEY` | the PUBLIC anon / `sb_publishable_` key |
 
-**Why a workflow rather than Pages' "deploy from branch".** Branch mode can only
-serve the repo root or `/docs`, so it would publish *every committed file in this
-private repo* at a public URL. The workflow uploads one directory. It also gives
-the deploy a build step, which is what lets `static/config.json` stay gitignored
-and be generated from secrets — the same arrangement `amplify.yml` uses for
-`study/`. Branch mode has no build step and would force the credential into the
-repo.
+The build step is what lets `static/config.json` stay gitignored on `main` and be
+generated at deploy time, the same arrangement `amplify.yml` uses for `study/`. It
+*does* get committed on `gh-pages`, which is correct — the page fetches it at load
+and everything on that branch is publicly served anyway.
 
 The workflow **fails the deploy** if `static/items.json`'s digest does not match
 the one pinned in `supabase_schema.sql`, rather than publishing a page that would
 send every rater into "item set mismatch" at the ID screen.
 
-Note that Pages on a private repo needs a paid plan, and the site it publishes is
-public either way (access control is Enterprise-only). That is what a Prolific
-rater needs, but it does mean the 144 prompts and responses are publicly
-fetchable — already true of an Amplify deployment, and the published `items.json`
-carries no arm names and no judge labels (§2, "The page is blind").
+Note the published site is public even though the repo is private (Pages access
+control is Enterprise-only). That is what a Prolific rater needs, but it means the
+144 prompts and responses are publicly fetchable — already true of an Amplify
+deployment, and the published `items.json` carries no arm names and no judge
+labels (§2, "The page is blind"). `robots.txt` at the site root disallows all
+crawlers, and the page itself sends `noindex, nofollow`.
 
 **The Prolific-ID change is a schema change, and step 3 must happen before step 5.**
 `pref_start_session` gained a third argument (`p_prolific_pid`) and the old
