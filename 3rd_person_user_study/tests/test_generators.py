@@ -20,6 +20,7 @@ import pytest
 import build_items
 import build_static
 import config
+import debug_arms
 import generate_supabase_sql as gen
 
 
@@ -236,3 +237,63 @@ def test_the_page_sends_only_configured_choices():
         source = handle.read()
     for choice in config.CHOICES:
         assert f"'{choice}'" in source, f"app.js has no button for {choice!r}"
+
+
+# --- the console label snippet ---------------------------------------------
+
+def test_arms_map_names_both_arms_of_every_item(bundle):
+    mapping = debug_arms.arms_map(bundle["items"])
+    assert len(mapping) == len(bundle["items"])
+    for item in bundle["items"]:
+        assert mapping[item["item_id"]] == {"a": item["model_a"],
+                                            "b": item["model_b"]}
+        assert set(mapping[item["item_id"]].values()) <= set(config.ARMS)
+
+
+def test_arms_map_refuses_the_published_bundle():
+    """The published items have no arm names, so mapping them would silently
+    produce nothing to label. It fails instead."""
+    published = build_static.client_bundle()
+    with pytest.raises(AssertionError, match="no arm names"):
+        debug_arms.arms_map(published["items"])
+
+
+def test_the_snippet_carries_the_mapping_and_the_labelling_code(bundle):
+    snippet = debug_arms.console_snippet(bundle)
+    assert "window.__DEBUG_ARMS = {" in snippet
+    assert bundle["items_sha256"] in snippet, "snippet does not pin the build"
+    with open(debug_arms.LABELS_JS, encoding="utf-8") as handle:
+        assert handle.read() in snippet, "snippet is not debug_labels.js"
+
+    body = snippet.split("window.__DEBUG_ARMS = ", 1)[1]
+    mapping = json.loads(body.split(";\n", 1)[0])
+    assert mapping == debug_arms.arms_map(bundle["items"])
+
+
+def test_the_snippet_reads_the_mapping_it_is_given():
+    """debug_labels.js has to prefer window.__DEBUG_ARMS over the fetch: the
+    deployed site serves no __debug_arms.json and must not start to."""
+    with open(debug_arms.LABELS_JS, encoding="utf-8") as handle:
+        source = handle.read()
+    assert "window.__DEBUG_ARMS" in source
+    assert (source.index("window.__DEBUG_ARMS")
+            < source.index("fetch('__debug_arms.json')")), \
+        "the fetch would run before the injected mapping is consulted"
+
+
+def test_the_snippet_is_not_reachable_from_the_deployed_page():
+    """The labels are pasted in by hand, from a file that is never published.
+    If either of these ended up in static/, every rater would be unblinded."""
+    for name in ("debug_labels.js", "debug_arms.py"):
+        assert not os.path.exists(os.path.join(config.STATIC_DIR, name)), \
+            f"{name} is in static/ and would be deployed"
+    published = build_static.client_bundle()
+    assert "__DEBUG_ARMS" not in json.dumps(published)
+    for name in os.listdir(config.STATIC_DIR):
+        path = os.path.join(config.STATIC_DIR, name)
+        if not name.endswith((".js", ".html")):
+            continue
+        with open(path, encoding="utf-8") as handle:
+            source = handle.read()
+        assert "__DEBUG_ARMS" not in source, f"static/{name} reads the mapping"
+        assert "debug_labels" not in source, f"static/{name} loads the labels"

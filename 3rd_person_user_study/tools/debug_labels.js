@@ -1,9 +1,14 @@
-/* LOCAL DEBUG ONLY -- names the arm behind each response on screen.
+/* DEBUG ONLY -- names the arm behind each response on screen.
  *
- * THIS FILE IS NOT PART OF THE PAGE. It lives in tools/, never in static/, and is
- * served only by tools/local_server.py when it is run with --label-arms, which
- * injects a script tag for it into index.html on the way out. Nothing in static/
- * references it and no deployment can pick it up.
+ * THIS FILE IS NOT PART OF THE PAGE. It lives in tools/, never in static/, and no
+ * deployment can pick it up. Two things run it, neither of which changes what is
+ * published:
+ *   - tools/local_server.py --label-arms, which injects a script tag for it into
+ *     index.html on the way out;
+ *   - the console snippet printed by tools/debug_arms.py, which is pasted into
+ *     devtools on the DEPLOYED page. The snippet is this file with the mapping
+ *     prepended, so the labels come from the viewer's own machine rather than
+ *     from anything the site serves.
  *
  * That indirection is the point. The rating page is blind by construction:
  * static/items.json is published with the responses keyed `a`/`b` and no arm
@@ -14,8 +19,9 @@
  * instead, and the file a rater is served stays the blind one.
  *
  * WHERE THE MAPPING COMES FROM. Two halves, neither of which app.js knows:
- *   - which arms an item's `a`/`b` are: from the stub's /__debug_arms.json, which
- *     it reads out of the FULL data/items.json;
+ *   - which arms an item's `a`/`b` are: from window.__DEBUG_ARMS if the snippet
+ *     already set it, else the stub's /__debug_arms.json. Both are built by
+ *     arms_map() in tools/debug_arms.py out of the FULL data/items.json;
  *   - which of the two is on the left: from `flipped` in the session the page
  *     stored in sessionStorage, i.e. the same per-session draw the database made.
  * Composing them here reproduces exactly what pref_record does server-side.
@@ -86,10 +92,18 @@
   new MutationObserver(label).observe(document.getElementById('root'),
                                       { childList: true, subtree: true });
 
-  fetch('__debug_arms.json').then(function (response) {
-    return response.json();
-  }).then(function (loaded) {
-    arms = loaded;
+  /* The deployed site has no __debug_arms.json route and must not grow one, so
+   * the console snippet puts the mapping on window before this runs. Only the
+   * stub has to fetch it. */
+  if (window.__DEBUG_ARMS) {
+    arms = window.__DEBUG_ARMS;
     label();
-  });
+  } else {
+    fetch('__debug_arms.json').then(function (response) {
+      return response.json();
+    }).then(function (loaded) {
+      arms = loaded;
+      label();
+    });
+  }
 }());

@@ -476,6 +476,35 @@ the two halves are confirmed to compose rather than to agree with themselves.
 Anything you judge in this mode is judged unblinded; the server prints a warning
 saying so.
 
+#### The same labels on the deployed page
+
+The published site cannot serve the labels — `static/items.json` carries no arm
+names and must not start to, since it is publicly fetchable by the raters
+themselves. So the mapping is pasted in from your own machine instead:
+
+```bash
+$PY 3rd_person_user_study/tools/debug_arms.py     # copy the output
+```
+
+Then open the devtools console on the live page and paste it. (Chrome makes you
+type `allow pasting` into the console once before it will accept a paste.) The
+snippet is `tools/debug_labels.js` with `window.__DEBUG_ARMS` prepended, so the
+labelling code is the one the local stub uses and the arm names come from
+`data/items.json` on your disk — nothing is uploaded and the deployed bundle is
+untouched. Re-paste after a reload.
+
+Labels only appear once a session exists, because the left/right half of the
+mapping comes from `flipped` in `sessionStorage`. On the live page that means
+entering an ID first, which **writes a real row** to `pref_sessions` — use an
+obviously fake ID and delete it before recruiting:
+
+```sql
+delete from public.pref_sessions where prolific_pid = '<the fake id>';
+```
+
+(`pref_assignments` and `pref_judgments` are `on delete cascade` from
+`session_id`, so that one statement is enough.)
+
 `static/config.json` currently points at the **same Supabase project as
 `study/`**. The `pref_*` tables do not collide with the `study_*` ones, but note
 that `study/`'s live recruiting data is in there — use a separate project if you

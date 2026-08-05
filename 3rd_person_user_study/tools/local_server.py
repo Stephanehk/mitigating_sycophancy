@@ -41,6 +41,8 @@ sys.path.insert(0, _STUDY)
 import build_items
 import config
 
+import debug_arms
+
 #: session_token -> {"session_id", "assignments", "completed"}
 SESSIONS = {}
 #: (session_id, item_id) -> the recorded row, as pref_judgments would hold it
@@ -184,9 +186,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if not LABEL_ARMS:
                 self.send_json(404, {"message": "run with --label-arms"})
                 return
-            self.send_json(200, {item_id: {"a": item["model_a"],
-                                           "b": item["model_b"]}
-                                 for item_id, item in ITEMS.items()})
+            self.send_json(200, debug_arms.arms_map(ITEMS.values()))
             return
 
         if path == "/__debug_labels.js":

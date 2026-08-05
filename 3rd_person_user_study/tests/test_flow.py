@@ -25,6 +25,7 @@ import threading
 import pytest
 
 import config
+import debug_arms
 
 
 PID = "FLOWTESTPID"
@@ -368,6 +369,41 @@ def test_label_arms_names_the_side_the_stub_resolves(server, browser, monkeypatc
     resolved = [(row["left_model"], row["right_model"])
                 for key, row in stub.JUDGMENTS.items() if key[0] == session_id]
     assert on_screen == resolved[:5], f"labels {on_screen} != resolved {resolved[:5]}"
+    assert page.errors == []
+    page.close()
+
+
+def test_the_console_snippet_labels_the_unmodified_page(server, browser):
+    """The path used on the DEPLOYED site: no injected script tag and no
+    __debug_arms.json route, just the snippet evaluated in the console.
+
+    Run against the blind page (LABEL_ARMS stays off) so what is being labelled
+    is byte-for-byte what a rater is served -- which is the situation on Pages.
+    """
+    base, stub = server
+    snippet = debug_arms.console_snippet(debug_arms.load_items())
+
+    page = open_page(browser, base)
+    assert "__debug_labels.js" not in page.content(), "not the blind page"
+    own_pid = "SNIPPETCHECKPID"
+    enter_id(page, own_pid)
+    pass_slides(page)
+    page.evaluate(snippet)
+
+    session_id = next(s["session_id"] for s in stub.SESSIONS.values()
+                      if s["prolific_pid"] == own_pid)
+    on_screen = []
+    for _ in range(3):
+        labels = [e.inner_text().strip()
+                  for e in page.query_selector_all(".debug-arms span")]
+        assert len(labels) == 2, f"expected two labels, got {labels}"
+        on_screen.append(tuple(labels))
+        page.click(".choices button[data-choice=left]")
+        page.wait_for_timeout(320)
+
+    resolved = [(row["left_model"], row["right_model"])
+                for key, row in stub.JUDGMENTS.items() if key[0] == session_id]
+    assert on_screen == resolved[:3], f"labels {on_screen} != resolved {resolved[:3]}"
     assert page.errors == []
     page.close()
 
