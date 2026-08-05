@@ -370,8 +370,8 @@ body {
 .questions {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 8px;
-  margin-top: 8px;
+  gap: 6px;
+  margin-top: 6px;
 }
 
 .ask {
@@ -392,7 +392,7 @@ body {
 
 .choices {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 8px;
   width: max-content;
   max-width: 100%;
@@ -402,12 +402,10 @@ body {
 
 .choices button { width: 100%; }
 
-/* Options that are not one of the three side/Same buttons -- "Can't tell", and
-   Q2's "I don't think the person should feel like they were wrong". They span
-   the full width on their own row beneath, because the long one cannot fit a
-   third of the block and a grid column sized to hold it would push Same off
-   centre. Class-based rather than :nth-child so adding an option does not
-   silently re-target the rule. */
+/* Anything that is not one of the two sides -- currently just "Can't tell".
+   Spans both columns on its own row beneath, so it reads as the alternative to
+   choosing rather than as a third response. Class-based rather than :nth-child
+   so adding an option does not silently re-target the rule. */
 .choices .wide {
   grid-column: 1 / -1;
   width: auto;
@@ -440,7 +438,7 @@ body {
 
 /* 26px of air above Continue is right on a slide, where it is the only thing on
    screen; on the rating screen it is 26px taken off both response panels. */
-body.compare .actions { margin-top: 12px; }
+body.compare .actions { margin-top: 8px; }
 
 input[type="text"] {
   display: block;
@@ -539,4 +537,44 @@ button:disabled { opacity: 0.45; cursor: default; }
   border-color: var(--accent);
   background: var(--accent);
   color: #fff;
+}
+
+
+/* --- Q3, the free-text reasoning ------------------------------------------
+ *
+ * Centred on the same measure as the two questions above it, so the three read
+ * as one column rather than as two questions and a form field. */
+.reasoning textarea {
+  display: block;
+  width: 100%;
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 9px 11px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  resize: vertical;
+}
+
+.reasoning textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* How much more is needed, and nothing once it is.
+   It does NOT reserve a line: with three questions, a textarea and Continue
+   below the panels, a permanently-empty 1.2em line was the difference between
+   the compare screen fitting a 900px viewport and overflowing it by 17px. The
+   cost is a small shift when the message clears, once per item. */
+.reasoning-note {
+  min-height: 0;
+  margin: 3px auto 0;
+  max-width: 780px;
+  font-size: 13px;
+  color: var(--muted);
+  text-align: right;
 }

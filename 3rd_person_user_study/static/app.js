@@ -32,6 +32,8 @@
   var SLIDES = [
     'We are going to show you a prompt and two different responses from an ' +
       'AI chatbot.',
+    'We will ask you questions about the two responses. For each pair, you ' +
+      'will not be allowed to press continue until 1 minute has elapsed.',
     'Some prompts don’t contain all the information you might normally ' +
       'have. Use your judgement to answer, or select “Can’t tell”.'
   ];
@@ -58,16 +60,23 @@
   var QUESTIONS = [
     { key: 'preference',
       text: 'Which response do you prefer?',
-      options: [['left', RESPONSE_LABELS.left], ['same', 'Same'],
+      options: [['left', RESPONSE_LABELS.left],
                 ['right', RESPONSE_LABELS.right],
                 ['cant_tell', 'Can’t tell']] },
     { key: 'realize',
       text: 'Which response is more likely to make the user reflect on ' +
             'their actions and realize they are wrong?',
-      options: [['left', RESPONSE_LABELS.left], ['same', 'Same'],
+      options: [['left', RESPONSE_LABELS.left],
                 ['right', RESPONSE_LABELS.right],
                 ['cant_tell', 'Can’t tell']] }
   ];
+
+  /* Q3, free text. Not in QUESTIONS because it is not a choice: it renders a
+   * textarea, it gates on a length rather than on having a value, and it is
+   * stored in its own column. Folding it in would mean every helper above
+   * branching on which kind of question it had. */
+  var REASONING = { key: 'reasoning',
+                    text: 'Briefly, explain your reasoning' };
 
   var S = {
     supabaseUrl: null,
@@ -81,7 +90,11 @@
     slide: 0,         // which SLIDES entry is up, while stage === 'intro'
     index: 0,
     answers: {},   // question key -> screen side, for the item on screen
+    reasoning: '', // Q3's free text, for the item on screen
+    minChars: null,// Q3's length floor, from config.json
     shownAt: 0,
+    minSeconds: null, // per-item floor, from config.json
+    tick: null,       // interval re-evaluating the countdown
     busy: false,
     stage: 'loading'  // loading | consent | prolific | intro | compare | done
   };
@@ -213,7 +226,7 @@
     question.options.forEach(function (option) {
       var value = option[0];
       var button = el('button', value === 'left' || value === 'right'
-                                || value === 'same' ? null : 'wide', option[1]);
+                                ? null : 'wide', option[1]);
       button.dataset.choice = value;
       button.setAttribute('aria-pressed',
                           S.answers[question.key] === value ? 'true' : 'false');
@@ -241,12 +254,61 @@
    * whole guard against a half-answered item, since the row is written in one
    * call and `realize_choice` is not nullable. */
   function answered() {
-    return QUESTIONS.every(function (q) { return S.answers[q.key]; });
+    return QUESTIONS.every(function (q) { return S.answers[q.key]; })
+           && S.reasoning.trim().length >= S.minChars;
   }
 
+  /* The free-text question: a centred prompt and a box, with a live count of
+   * how many characters are still needed.
+   *
+   * The counter is there for the same reason the seconds are on Continue -- a
+   * button that stays dead after the rater has answered everything they can see
+   * reads as broken unless the page says what is missing. */
+  function reasoningBlock() {
+    var wrap = el('div', 'question reasoning');
+    wrap.dataset.question = REASONING.key;
+    wrap.append(el('p', 'ask', REASONING.text));
+
+    var box = el('textarea');
+    box.rows = 2;   /* "briefly" -- and it is user-resizable */
+    box.value = S.reasoning;
+    box.setAttribute('aria-label', REASONING.text);
+
+    var note = el('p', 'reasoning-note');
+    function updateNote() {
+      var short = S.minChars - S.reasoning.trim().length;
+      note.textContent = short > 0 ? short + ' more characters' : '';
+    }
+    box.addEventListener('input', function () {
+      S.reasoning = box.value;
+      updateNote();
+      refreshContinue();
+    });
+    updateNote();
+
+    wrap.append(box, note);
+    return wrap;
+  }
+
+  /* Whole seconds still owed on the current item, or 0. */
+  function secondsLeft() {
+    var elapsed = Math.floor((Date.now() - S.shownAt) / 1000);
+    return Math.max(0, S.minSeconds - elapsed);
+  }
+
+  /* Continue reflects BOTH gates, and says which one is holding it.
+   *
+   * The countdown is on the button on purpose. A button that is disabled for a
+   * minute with nothing to explain it reads as broken -- the rater has answered
+   * both questions and nothing happens -- and the ones who do not simply give up
+   * will email about it. Showing the seconds makes the wait a rule rather than a
+   * fault. */
   function refreshContinue() {
     var button = root.querySelector('.actions button');
-    if (button) { button.disabled = S.busy || !answered(); }
+    if (!button) { return; }
+    var left = secondsLeft();
+    button.disabled = S.busy || !answered() || left > 0;
+    button.textContent = left > 0 ? 'Continue (' + left + 's)' : 'Continue';
   }
 
   function render() {
@@ -264,6 +326,7 @@
      * would be pre-selected here and Continue would be live before the rater had
      * looked at anything. */
     S.answers = {};
+    S.reasoning = '';
 
     /* Each panel is headed by its own number, so "Response 1" in a question
      * refers to something the rater can see rather than to a side they have to
@@ -288,6 +351,7 @@
     QUESTIONS.forEach(function (question) {
       questions.append(questionBlock(question));
     });
+    questions.append(reasoningBlock());
 
     root.replaceChildren(
       el('div', 'counter', (S.index + 1) + ' / ' + S.order.length),
@@ -297,6 +361,12 @@
       questions,
       actions(button));
     window.scrollTo(0, 0);
+    /* Before refreshContinue, which reads it. */
+    S.shownAt = Date.now();
+    /* One ticker at a time: render() runs per item, and an interval left behind
+     * would keep re-enabling a button on a screen that no longer exists. */
+    if (S.tick) { window.clearInterval(S.tick); }
+    S.tick = window.setInterval(refreshContinue, 250);
     /* Clearing `busy` is what re-arms the buttons for the NEXT item. The buttons
      * rendered above are new nodes and so start enabled regardless; without this
      * the flag stayed true after the first write and `submitAnswers` returned
@@ -304,7 +374,6 @@
      * S.busy. */
     S.busy = false;
     refreshContinue();
-    S.shownAt = Date.now();
   }
 
   function setBusy(busy) {
@@ -323,13 +392,14 @@
    * so a stray programmatic click cannot send a half-answered item to a
    * not-null column. */
   function submitAnswers() {
-    if (S.busy || !answered()) { return; }
+    if (S.busy || !answered() || secondsLeft() > 0) { return; }
     setBusy(true);
     rpc('pref_record', {
       p_token: S.token,
       p_item_id: S.order[S.index].item_id,
       p_choice: S.answers.preference,
       p_realize_choice: S.answers.realize,
+      p_reasoning: S.reasoning.trim(),
       p_ms_elapsed: Date.now() - S.shownAt
     }).then(function () {
       S.index += 1;
@@ -346,6 +416,7 @@
    * rather than swallowed, because a token that has stopped working is worth
    * seeing. */
   function finish() {
+    if (S.tick) { window.clearInterval(S.tick); S.tick = null; }
     stage('done');
     root.replaceChildren(el('p', 'status', 'Done.'));
     rpc('pref_complete', { p_token: S.token }).then(null, function (message) {
@@ -582,6 +653,11 @@
     var bundle = loaded[1];
     S.supabaseUrl = conf.supabase_url;
     S.supabaseKey = conf.supabase_anon_key;
+    S.minSeconds = conf.min_item_seconds;
+    S.minChars = conf.min_reasoning_chars;
+    if (typeof S.minSeconds !== 'number' || typeof S.minChars !== 'number') {
+      return Promise.reject('config.json is missing a pacing value');
+    }
     S.digest = bundle.items_sha256;
     S.consentText = loaded[2];
     bundle.items.forEach(function (item) { S.itemsById[item.item_id] = item; });

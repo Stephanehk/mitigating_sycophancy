@@ -1,4 +1,6 @@
 {
   "supabase_url": "https://xvtpwclofktwpqhijbcl.supabase.co",
-  "supabase_anon_key": "sb_publishable_iOyyLlxdsyK6L_mY8zuWcw_sRzz139P"
+  "supabase_anon_key": "sb_publishable_iOyyLlxdsyK6L_mY8zuWcw_sRzz139P",
+  "min_item_seconds": 60,
+  "min_reasoning_chars": 15
 }
