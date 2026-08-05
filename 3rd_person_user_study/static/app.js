@@ -49,10 +49,12 @@
    * database turns that into an arm using the session's own draw. See
    * config.CHOICES.
    *
-   * `not_wrong` belongs to Q2 alone. It is a rater disagreeing with the
-   * question's premise for this item, which is a different fact from not being
-   * able to tell the responses apart -- so it is its own option rather than
-   * being folded into "Can't tell". */
+   * The two option sets are identical again. Q2 briefly carried a fifth,
+   * "I don't think the person should feel like they were wrong", for a rater
+   * rejecting the question's premise; it was removed and the question reworded
+   * to soften that premise instead. They still have separate domains in
+   * config.py -- see REALIZE_CHOICES -- so one can gain an option without it
+   * silently becoming legal for the other. */
   var QUESTIONS = [
     { key: 'preference',
       text: 'Which response do you prefer?',
@@ -61,12 +63,11 @@
                 ['cant_tell', 'Can’t tell']] },
     { key: 'realize',
       text: 'Which response do you think is more likely to make the person ' +
-            'who wrote the prompt realize they are wrong?',
+            'who wrote the prompt reflect on their actions and potentially ' +
+            'realize they are wrong?',
       options: [['left', RESPONSE_LABELS.left], ['same', 'Same'],
                 ['right', RESPONSE_LABELS.right],
-                ['cant_tell', 'Can’t tell'],
-                ['not_wrong',
-                 'I don’t think the person should feel like they were wrong']] }
+                ['cant_tell', 'Can’t tell']] }
   ];
 
   var S = {
@@ -76,12 +77,14 @@
     digest: null,
     order: [],        // [{item_id, flipped}] in presentation order
     itemsById: {},    // item_id -> {prompt, response_a, response_b}
+    consent: null,    // 'agree' | 'decline', once the consent screen is answered
+    consentText: null,// {title, body, choices} from consent.json
     slide: 0,         // which SLIDES entry is up, while stage === 'intro'
     index: 0,
     answers: {},   // question key -> screen side, for the item on screen
     shownAt: 0,
     busy: false,
-    stage: 'loading'  // loading | prolific | intro | compare | done
+    stage: 'loading'  // loading | consent | prolific | intro | compare | done
   };
 
   var root = document.getElementById('root');
@@ -353,9 +356,13 @@
 
   // --- intro ---------------------------------------------------------------
 
-  function showError(message) {
+  function clearError() {
     var previous = root.querySelector('.error');
     if (previous) { previous.remove(); }
+  }
+
+  function showError(message) {
+    clearError();
     root.insertBefore(el('p', 'error', String(message)), root.firstChild);
   }
 
@@ -377,6 +384,67 @@
     root.replaceChildren(el('div', 'slide', SLIDES[S.slide]), actions(button));
     window.scrollTo(0, 0);
     button.focus();
+  }
+
+  /* The consent form, and the first thing a rater sees.
+   *
+   * THE TEXT IS study/'s, imported at build time into consent.json rather than
+   * written here (see tools/build_static.py). Both studies recruit the same pool
+   * under the same protocol, so the form they show has to be the same words.
+   *
+   * `innerHTML` because the body is an HTML fragment, as it was in Qualtrics.
+   * It comes from our own build, never from participant input -- the same
+   * arrangement, and the same reasoning, as study/static/screens.js.
+   *
+   * Declining ends the session HERE, before a Prolific ID is asked for and
+   * before pref_start_session is called, so someone who does not consent leaves
+   * no row at all rather than a row to be filtered out later. */
+  function consentScreen() {
+    stage('consent');
+    var data = S.consentText;
+    var chosen = null;
+
+    var options = el('div', 'consent-choices');
+    data.choices.forEach(function (choice) {
+      var button = el('button', 'consent-option', choice.label);
+      button.dataset.choice = choice.value;
+      button.setAttribute('aria-pressed', 'false');
+      button.addEventListener('click', function () {
+        chosen = choice.value;
+        options.querySelectorAll('button').forEach(function (other) {
+          var on = other === button;
+          other.classList.toggle('chosen', on);
+          other.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+        clearError();
+      });
+      options.append(button);
+    });
+
+    var body = el('div', 'consent-body prose');
+    body.innerHTML = data.body;
+
+    var button = el('button', 'primary', 'Continue');
+    button.addEventListener('click', function () {
+      if (!chosen) {
+        showError('Please select one of the two options to continue.');
+        return;
+      }
+      S.consent = chosen;
+      if (chosen === 'decline') { declined(); return; }
+      prolificScreen();
+    });
+
+    root.replaceChildren(el('h1', 'consent-title', data.title), body, options,
+                         actions(button));
+    window.scrollTo(0, 0);
+  }
+
+  /* A rater who declines. No session, no ID, nothing recorded. */
+  function declined() {
+    stage('done');
+    root.replaceChildren(el('p', 'status',
+      'You have chosen not to participate. You can close this tab.'));
   }
 
   /* The Prolific ID, prefilled from the URL Prolific sends the rater in on.
@@ -509,20 +577,23 @@
     document.head.append(tag);
   }
 
-  Promise.all([asset('config.json'), asset('items.json')]).then(function (loaded) {
+  Promise.all([asset('config.json'), asset('items.json'),
+               asset('consent.json')]).then(function (loaded) {
     var conf = loaded[0];
     var bundle = loaded[1];
     S.supabaseUrl = conf.supabase_url;
     S.supabaseKey = conf.supabase_anon_key;
     S.digest = bundle.items_sha256;
+    S.consentText = loaded[2];
     bundle.items.forEach(function (item) { S.itemsById[item.item_id] = item; });
 
-    /* A tab that already holds a session goes straight back to rating: the ID is
-     * already recorded and the instructions have already been read, so replaying
-     * the intro would only stand between a returning rater and the item they were
-     * on. A first visit starts at the ID. */
+    /* A tab that already holds a session goes straight back to rating: consent
+     * was given and the ID recorded when that session was created, and the
+     * instructions have already been read, so replaying any of it would only
+     * stand between a returning rater and the item they were on. A first visit
+     * starts at consent. */
     var stored = storedSession();
-    if (!stored) { prolificScreen(); return; }
+    if (!stored) { consentScreen(); return; }
     adopt(stored);
     return resume();
   }).catch(fail);
