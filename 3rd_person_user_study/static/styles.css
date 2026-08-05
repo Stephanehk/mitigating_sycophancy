@@ -375,7 +375,13 @@ body {
 }
 
 .ask {
-  margin: 0 0 7px;
+  /* Held well short of the 1180px content width and centred. Q2 is long, and at
+     full width it set as one nearly-page-wide line while Q1 sat as a short one
+     above it -- the two read as different kinds of thing rather than as two
+     questions. Wrapping Q2 to a couple of lines over the same measure as Q1
+     lines them up. */
+  max-width: 780px;
+  margin: 0 auto 7px;
   /* Bigger and bold than the option labels beneath: with two questions stacked,
      the questions are what a rater has to re-read on every item, and at 15px
      regular they read as captions on the button rows rather than as the ask. */
