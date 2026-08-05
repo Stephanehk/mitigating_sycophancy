@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Response comparison</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Still bare by design: a Prolific ID, three instruction slides, then the
+       elicitation screens. No consent page, no debrief, no attention check and no
+       demographics -- those remain a later decision. Every screen is built in
+       app.js; this file is only the mount point. -->
+  <main id="root" aria-live="polite">
+    <p class="status">Loading…</p>
+  </main>
+  <!-- RELATIVE paths: this directory is served AS the site root, so items.json
+       and config.json sit beside index.html.
+
+       Order matters and there is no build step: markdown.js defines window.MD,
+       which app.js calls on every render. -->
+  <script src="markdown.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
