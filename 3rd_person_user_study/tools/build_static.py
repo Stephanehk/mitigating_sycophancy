@@ -62,13 +62,29 @@ def write_items():
 def write_config():
     """Where the page should send its RPCs. Fails rather than emitting a file
     that would 200 with an unusable key -- a page that loads and then silently
-    cannot record anything is the worst failure mode here."""
-    assert config.SUPABASE_URL, "set PREF_SUPABASE_URL"
-    assert config.SUPABASE_ANON_KEY, "set PREF_SUPABASE_ANON_KEY"
+    cannot record anything is the worst failure mode here.
+
+    The file is gitignored (see ../.gitignore) and generated at deploy time, so
+    this is the only place the credential enters the artifact.
+    """
+    url = config.SUPABASE_URL.strip()
+    anon = config.SUPABASE_ANON_KEY.strip()
+    assert url, "PREF_SUPABASE_URL is not set"
+    assert anon, (
+        "PREF_SUPABASE_ANON_KEY is not set. This is the PUBLIC anon/publishable "
+        "key (sb_publishable_... or the anon JWT), NOT the service_role key -- "
+        "that one must never be built into the page.")
+    # The same guard study/tools/build_static.py carries. Anything written here is
+    # readable in page source, so a service_role key handed to the build by
+    # mistake has to fail the build rather than ship.
+    assert "secret" not in anon and "service_role" not in anon, (
+        "PREF_SUPABASE_ANON_KEY looks like a SECRET key (%r). Use the anon / "
+        "publishable key; the secret key would be readable in page source."
+        % (anon[:20],))
     path = os.path.join(config.STATIC_DIR, "config.json")
     with open(path, "w", encoding="utf-8") as handle:
-        json.dump({"supabase_url": config.SUPABASE_URL,
-                   "supabase_anon_key": config.SUPABASE_ANON_KEY}, handle, indent=2)
+        json.dump({"supabase_url": url.rstrip("/"),
+                   "supabase_anon_key": anon}, handle, indent=2)
     return path
 
 

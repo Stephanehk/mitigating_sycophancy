@@ -1,0 +1,109 @@
+# Publish the third-person preference study to GitHub Pages.
+#
+# WHY A WORKFLOW AND NOT "DEPLOY FROM BRANCH". Two reasons, both load-bearing:
+#
+#  1. It publishes ONE DIRECTORY. Pages' branch mode can only serve the repo root
+#     or /docs, so serving this study that way would publish every committed file
+#     in the repo at a public URL -- and this repo is PRIVATE. The uploaded
+#     artifact here is 3rd_person_user_study/static and nothing else.
+#  2. It has a BUILD STEP, so static/config.json (the Supabase URL and anon key)
+#     stays gitignored and is generated from repository secrets, exactly as the
+#     Amplify build does for study/. Branch mode has no build step, which would
+#     force the credential into the repo.
+#
+# The published site root IS the study, so it lives at
+#     https://<owner>.github.io/mitigating_sycophancy/
+# not at /3rd_person_user_study/static/. Every asset reference in the page is
+# relative, so it works under that (or any) path prefix without changes.
+#
+# REQUIRED REPOSITORY SECRETS -- Settings -> Secrets and variables -> Actions:
+#   PREF_SUPABASE_URL        https://<project-ref>.supabase.co
+#   PREF_SUPABASE_ANON_KEY   the PUBLIC anon / sb_publishable_ key
+#
+# NEVER set the service_role key. tools/build_static.py refuses a value that
+# looks like a secret, so a slip fails the build instead of shipping a
+# privileged credential in page source.
+#
+# ONE-TIME SETUP: Settings -> Pages -> Source -> "GitHub Actions". Pages on a
+# private repo needs a paid plan, and the site it publishes is PUBLIC either way
+# (access control is Enterprise-only). That is what a Prolific rater needs, but
+# it does mean the 144 prompts and responses are publicly fetchable -- which is
+# already true of the Amplify deployment, and the published items.json carries no
+# arm names or judge labels.
+
+name: Deploy preference study to Pages
+
+on:
+  push:
+    branches: [main]
+    # Only when the study or this workflow changes -- unrelated pushes to main
+    # should not redeploy a live instrument.
+    paths:
+      - '3rd_person_user_study/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; let a newer commit supersede an in-flight one, but
+# do not cancel a run that is already publishing.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # No pip install: build_static.py and everything it imports are stdlib
+      # only. It rewrites static/items.json from the committed data/items.json
+      # (so a stale published bundle cannot ship) and writes static/config.json.
+      - name: Build the static bundle
+        env:
+          PREF_SUPABASE_URL: ${{ secrets.PREF_SUPABASE_URL }}
+          PREF_SUPABASE_ANON_KEY: ${{ secrets.PREF_SUPABASE_ANON_KEY }}
+        run: python 3rd_person_user_study/tools/build_static.py
+
+      # The page and the database must agree on which item build is live. This
+      # fails the deploy on a mismatch rather than publishing a page that would
+      # send every rater straight into "item set mismatch" at the ID screen.
+      - name: Check the published digest matches the pinned schema
+        run: |
+          python - <<'PY'
+          import json, re, sys
+          published = json.load(open("3rd_person_user_study/static/items.json"))
+          schema = open("3rd_person_user_study/supabase_schema.sql").read()
+          pinned = re.search(r"select '([0-9a-f]{64})'::text", schema)
+          assert pinned, "no pinned digest in supabase_schema.sql"
+          if published["items_sha256"] != pinned.group(1):
+              sys.exit("digest mismatch: page %s, schema %s -- regenerate the "
+                       "schema and re-apply it" % (published["items_sha256"][:12],
+                                                   pinned.group(1)[:12]))
+          print("%d items, digest %s" % (len(published["items"]),
+                                         published["items_sha256"][:12]))
+          PY
+
+      # Disables Jekyll, which would otherwise skip files it does not recognise.
+      - name: Add .nojekyll
+        run: touch 3rd_person_user_study/static/.nojekyll
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: 3rd_person_user_study/static
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

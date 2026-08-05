@@ -1,0 +1,7 @@
+# The Supabase URL and anon key, emitted by tools/build_static.py from the
+# environment. Ignored for the same reason study/.gitignore ignores its own:
+# a credential -- even a publishable one -- should be injected at deploy time,
+# not committed. The GitHub Pages workflow (.github/workflows/pages.yml) and the
+# Amplify build both generate it; a fresh checkout has no config.json, which is
+# why tools/local_server.py serves one of its own.
+static/config.json

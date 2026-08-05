@@ -366,6 +366,46 @@ PREF_SUPABASE_ANON_KEY=<anon key> \
 # 5. Serve static/ as a site root (any static host; study/ uses Amplify).
 ```
 
+### Hosting on GitHub Pages
+
+`.github/workflows/pages.yml` deploys `3rd_person_user_study/static` on every push
+to `main` that touches this directory. The published site root **is** the study:
+
+```
+https://<owner>.github.io/mitigating_sycophancy/
+```
+
+not `/3rd_person_user_study/static/`. Every asset reference in the page is
+relative, so it works under that path prefix unchanged (verified by serving the
+bundle under a `/mitigating_sycophancy/` prefix in headless Chromium: all assets
+200, no console errors).
+
+**One-time setup:** Settings → Pages → Source → **GitHub Actions**, and add two
+repository secrets under Settings → Secrets and variables → Actions:
+
+| secret | value |
+|---|---|
+| `PREF_SUPABASE_URL` | `https://<project-ref>.supabase.co` |
+| `PREF_SUPABASE_ANON_KEY` | the PUBLIC anon / `sb_publishable_` key |
+
+**Why a workflow rather than Pages' "deploy from branch".** Branch mode can only
+serve the repo root or `/docs`, so it would publish *every committed file in this
+private repo* at a public URL. The workflow uploads one directory. It also gives
+the deploy a build step, which is what lets `static/config.json` stay gitignored
+and be generated from secrets — the same arrangement `amplify.yml` uses for
+`study/`. Branch mode has no build step and would force the credential into the
+repo.
+
+The workflow **fails the deploy** if `static/items.json`'s digest does not match
+the one pinned in `supabase_schema.sql`, rather than publishing a page that would
+send every rater into "item set mismatch" at the ID screen.
+
+Note that Pages on a private repo needs a paid plan, and the site it publishes is
+public either way (access control is Enterprise-only). That is what a Prolific
+rater needs, but it does mean the 144 prompts and responses are publicly
+fetchable — already true of an Amplify deployment, and the published `items.json`
+carries no arm names and no judge labels (§2, "The page is blind").
+
 **The Prolific-ID change is a schema change, and step 3 must happen before step 5.**
 `pref_start_session` gained a third argument (`p_prolific_pid`) and the old
 two-argument version is dropped, so a page deployed against a database that has not
