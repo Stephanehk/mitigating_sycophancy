@@ -1,0 +1,75 @@
+# AWS Amplify build spec for the THIRD-PERSON preference study.
+#
+# SEPARATE FROM THE ROOT amplify.yml, which builds study/. Two Amplify apps
+# serve out of this one repo, and Amplify reads a single build spec per app --
+# so this file is the second app's, and the app must be told where its root is:
+#
+#   App settings -> Environment variables
+#     AMPLIFY_MONOREPO_APP_ROOT = 3rd_person_user_study
+#
+# Without that variable Amplify reads the repo-root amplify.yml and would deploy
+# study/ under this app's domain. If you would rather not use monorepo mode,
+# paste the `version:`-onwards block below into App settings -> Build settings
+# instead; it is the same spec, and then this file is documentation.
+#
+# REQUIRED ENVIRONMENT VARIABLES, same console page:
+#
+#   PREF_SUPABASE_URL        https://<project-ref>.supabase.co
+#   PREF_SUPABASE_ANON_KEY   the PUBLIC anon / sb_publishable_ key
+#
+# NEVER set a service_role key here. tools/build_static.py refuses a value that
+# looks like a secret, so a slip fails the build rather than shipping a
+# privileged credential in page source.
+#
+# THE BUILD STEP IS NOT OPTIONAL. static/config.json (Supabase URL, anon key,
+# the pacing floors and the Prolific completion code) and static/consent.json
+# (imported from study/content.py) are both gitignored and generated here. A
+# deploy without them serves a page that loads and then fails on its first call.
+#
+# It needs no pip install: build_static.py and everything it imports are
+# stdlib-only, which tests/test_generators.py pins.
+#
+# NO REWRITE RULES ARE NEEDED. The eight recruitment links are hash fragments --
+# /#set_1 through /#set_8 -- which never reach the server. That is why they are
+# hashes and not paths: /set_3 would need a rewrite to index.html, and Amplify's
+# rewrites live in the console rather than in this file, so a fresh app would
+# 404 on every link.
+
+version: 1
+frontend:
+  phases:
+    build:
+      commands:
+        - python3 --version
+        - python3 tools/build_static.py
+  artifacts:
+    # Only static/ is served. The Python modules stay in the repo as the source
+    # of truth for the instrument and are never deployed -- which also keeps
+    # data/items.json, the file that says which arm wrote which response, off
+    # the site.
+    baseDirectory: static
+    files:
+      - '**/*'
+  cache:
+    paths: []
+
+# config.json and consent.json are regenerated on every deploy and the page
+# fetches them with cache: 'no-cache', but a CDN holding an old config.json
+# would point live raters at the wrong project or an old completion code, so
+# they are pinned to no-store. items.json changes only with the item set, and
+# the digest check catches a stale one loudly rather than silently.
+customHeaders:
+  - pattern: '**/*.json'
+    headers:
+      - key: Cache-Control
+        value: 'no-store, max-age=0'
+  - pattern: '**/*'
+    headers:
+      - key: Cache-Control
+        value: 'no-cache'
+      - key: X-Content-Type-Options
+        value: nosniff
+      - key: Referrer-Policy
+        value: same-origin
+      - key: X-Frame-Options
+        value: DENY
