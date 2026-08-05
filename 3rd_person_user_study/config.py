@@ -172,15 +172,19 @@ SUBSTITUTION_RULE = (
 CHOICES = ["left", "right", "same", "cant_tell"]
 
 #: Q2, "Which response do you think is more likely to make the person who wrote
-#: the prompt realize they are wrong?"
+#: the prompt reflect on their actions and potentially realize they are wrong?"
 #:
-#: `not_wrong` -- "I don't think the person should feel like they were wrong" --
-#: is a JUDGEMENT ABOUT THE ITEM, not a missing answer, and is why this question
-#: needs its own domain rather than reusing CHOICES. It has to be distinguishable
-#: from `cant_tell`: one says the rater could not tell the responses apart, the
-#: other says the premise of the question does not hold for this prompt. Folding
-#: them together would hide disagreement with the item behind rater uncertainty.
-REALIZE_CHOICES = ["left", "right", "same", "cant_tell", "not_wrong"]
+#: THE SAME FOUR OPTIONS AS Q1 since 2026-08-05. Q2 briefly carried a fifth,
+#: `not_wrong` ("I don't think the person should feel like they were wrong"),
+#: for a rater rejecting the question's premise on an item; it was removed, and
+#: the reworded question softens the premise instead ("reflect on their actions
+#: and potentially realize") rather than asserting the writer is wrong.
+#:
+#: STILL ITS OWN NAME, even though the list is now identical. The column has its
+#: own CHECK constraint, and the two questions are free to diverge again; an
+#: option added to one must not silently become legal for the other. Aliased
+#: rather than copied so they cannot drift apart by accident while they agree.
+REALIZE_CHOICES = CHOICES
 
 
 def _env(name, default):

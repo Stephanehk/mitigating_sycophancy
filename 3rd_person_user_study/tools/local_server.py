@@ -40,6 +40,7 @@ sys.path.insert(0, _STUDY)
 
 import config
 
+import build_static
 import debug_arms
 
 #: session_token -> {"session_id", "assignments", "completed"}
@@ -185,6 +186,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             host = self.headers.get("Host") or f"localhost:{self.server.server_port}"
             self.send_json(200, {"supabase_url": f"http://{host}",
                                  "supabase_anon_key": "local-stub"})
+            return
+
+        # Served rather than read off static/ for the same reason as
+        # config.json: a fresh checkout has not run build_static.py, and a page
+        # that 404s here never gets past its first screen.
+        if path == "/consent.json":
+            self.send_json(200, build_static.consent())
             return
 
         # The `?labels=1` pair, served here rather than read off static/ so the

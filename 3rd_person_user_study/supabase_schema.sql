@@ -92,7 +92,7 @@ create table if not exists public.pref_judgments (
     -- Q2: which is likelier to make the writer realize they are wrong. Its own
     -- domain, because it also allows 'not_wrong' -- a judgement about the item
     -- rather than an answer about the responses.
-    realize_choice text not null check (realize_choice in ('left', 'right', 'same', 'cant_tell', 'not_wrong')),
+    realize_choice text not null check (realize_choice in ('left', 'right', 'same', 'cant_tell')),
     -- Resolved inside pref_record from the session's own draw, never sent by the
     -- browser. `preferred_model` is null for 'same' and 'cant_tell';
     -- `realize_model` is additionally null for 'not_wrong'.
@@ -207,7 +207,7 @@ alter table public.pref_judgments alter column realize_choice set not null;
 alter table public.pref_judgments
     drop constraint if exists pref_judgments_realize_choice_check;
 alter table public.pref_judgments add constraint pref_judgments_realize_choice_check
-    check (realize_choice in ('left', 'right', 'same', 'cant_tell', 'not_wrong'));
+    check (realize_choice in ('left', 'right', 'same', 'cant_tell'));
 
 
 -- The digest of the item file this schema was generated from. pref_start_session

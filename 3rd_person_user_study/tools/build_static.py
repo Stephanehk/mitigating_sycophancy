@@ -8,6 +8,10 @@
   static/config.json  the Supabase project URL and anon key, from the
                       environment so real values are never committed.
 
+  static/consent.json the consent form, IMPORTED FROM study/content.py rather
+                      than copied, so the two studies cannot show participants
+                      differently-worded consent.
+
   static/__debug_arms.json  the item -> arm mapping, and
   static/debug_labels.js    the overlay that renders it.
                       Published, but fetched ONLY by `?labels=1` (see app.js).
@@ -108,6 +112,46 @@ def write_config():
     return path
 
 
+def consent():
+    """The consent screen's text, read out of study/content.py.
+
+    IMPORTED, NOT COPIED. Both studies recruit the same Prolific pool under the
+    same protocol, and a consent form that had drifted between them is the kind
+    of difference nobody notices until it matters. study/content.py is the one
+    place it is authored.
+
+    THE WORDING DOES NOT ALL FIT THIS STUDY, and that is deliberately not
+    patched up here -- it is IRB-facing text, so the mismatches are surfaced for
+    sign-off rather than silently edited. See MISMATCHES below and the README.
+    """
+    sys.path.insert(0, os.path.join(config.REPO, "study"))
+    import content
+    assert content.CONSENT_CHOICES, "study/content.py has no consent choices"
+    return {"title": content.CONSENT_TITLE,
+            "body": content.CONSENT_BODY,
+            "choices": content.CONSENT_CHOICES}
+
+
+#: Spans of the imported consent text that describe study/ and not this study.
+#: Asserted present by the tests so they cannot be forgotten: if one is edited
+#: in study/content.py the test fails and this list has to be revisited.
+CONSENT_MISMATCHES = [
+    # This study shows pre-generated responses; nobody talks to a chatbot.
+    "talking with a chatbot about an interpersonal conflict you experienced",
+    # ~5 minutes of rating, not twenty.
+    "approximately twenty minutes",
+    # Payment is per-study and has not been set for this one.
+    "$2 USD",
+]
+
+
+def write_consent():
+    path = os.path.join(config.STATIC_DIR, "consent.json")
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(consent(), handle, ensure_ascii=False)
+    return path
+
+
 def write_debug_labels():
     """The `?labels=1` pair: the arm mapping, and the overlay that renders it.
 
@@ -134,6 +178,7 @@ def main():
     path, size = write_items()
     print(f"wrote {path} ({size / 1024:.0f} KB)")
     print(f"wrote {write_config()}")
+    print(f"wrote {write_consent()}")
     for path in write_debug_labels():
         print(f"wrote {path}")
 

@@ -20,21 +20,24 @@ would either miss or misreport:
 
 import json
 import os
+import re
 import threading
 
 import pytest
 
+import build_static
 import config
 import debug_arms
 
 
 PID = "FLOWTESTPID"
 
-#: The measured worst case for a response panel, with a little slack: min 215px
-#: over all 72 items at 1280x900 with the questions stacked. ONE constant for
-#: both layout tests -- they had drifted to 240 and 280, so a layout change
-#: failed one and passed the other and the pair no longer said anything
-#: coherent about how small a panel may get. The history behind the number is on
+#: The measured worst case for a response panel UNDER THE FILL LAYOUT, with a
+#: little slack: 215px over all 72 items at both 1440x900 and 1280x900, with the
+#: questions stacked and set at 18px bold. ONE constant for both layout tests --
+#: they had drifted to 240 and 280, so a layout change failed one and passed the
+#: other and the pair no longer said anything coherent about how small a panel
+#: may get. The history behind the number is on
 #: test_the_panels_keep_a_usable_height_on_a_tall_viewport.
 PANEL_FLOOR = 200
 
@@ -84,7 +87,19 @@ def open_page(browser, base, width=1280, height=900, query=""):
     return page
 
 
-def enter_id(page, pid=PID):
+def agree(page):
+    """Consent, which is now the first screen. Every test that needs the ID
+    screen or beyond goes through here."""
+    page.click(".consent-option[data-choice=agree]")
+    page.click(".actions button")
+    page.wait_for_timeout(300)
+
+
+def enter_id(page, pid=PID, consent=True):
+    """Consent, then the Prolific ID. `consent=False` for tests that are already
+    past the consent screen or are asserting about it."""
+    if consent:
+        agree(page)
     page.fill("input[type=text]", pid)
     page.click(".actions button")
     page.wait_for_timeout(400)
@@ -126,6 +141,7 @@ def test_a_blank_prolific_id_starts_no_session(server, browser):
     base, stub = server
     before = len(stub.SESSIONS)
     page = open_page(browser, base)
+    agree(page)
     page.click(".actions button")
     page.wait_for_timeout(400)
 
@@ -151,6 +167,7 @@ def test_the_prolific_id_is_prefilled_from_the_url(server, browser):
     copy it by hand is a rater who mistypes it."""
     base, _ = server
     page = open_page(browser, base, query="?PROLIFIC_PID=FROMURL42")
+    agree(page)
     assert page.input_value("input[type=text]") == "FROMURL42"
     page.close()
 
@@ -161,6 +178,7 @@ def test_digits_can_be_typed_into_the_id_field(server, browser):
     contain digits."""
     base, _ = server
     page = open_page(browser, base)
+    agree(page)
     page.click("input[type=text]")
     page.keyboard.type("1234")
     assert page.input_value("input[type=text]") == "1234"
@@ -204,19 +222,42 @@ def test_a_choice_key_on_an_instruction_slide_records_nothing(server, browser):
 def test_both_questions_are_asked_with_their_own_options():
     """The two questions and their option sets, pinned against config.
 
-    Q2 carries an option Q1 does not -- `not_wrong` -- and that asymmetry is the
-    whole reason the two have separate domains. A page that offered the same four
-    buttons twice would look right and quietly drop the distinction."""
+    The wording of Q2 is asserted in full because it is the measurement: it was
+    reworded to "reflect on their actions and potentially realize they are
+    wrong" precisely to soften the premise that the writer IS wrong, and a drift
+    back would change what raters are being asked without changing anything that
+    looks like code."""
     path = os.path.join(config.STATIC_DIR, "app.js")
     with open(path, encoding="utf-8") as handle:
         source = handle.read()
-    assert "Which response do you prefer?" in source
-    assert ("Which response do you think is more likely to make the person "
-            "who wrote the prompt realize they are wrong?") in source.replace(
-                "' +\n            '", "")
-    assert "I don\u2019t think the person should feel like they were wrong" in source
+    joined = re.sub(r"' \+\s*'", "", source)
+    assert "Which response do you prefer?" in joined
+    assert ("Which response do you think is more likely to make the person who "
+            "wrote the prompt reflect on their actions and potentially realize "
+            "they are wrong?") in joined
     for choice in config.REALIZE_CHOICES:
         assert f"'{choice}'" in source, f"no option for {choice!r}"
+
+
+def test_the_premise_rejecting_option_is_gone():
+    """`not_wrong` was removed from Q2 (2026-08-05). The VALUE has to be gone
+    from both the page and the domain the database accepts: a leftover in one
+    but not the other is either an option nobody can select that the schema
+    still allows, or -- worse -- one the page offers and the schema rejects
+    mid-session.
+
+    Checks the value, not the old label text, which still appears in a comment
+    in app.js recording why the option went. That comment is not a leak: what a
+    rater can select is asserted against the RENDERED buttons in
+    test_the_screen_labels_the_prompt_and_both_responses.
+    """
+    path = os.path.join(config.STATIC_DIR, "app.js")
+    with open(path, encoding="utf-8") as handle:
+        source = handle.read()
+    assert "'not_wrong'" not in source, "the page can still send not_wrong"
+    assert "data-choice=not_wrong" not in source
+    assert "not_wrong" not in config.REALIZE_CHOICES
+    assert list(config.REALIZE_CHOICES) == list(config.CHOICES)
 
 
 def test_the_screen_labels_the_prompt_and_both_responses(server, browser):
@@ -233,9 +274,7 @@ def test_the_screen_labels_the_prompt_and_both_responses(server, browser):
     for key, expected in [("preference", ["Response 1", "Same", "Response 2",
                                           "Can\u2019t tell"]),
                           ("realize", ["Response 1", "Same", "Response 2",
-                                       "Can\u2019t tell",
-                                       "I don\u2019t think the person should feel "
-                                       "like they were wrong"])]:
+                                       "Can\u2019t tell"])]:
         shown = [b.inner_text().strip() for b in page.query_selector_all(
             f".question[data-question={key}] .choices button")]
         assert shown == expected, (key, shown)
@@ -321,7 +360,7 @@ def test_an_answer_can_be_changed_before_continue(server, browser):
         ".question[data-question=preference] button.chosen")
     assert len(chosen) == 1 and chosen[0].get_attribute("data-choice") == "right"
 
-    page.click(".question[data-question=realize] button[data-choice=not_wrong]")
+    page.click(".question[data-question=realize] button[data-choice=cant_tell]")
     page.click(".actions button")
     page.wait_for_timeout(350)
 
@@ -329,8 +368,8 @@ def test_an_answer_can_be_changed_before_continue(server, browser):
                       if s["prolific_pid"] == own_pid)
     row = next(r for key, r in stub.JUDGMENTS.items() if key[0] == session_id)
     assert row["choice"] == "right"
-    assert row["realize_choice"] == "not_wrong"
-    assert row["realize_model"] is None, "not_wrong must resolve to no model"
+    assert row["realize_choice"] == "cant_tell"
+    assert row["realize_model"] is None, "cant_tell must resolve to no model"
     page.close()
 
 
@@ -374,8 +413,15 @@ def test_the_panels_are_equal_and_the_buttons_stay_on_screen(server, browser,
         assert len(heights) == 2
         assert len(set(heights)) == 1, f"unequal panel heights {heights}"
         assert len(set(widths)) == 1, f"unequal panel widths {widths}"
-        assert heights[0] >= PANEL_FLOOR, f"panel crushed to {heights[0]}px"
         if height >= 820:
+            # THE FLOOR ONLY MEANS ANYTHING UNDER THE FILL LAYOUT, where a panel
+            # is the height left over after the furniture -- that is the number
+            # that shrinks when a question or a label is added. Below 820px tall
+            # the fill layout is off and a panel is sized to its CONTENT, so a
+            # short response gives a small box: measured down to 134px at
+            # 1280x700 over the 72 items, with both panels still equal. Asserting
+            # the floor there would be asserting that no response is short.
+            assert heights[0] >= PANEL_FLOOR, f"panel crushed to {heights[0]}px"
             assert not geometry["scrolls"], "a tall viewport should not scroll"
             assert geometry["bottom"] <= geometry["viewport"], \
                 f"buttons below the fold: {geometry['bottom']} > {geometry['viewport']}"
@@ -402,6 +448,10 @@ def test_the_panels_keep_a_usable_height_on_a_tall_viewport(server, browser):
          prefer?" is centred on the page and the follow-up sits under it rather
          than beside it. Re-measured the same way: min 215 / median 271 /
          max 297. Stacking costs ~120px of median panel height.
+      3. Setting the question text at 18px BOLD, up from 15px regular, and
+         dropping Q2's fifth option. Re-measured: min 215 / median 286 /
+         max 311. The lost option gave back a button row, which roughly paid
+         for the larger type.
 
     The floor here is that worst case with a little slack. It is deliberately not
     44vh and not the side-by-side number either; asserting a height the current
@@ -509,8 +559,81 @@ def test_the_flag_survives_the_prolific_id_in_the_url(server, browser):
     with a naive endswith would not."""
     base, _ = server
     page = open_page(browser, base, query="?PROLIFIC_PID=FROMURL42&labels=1")
+    agree(page)
     assert page.input_value("input[type=text]") == "FROMURL42"
-    enter_id(page, "FROMURL42")
+    enter_id(page, "FROMURL42", consent=False)
     pass_slides(page)
     assert page.query_selector(".debug-arms") is not None, "no labels with two params"
+    page.close()
+
+
+# --- consent ---------------------------------------------------------------
+
+def test_consent_is_the_first_screen(server, browser):
+    """Consent comes before the Prolific ID, so nobody is asked to identify
+    themselves before agreeing to take part."""
+    base, _ = server
+    page = open_page(browser, base)
+    assert page.query_selector(".consent-title") is not None, "no consent screen"
+    assert page.query_selector("input[type=text]") is None, "ID asked before consent"
+    labels = [b.inner_text().strip()
+              for b in page.query_selector_all(".consent-option")]
+    assert labels == ["I agree to participate in the study",
+                      "I do not wish to participate in the study"], labels
+    page.close()
+
+
+def test_the_consent_text_is_study_slash_content(server, browser):
+    """Imported from study/content.py, not written twice. Both studies recruit
+    the same pool under the same protocol; two copies would drift."""
+    import content
+
+    base, _ = server
+    page = open_page(browser, base)
+    assert page.inner_text(".consent-title").strip() == content.CONSENT_TITLE
+    shown = page.inner_text(".consent-body")
+    for marker in ["DESCRIPTION:", "TIME INVOLVEMENT:", "PARTICIPANT’S RIGHTS:",
+                   "irbnonmed@stanford.edu"]:
+        assert marker in shown, marker
+    page.close()
+
+
+def test_the_consent_mismatches_are_still_there_to_sign_off():
+    """The imported text describes study/, and three spans of it are NOT true of
+    this study. They are left verbatim because the form is IRB-facing, and
+    tracked here so they cannot be quietly forgotten -- if one is edited in
+    study/content.py this fails and build_static.CONSENT_MISMATCHES needs
+    revisiting."""
+    body = build_static.consent()["body"]
+    for span in build_static.CONSENT_MISMATCHES:
+        assert span in body, (
+            f"{span!r} is no longer in the consent text -- if it was fixed, drop "
+            "it from CONSENT_MISMATCHES")
+
+
+def test_declining_records_nothing(server, browser):
+    """A decliner leaves NO row: no session, no Prolific ID, nothing to filter
+    out of the export later."""
+    base, stub = server
+    before_sessions, before_judgments = len(stub.SESSIONS), len(stub.JUDGMENTS)
+    page = open_page(browser, base)
+    page.click(".consent-option[data-choice=decline]")
+    page.click(".actions button")
+    page.wait_for_timeout(300)
+
+    assert page.query_selector("input[type=text]") is None, "asked for an ID anyway"
+    assert page.query_selector(".pair") is None, "reached the rating screen"
+    assert "not to participate" in page.inner_text("body")
+    assert len(stub.SESSIONS) == before_sessions, "a session was started"
+    assert len(stub.JUDGMENTS) == before_judgments
+    page.close()
+
+
+def test_continue_needs_a_consent_choice(server, browser):
+    base, _ = server
+    page = open_page(browser, base)
+    page.click(".actions button")
+    page.wait_for_timeout(250)
+    assert page.query_selector(".error") is not None, "no message shown"
+    assert page.query_selector(".consent-title") is not None, "left the screen"
     page.close()

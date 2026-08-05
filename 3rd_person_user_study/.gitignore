@@ -6,6 +6,11 @@
 # why tools/local_server.py serves one of its own.
 static/config.json
 
+# The consent form, imported from study/content.py by tools/build_static.py.
+# Generated rather than committed so the two studies cannot drift apart: there
+# is one place the wording is authored, and it is not here.
+static/consent.json
+
 # The `?labels=1` pair, emitted by tools/build_static.py: the item -> arm
 # mapping and a copy of tools/debug_labels.js. Generated rather than committed
 # so tools/debug_labels.js stays the single copy of the labelling code, and so
