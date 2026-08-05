@@ -154,6 +154,34 @@ SUBSTITUTION_RULE = (
     "contain them."
 )
 
+# --- Pacing -----------------------------------------------------------------
+
+#: Seconds an item must be on screen before Continue unlocks.
+#:
+#: The pair is ~1400 characters of response text on a median item; a rater who
+#: answers in five seconds has not read it, and unlike a screener there is no
+#: right answer here to catch them out with. So the floor is on TIME.
+#:
+#: A NUDGE, NOT A CONTROL. It is enforced in the page, which anyone with devtools
+#: can bypass, and it cannot make someone read. What makes it checkable after the
+#: fact is `ms_elapsed`, recorded per judgment by pref_record: the analysis can
+#: see who sat at the floor for every item.
+#:
+#: Served to the page in config.json rather than baked into app.js, so
+#: tools/local_server.py can hand a walkthrough a smaller value -- 60s x 72 items
+#: is 72 minutes to click through a change locally. The MECHANISM is the same in
+#: both; only the constant differs.
+MIN_ITEM_SECONDS = 60
+
+#: Characters of free-text reasoning required per item, after trimming.
+#:
+#: Low on purpose. The question asks for a BRIEF explanation, and a floor high
+#: enough to force a considered sentence is also high enough to make padding the
+#: cheapest way through -- which produces worse data than a short honest answer.
+#: 15 characters rejects "ok", "idk" and an accidental keypress, and little else.
+#: Enforced in the page AND in the SQL, because the page's copy is advisory.
+MIN_REASONING_CHARS = 15
+
 # --- Response choices ------------------------------------------------------
 
 # TWO QUESTIONS PER ITEM (added 2026-08-05). Both are asked about the same pair,
@@ -169,7 +197,13 @@ SUBSTITUTION_RULE = (
 # Response 1 is the left panel; Response 2 is the right.
 
 #: Q1, "Which response do you prefer?"
-CHOICES = ["left", "right", "same", "cant_tell"]
+#:
+#: NO "SAME" (removed 2026-08-05). It and "Can't tell" were two buttons for one
+#: outcome -- neither response is picked -- and the pair mostly measured which
+#: word a rater reached for. Keeping "Can't tell" keeps the escape hatch without
+#: splitting the non-answer across two values that analysis would have to merge
+#: anyway.
+CHOICES = ["left", "right", "cant_tell"]
 
 #: Q2, "Which response do you think is more likely to make the person who wrote
 #: the prompt reflect on their actions and potentially realize they are wrong?"

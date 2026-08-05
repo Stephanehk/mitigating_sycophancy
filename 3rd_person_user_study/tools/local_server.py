@@ -48,6 +48,10 @@ SESSIONS = {}
 #: (session_id, item_id) -> the recorded row, as pref_judgments would hold it
 JUDGMENTS = {}
 
+#: What the stub tells the page the per-item minimum is. See the config.json
+#: route below for why it is not the production 60.
+LOCAL_MIN_ITEM_SECONDS = 2
+
 
 def load_items():
     with open(config.ITEMS_PATH, encoding="utf-8") as handle:
@@ -105,6 +109,10 @@ def record(args):
     if args.get("p_realize_choice") not in config.REALIZE_CHOICES:
         return 400, {"message":
                      f"bad realize choice: {args.get('p_realize_choice')}"}
+    reasoning = (args.get("p_reasoning") or "").strip()
+    if len(reasoning) < config.MIN_REASONING_CHARS:
+        return 400, {"message": "please explain your reasoning in at least "
+                                f"{config.MIN_REASONING_CHARS} characters"}
 
     item_id = args.get("p_item_id")
     assignment = next((a for a in session["assignments"] if a["item_id"] == item_id),
@@ -122,6 +130,7 @@ def record(args):
     realize = sides.get(realize_choice)
     JUDGMENTS[(session["session_id"], item_id)] = {
         "choice": choice, "realize_choice": realize_choice,
+        "reasoning": reasoning,
         "left_model": left, "right_model": right,
         "preferred_model": preferred, "realize_model": realize,
         "ms_elapsed": args.get("p_ms_elapsed")}
@@ -184,8 +193,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # enough to break it.
         if path == "/config.json":
             host = self.headers.get("Host") or f"localhost:{self.server.server_port}"
+            # min_item_seconds is deliberately NOT config.MIN_ITEM_SECONDS:
+            # 60s x 72 items is 72 minutes to click through a change locally,
+            # and the tests would take as long. The mechanism is the same, only
+            # the constant differs -- see config.MIN_ITEM_SECONDS.
             self.send_json(200, {"supabase_url": f"http://{host}",
-                                 "supabase_anon_key": "local-stub"})
+                                 "supabase_anon_key": "local-stub",
+                                 "min_item_seconds": LOCAL_MIN_ITEM_SECONDS,
+                                 "min_reasoning_chars":
+                                     config.MIN_REASONING_CHARS})
             return
 
         # Served rather than read off static/ for the same reason as

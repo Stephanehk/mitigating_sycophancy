@@ -88,14 +88,17 @@ create table if not exists public.pref_judgments (
     item_id       text not null references public.pref_items (item_id)
                        on delete cascade,
     -- Q1: which response the rater prefers.
-    choice        text not null check (choice in ('left', 'right', 'same', 'cant_tell')),
+    choice        text not null check (choice in ('left', 'right', 'cant_tell')),
     -- Q2: which is likelier to make the writer realize they are wrong. Its own
     -- domain, because it also allows 'not_wrong' -- a judgement about the item
     -- rather than an answer about the responses.
-    realize_choice text not null check (realize_choice in ('left', 'right', 'same', 'cant_tell')),
+    realize_choice text not null check (realize_choice in ('left', 'right', 'cant_tell')),
+    -- Q3: the rater's own words. Length is checked HERE as well as in the page,
+    -- because the page's copy of the rule is advisory -- anything that can post
+    -- to the RPC can skip it.
+    reasoning     text not null check (length(btrim(reasoning)) >= 15),
     -- Resolved inside pref_record from the session's own draw, never sent by the
-    -- browser. `preferred_model` is null for 'same' and 'cant_tell';
-    -- `realize_model` is additionally null for 'not_wrong'.
+    -- browser. Both are null when the rater picked neither side.
     left_model    text not null,
     right_model   text not null,
     preferred_model text,
@@ -203,11 +206,17 @@ insert into public.pref_items (item_id, comparison, env, model_a, model_b, cat_a
 -- `set not null` cannot fail against rows that never had a Q2 answer.
 alter table public.pref_judgments add column if not exists realize_choice text;
 alter table public.pref_judgments add column if not exists realize_model text;
+alter table public.pref_judgments add column if not exists reasoning text;
 alter table public.pref_judgments alter column realize_choice set not null;
+alter table public.pref_judgments alter column reasoning set not null;
+alter table public.pref_judgments
+    drop constraint if exists pref_judgments_reasoning_check;
+alter table public.pref_judgments add constraint pref_judgments_reasoning_check
+    check (length(btrim(reasoning)) >= 15);
 alter table public.pref_judgments
     drop constraint if exists pref_judgments_realize_choice_check;
 alter table public.pref_judgments add constraint pref_judgments_realize_choice_check
-    check (realize_choice in ('left', 'right', 'same', 'cant_tell'));
+    check (realize_choice in ('left', 'right', 'cant_tell'));
 
 
 -- The digest of the item file this schema was generated from. pref_start_session
@@ -293,10 +302,11 @@ $$;
 -- with no answer to Q2 -- and the not-null column would make that a hard error
 -- mid-session rather than something caught here.
 drop function if exists public.pref_record(text, text, text, integer);
+drop function if exists public.pref_record(text, text, text, text, integer);
 
 create or replace function public.pref_record(
     p_token text, p_item_id text, p_choice text, p_realize_choice text,
-    p_ms_elapsed integer)
+    p_reasoning text, p_ms_elapsed integer)
 returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
@@ -307,6 +317,7 @@ declare
     v_right text;
     v_preferred text;
     v_realize text;
+    v_reasoning text;
     v_answered integer;
 begin
     v_session := public.pref_session_for_token(p_token);
@@ -336,14 +347,22 @@ begin
                                        when 'right' then v_right
                                        else null end;
 
+    v_reasoning := btrim(coalesce(p_reasoning, ''));
+    if length(v_reasoning) < 15 then
+        raise exception 'please explain your reasoning in at least % characters',
+            15 using errcode = 'P0001';
+    end if;
+
     insert into public.pref_judgments (session_id, item_id, choice,
-                                       realize_choice, left_model, right_model,
-                                       preferred_model, realize_model, ms_elapsed)
+                                       realize_choice, reasoning, left_model,
+                                       right_model, preferred_model,
+                                       realize_model, ms_elapsed)
     values (v_session.session_id, p_item_id, p_choice, p_realize_choice,
-            v_left, v_right, v_preferred, v_realize, p_ms_elapsed)
+            v_reasoning, v_left, v_right, v_preferred, v_realize, p_ms_elapsed)
     on conflict (session_id, item_id) do update
         set choice = excluded.choice,
             realize_choice = excluded.realize_choice,
+            reasoning = excluded.reasoning,
             left_model = excluded.left_model,
             right_model = excluded.right_model,
             preferred_model = excluded.preferred_model,
@@ -405,7 +424,7 @@ end;
 $$;
 
 grant execute on function public.pref_start_session(text, text, text) to anon, authenticated;
-grant execute on function public.pref_record(text, text, text, text, integer) to anon, authenticated;
+grant execute on function public.pref_record(text, text, text, text, text, integer) to anon, authenticated;
 grant execute on function public.pref_progress(text) to anon, authenticated;
 grant execute on function public.pref_complete(text) to anon, authenticated;
 

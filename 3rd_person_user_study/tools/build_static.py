@@ -108,7 +108,9 @@ def write_config():
     path = os.path.join(config.STATIC_DIR, "config.json")
     with open(path, "w", encoding="utf-8") as handle:
         json.dump({"supabase_url": url.rstrip("/"),
-                   "supabase_anon_key": anon}, handle, indent=2)
+                   "supabase_anon_key": anon,
+                   "min_item_seconds": config.MIN_ITEM_SECONDS,
+                   "min_reasoning_chars": config.MIN_REASONING_CHARS}, handle, indent=2)
     return path
 
 
