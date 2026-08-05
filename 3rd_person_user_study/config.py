@@ -63,16 +63,21 @@ MANIFEST_PATH = os.path.join(DATA_DIR, "sampling_manifest.json")
 # `ours` and `neutral_mixed` are LoRA adapters on it, `untrained` is the bare
 # instruct model under the bare prompt.
 #
-# WHY `mixed_P6_perspshift_distill_gp` IS "ours" AND NOT THE VOICE-DPO RUN.
-# It is the only one of our arms with locally judged per-response files on a
-# split the two baselines also cover. The voice-DPO adapter that study/ serves
-# (dpo_lora_oeq_qwen3-8b_P6_voice2_rpo0p5) and the frozen `finaldata` decodes
-# were both scored on Marlowe and never synced back, so pairing against them
-# would mean re-generating and re-judging first.
+# ALL THREE COME FROM THE `finaldata` SERIES (changed 2026-08-05), which is the
+# one the paper's final tables are computed over: `ours` is voice2 -- "Our Model
+# (3+1)" -- rather than the P6 distill arm the item set previously used.
+#
+# THE SERIES CANNOT BE MIXED, and this is the constraint that decides all three
+# entries at once. `finaldata` and `final1000` are DISJOINT prompt sets: they
+# share zero sentences, verified against the scored CSVs. An item is one prompt
+# with both arms' responses to it, so a single arm cannot be moved across
+# series on its own -- taking `ours` from `finaldata` forces the baselines over
+# too. build_items asserts the pool is non-empty, so a mistake here fails the
+# build rather than silently producing a smaller item set.
 ARMS = {
-    "ours": "mixed_P6_perspshift_distill_gp",
-    "untrained": "base",
-    "neutral_mixed": "neutral_mixed",
+    "ours": "voice2_finaldata",
+    "untrained": "base_finaldata",
+    "neutral_mixed": "neutralmixed_finaldata",
 }
 
 # (left-hand arm, right-hand arm) as named in the design, NOT as rendered: the

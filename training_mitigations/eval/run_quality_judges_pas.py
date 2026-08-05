@@ -72,6 +72,13 @@ CONDITIONS_BY_ENV = {
         "explicit":   ["scored_pas_explicit.csv"],
         "sharma":     ["scored_pas_sharma.csv"],
         "perspshift": ["scored_pas_perspshift.csv"],
+        # The `finaldata` series: the SAME 1000 held-out prompts, regenerated
+        # post rejection-sampling/gate-loop, and a DISJOINT prompt set from the
+        # `final1000` keys above -- the two share zero sentences, so a condition
+        # from one series can never be paired against one from the other.
+        "voice2_finaldata":       ["scored_pas_voice2_finaldata.csv"],
+        "base_finaldata":         ["scored_pas_base_finaldata.csv"],
+        "neutralmixed_finaldata": ["scored_pas_neutralmixed_finaldata.csv"],
     },
     "OEQ": {
         "base":       ["scored_heldout_oeq.csv",            "scored_heldout_oeq_set2.csv"],
@@ -93,6 +100,11 @@ CONDITIONS_BY_ENV = {
         "sharma":     ["scored_oeq_sharma.csv"],
         "perspshift": ["scored_oeq_perspshift.csv"],
         "human":      ["scored_oeq_human_heldout1000.csv"],
+        # See the PAS block: `finaldata` is a separate prompt set from
+        # `final1000` and the two must never be mixed inside one comparison.
+        "voice2_finaldata":       ["scored_oeq_voice2_finaldata.csv"],
+        "base_finaldata":         ["scored_oeq_base_finaldata.csv"],
+        "neutralmixed_finaldata": ["scored_oeq_neutralmixed_finaldata.csv"],
     },
 }
 

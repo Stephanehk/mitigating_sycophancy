@@ -104,19 +104,44 @@ def test_entity_decoding_covers_what_the_items_contain(all_text):
     assert found, "no entities at all: the decoding path is untested by real data"
 
 
+#: Constructs the renderer handles, and how to spot one in the item text.
+CONSTRUCTS = {
+    "heading": r"(?m)^ {0,3}#{1,6} ",
+    "bold": r"\*\*\S",
+    "bullet list": r"(?m)^ *[-*+] ",
+    "ordered list": r"(?m)^ *\d+[.)] ",
+    "rule": r"(?m)^ {0,3}-{3,}\s*$",
+    "strikethrough": r"~~\S",
+}
+
+#: Handled by markdown.js but ABSENT from the current item set, so the renderer's
+#: behaviour on them is exercised only by the unit tests below and not by real
+#: data. Recorded rather than dropped: the support stays (a later item set may
+#: contain it), and test_absent_constructs_are_still_absent fails if one shows up,
+#: which is the signal to move it back above.
+#:
+#: strikethrough left when the item set moved to the voice2 `finaldata` series
+#: (2026-08-05); the previous `mixed_P6_perspshift_distill_gp` items had it.
+NOT_IN_CORPUS = {"strikethrough"}
+
+
 def test_the_supported_constructs_are_actually_present(all_text):
     """The mirror of the test above: if none of the handled constructs appear, the
     renderer is untested by the real data and the subset claim is vacuous."""
-    present = {
-        "heading": r"(?m)^ {0,3}#{1,6} ",
-        "bold": r"\*\*\S",
-        "bullet list": r"(?m)^ *[-*+] ",
-        "ordered list": r"(?m)^ *\d+[.)] ",
-        "rule": r"(?m)^ {0,3}-{3,}\s*$",
-        "strikethrough": r"~~\S",
-    }
-    for name, pattern in present.items():
+    for name, pattern in CONSTRUCTS.items():
+        if name in NOT_IN_CORPUS:
+            continue
         assert any(re.search(pattern, text) for text in all_text), name
+
+
+def test_absent_constructs_are_still_absent(all_text):
+    """NOT_IN_CORPUS is a claim about the data, so it has to be checked. A
+    construct that reappears must go back under the test above rather than sit
+    in a list saying the data does not contain it."""
+    for name in NOT_IN_CORPUS:
+        assert not any(re.search(CONSTRUCTS[name], text) for text in all_text), (
+            f"{name} IS in the item set now -- remove it from NOT_IN_CORPUS so "
+            "the renderer is held to it")
 
 
 # --- the renderer, in a real browser ---------------------------------------
