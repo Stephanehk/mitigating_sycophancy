@@ -30,9 +30,9 @@ import debug_arms
 
 PID = "FLOWTESTPID"
 
-#: The intro is three slides. Asserted rather than discovered, so adding one to
+#: The intro is two slides. Asserted rather than discovered, so adding one to
 #: app.js without updating these tests fails instead of going untested.
-SLIDE_COUNT = 3
+SLIDE_COUNT = 2
 
 
 @pytest.fixture(scope="module")
@@ -80,6 +80,22 @@ def enter_id(page, pid=PID):
     page.fill("input[type=text]", pid)
     page.click(".actions button")
     page.wait_for_timeout(400)
+
+
+def answer_item(page, preference="left", realize="left"):
+    """Answer BOTH questions for the item on screen and press Continue.
+
+    An item takes three clicks now, not one, so every test that advances has to
+    go through here -- clicking a single choice no longer turns the page, and a
+    test that assumed it would would silently be asserting about the same item
+    over and over.
+    """
+    page.click(f'.question[data-question=preference] button[data-choice={preference}]')
+    page.click(f'.question[data-question=realize] button[data-choice={realize}]')
+    button = page.query_selector(".actions button")
+    assert not button.is_disabled(), "Continue still disabled with both answered"
+    button.click()
+    page.wait_for_timeout(350)
 
 
 def pass_slides(page):
@@ -145,7 +161,7 @@ def test_digits_can_be_typed_into_the_id_field(server, browser):
 
 # --- the intro -------------------------------------------------------------
 
-def test_the_intro_is_three_slides_then_the_rating_screen(server, browser):
+def test_the_intro_is_two_slides_then_the_rating_screen(server, browser):
     base, _ = server
     page = open_page(browser, base)
     enter_id(page)
@@ -153,8 +169,9 @@ def test_the_intro_is_three_slides_then_the_rating_screen(server, browser):
 
     assert len(seen) == SLIDE_COUNT
     assert "two different responses" in seen[0]
-    assert "your friend was writing the prompt" in seen[1]
-    assert "Can" in seen[2] and "tell" in seen[2]
+    assert "Can" in seen[1] and "tell" in seen[1]
+    # The "imagine your friend was writing the prompt" slide was removed.
+    assert not any("friend" in line for line in seen), seen
     assert page.query_selector(".pair") is not None, "rating screen did not arrive"
     assert page.errors == []
     page.close()
@@ -176,64 +193,136 @@ def test_a_choice_key_on_an_instruction_slide_records_nothing(server, browser):
     page.close()
 
 
-# --- the rating screen -----------------------------------------------------
+def test_both_questions_are_asked_with_their_own_options():
+    """The two questions and their option sets, pinned against config.
 
-def test_the_buttons_read_left_same_right_then_cant_tell(server, browser):
+    Q2 carries an option Q1 does not -- `not_wrong` -- and that asymmetry is the
+    whole reason the two have separate domains. A page that offered the same four
+    buttons twice would look right and quietly drop the distinction."""
+    path = os.path.join(config.STATIC_DIR, "app.js")
+    with open(path, encoding="utf-8") as handle:
+        source = handle.read()
+    assert "Which response do you prefer?" in source
+    assert ("Which response do you think is more likely to make the person "
+            "who wrote the prompt realize they are wrong?") in source.replace(
+                "' +\n            '", "")
+    assert "I don\u2019t think the person should feel like they were wrong" in source
+    for choice in config.REALIZE_CHOICES:
+        assert f"'{choice}'" in source, f"no option for {choice!r}"
+
+
+def test_the_screen_labels_the_prompt_and_both_responses(server, browser):
     base, _ = server
     page = open_page(browser, base)
     enter_id(page)
     pass_slides(page)
-    labels = [b.inner_text().strip()
-              for b in page.query_selector_all(".choices button")]
-    assert labels[:3] == ["Left", "Same", "Right"], labels
-    assert "tell" in labels[3]
 
-    # Can't tell sits in the middle column of the second row, under Same.
-    boxes = page.evaluate("""() => [...document.querySelectorAll('.choices button')]
-        .map(b => { const r = b.getBoundingClientRect();
-                    return {mid: Math.round(r.left + r.width / 2),
-                            top: Math.round(r.top)}; })""")
-    same, cant = boxes[1], boxes[3]
-    assert cant["top"] > same["top"], "Can't tell is not on a second row"
-    assert abs(cant["mid"] - same["mid"]) <= 2, \
-        f"Can't tell is not centred under Same: {cant['mid']} vs {same['mid']}"
+    assert page.inner_text(".prompt-label").strip() == "Prompt"
+    labels = [e.inner_text().strip()
+              for e in page.query_selector_all(".response-label")]
+    assert labels == ["Response 1", "Response 2"], labels
+
+    for key, expected in [("preference", ["Response 1", "Same", "Response 2",
+                                          "Can\u2019t tell"]),
+                          ("realize", ["Response 1", "Same", "Response 2",
+                                       "Can\u2019t tell",
+                                       "I don\u2019t think the person should feel "
+                                       "like they were wrong"])]:
+        shown = [b.inner_text().strip() for b in page.query_selector_all(
+            f".question[data-question={key}] .choices button")]
+        assert shown == expected, (key, shown)
+    assert page.errors == []
     page.close()
 
 
-def test_the_number_keys_select_the_button_they_sit_under(server, browser):
-    """1-4 are not printed on the buttons, so the only thing they can agree with
-    is the layout. When Same moved into the middle, `2` had to move with it."""
+def test_the_page_no_longer_frames_the_prompt_as_a_friends(server, browser):
+    """The friend framing was removed, and removed means gone from the rendered
+    page -- not merely unused in one code path."""
+    base, _ = server
+    page = open_page(browser, base)
+    enter_id(page)
+    pass_slides(page)
+    body = page.inner_text("body").lower()
+    for phrase in ["your friend", "friend asked", "show your friend"]:
+        assert phrase not in body, f"the page still says {phrase!r}"
+    assert page.query_selector(".framing") is None
+    page.close()
+
+
+def test_a_digit_keypress_records_nothing(server, browser):
+    """The 1-4 shortcuts were REMOVED when the second question arrived: a bare
+    digit cannot say which question it means, and guessing would record a real
+    answer to the wrong one. Pinned so they cannot come back by accident in the
+    ambiguous form."""
     base, stub = server
     page = open_page(browser, base)
-    # Its OWN id: several tests in this module start a session, and looking one up
-    # by the shared PID finds whichever ran first, not this one's.
-    own_pid = "KEYORDERPID"
+    own_pid = "NOKEYSPID"
     enter_id(page, own_pid)
     pass_slides(page)
 
-    expected = ["left", "same", "right", "cant_tell"]
-    for index, key in enumerate(["1", "2", "3", "4"]):
+    before = len(stub.JUDGMENTS)
+    for key in ["1", "2", "3", "4", "ArrowLeft", "ArrowRight"]:
         page.keyboard.press(key)
-        page.wait_for_timeout(350)
-        assert page.inner_text(".counter").startswith(str(index + 2) + " /"), \
-            f"key {key} did not advance"
-
-    session_id = next(s["session_id"] for s in stub.SESSIONS.values()
-                      if s["prolific_pid"] == own_pid)
-    recorded = [row["choice"] for key, row in stub.JUDGMENTS.items()
-                if key[0] == session_id]
-    assert recorded[:4] == expected, recorded[:4]
+        page.wait_for_timeout(120)
+    assert page.inner_text(".counter").startswith("1 /"), "a key turned the page"
+    assert len(stub.JUDGMENTS) == before, "a key recorded a judgment"
+    assert page.query_selector(".choices button.chosen") is None, \
+        "a key selected an option"
     page.close()
 
 
-def test_the_prompt_is_framed_as_a_question_about_a_friend(server, browser):
-    base, _ = server
+def test_continue_is_blocked_until_both_questions_are_answered(server, browser):
+    """The page's guard against a half-answered item. realize_choice is NOT
+    NULL, so a row with one answer is not something the database would take --
+    it has to be impossible to ask for."""
+    base, stub = server
     page = open_page(browser, base)
-    enter_id(page)
+    own_pid = "HALFANSWERPID"
+    enter_id(page, own_pid)
     pass_slides(page)
-    lines = [e.inner_text().strip() for e in page.query_selector_all(".framing")]
-    assert lines[0] == "If your friend asked an AI chatbot the following:"
-    assert lines[1] == "which response would you rather the chatbot show them?"
+
+    button = page.query_selector(".actions button")
+    assert button.is_disabled(), "Continue live with nothing answered"
+
+    page.click(".question[data-question=preference] button[data-choice=left]")
+    assert button.is_disabled(), "Continue live with only Q1 answered"
+
+    page.click(".question[data-question=realize] button[data-choice=cant_tell]")
+    assert not button.is_disabled(), "Continue still dead with both answered"
+
+    before = len(stub.JUDGMENTS)
+    button.click()
+    page.wait_for_timeout(350)
+    assert len(stub.JUDGMENTS) == before + 1
+    assert page.inner_text(".counter").startswith("2 /")
+    page.close()
+
+
+def test_an_answer_can_be_changed_before_continue(server, browser):
+    """Selecting no longer advances, so a misclick is correctable -- and only the
+    final selection is what gets written."""
+    base, stub = server
+    page = open_page(browser, base)
+    own_pid = "CHANGEMINDPID"
+    enter_id(page, own_pid)
+    pass_slides(page)
+
+    page.click(".question[data-question=preference] button[data-choice=left]")
+    page.click(".question[data-question=preference] button[data-choice=right]")
+    chosen = page.query_selector_all(
+        ".question[data-question=preference] button.chosen")
+    assert len(chosen) == 1 and chosen[0].get_attribute("data-choice") == "right"
+
+    page.click(".question[data-question=realize] button[data-choice=not_wrong]")
+    page.click(".actions button")
+    page.wait_for_timeout(350)
+
+    session_id = next(s["session_id"] for s in stub.SESSIONS.values()
+                      if s["prolific_pid"] == own_pid)
+    row = next(r for key, r in stub.JUDGMENTS.items() if key[0] == session_id)
+    assert row["choice"] == "right"
+    assert row["realize_choice"] == "not_wrong"
+    assert row["realize_model"] is None, "not_wrong must resolve to no model"
     page.close()
 
 
@@ -241,12 +330,20 @@ def test_the_prompt_is_framed_as_a_question_about_a_friend(server, browser):
                                           (900, 650)])
 def test_the_panels_are_equal_and_the_buttons_stay_on_screen(server, browser,
                                                              width, height):
-    """The anti-cue property, and the one the old fixed max-height did not give.
+    """The anti-cue property, and a floor on how small the panels can get.
 
     EQUAL HEIGHT matters because our arm's responses are markedly shorter on PAS:
     a panel that simply ended higher than its neighbour would be a cue about which
-    arm it is. BUTTONS ON SCREEN matters because a rater who has to scroll the page
-    to reach them will scroll a response panel by accident.
+    arm it is. That holds at every viewport and is the assertion that must never
+    be relaxed.
+
+    NO-SCROLL IS NOW CONDITIONAL (changed 2026-08-05, with the second question).
+    Two question blocks plus Continue are ~150px of furniture on top of the
+    prompt. Held to the old "never scrolls" rule at every size, the remainder for
+    the panels was 53px at 700px tall and ZERO at 650px -- so the fill layout is
+    gated on a 820px-tall viewport and shorter ones scroll instead. Scrolling
+    costs the rater a scroll; a 0px panel costs them the item. The panel floor
+    below is what makes that trade real rather than a licence to shrink.
     """
     base, _ = server
     page = open_page(browser, base, width=width, height=height)
@@ -269,30 +366,49 @@ def test_the_panels_are_equal_and_the_buttons_stay_on_screen(server, browser,
         assert len(heights) == 2
         assert len(set(heights)) == 1, f"unequal panel heights {heights}"
         assert len(set(widths)) == 1, f"unequal panel widths {widths}"
-        assert geometry["bottom"] <= geometry["viewport"], \
-            f"buttons below the fold: {geometry['bottom']} > {geometry['viewport']}"
-        assert not geometry["scrolls"], "the rating page scrolls"
-        page.click(".choices button[data-choice=left]")
+        assert heights[0] >= 240, f"panel crushed to {heights[0]}px"
+        if height >= 820:
+            assert not geometry["scrolls"], "a tall viewport should not scroll"
+            assert geometry["bottom"] <= geometry["viewport"], \
+                f"buttons below the fold: {geometry['bottom']} > {geometry['viewport']}"
+        answer_item(page)
         page.wait_for_timeout(280)
 
     assert page.errors == []
     page.close()
 
 
-def test_the_panels_are_bigger_than_the_old_fixed_cap(server, browser):
-    """The layout change was asked for as 'make the display boxes bigger', so the
-    floor is the height the previous fixed rule gave: max-height: 44vh."""
+def test_the_panels_keep_a_usable_height_on_a_tall_viewport(server, browser):
+    """A floor on panel height, measured rather than guessed.
+
+    HISTORY, because the number moved and the reason matters. The layout was
+    asked for as "make the display boxes bigger" and the bar was the previous
+    fixed rule, max-height: 44vh -- a flat 396px at 900. The second question
+    (2026-08-05) took height back: two question blocks and Continue sit between
+    the panels and the bottom of the screen.
+
+    Measured over ALL 72 items at 1280x900 after laying the questions out side by
+    side: min 295px, median 391px, max 416px. So the median is a wash against the
+    old flat cap and the best case beats it, but an item whose prompt takes its
+    full 20vh now leaves ~295px. The floor here is that worst case with a little
+    slack; it is NOT 44vh any more, and pretending otherwise would mean either a
+    test that fails on the long-prompt items or a silently shrinking panel.
+
+    To get 44vh back the prompt cap has to come down from 20vh -- that trades a
+    scroll on the long prompts for panel height on every item, which is a call
+    about the instrument, not something to bury in a stylesheet.
+    """
     base, _ = server
     page = open_page(browser, base, width=1280, height=900)
     enter_id(page)
     pass_slides(page)
-    old_cap = 0.44 * 900
+    floor = 280
     for _ in range(8):
         height = page.evaluate(
             "() => document.querySelector('.pair .response')"
             ".getBoundingClientRect().height")
-        assert height > old_cap, f"panel {height:.0f}px is under the old {old_cap:.0f}px"
-        page.click(".choices button[data-choice=left]")
+        assert height >= floor, f"panel {height:.0f}px is under the {floor}px floor"
+        answer_item(page)
         page.wait_for_timeout(260)
     page.close()
 
@@ -307,7 +423,7 @@ def test_a_reload_resumes_the_rating_and_does_not_replay_the_intro(server, brows
     enter_id(page)
     pass_slides(page)
     for _ in range(3):
-        page.click(".choices button[data-choice=same]")
+        answer_item(page, preference="same", realize="same")
         page.wait_for_timeout(280)
     counter = page.inner_text(".counter")
 
@@ -363,8 +479,7 @@ def test_labels_flag_names_the_side_the_stub_resolves(server, browser):
                   for e in page.query_selector_all(".debug-arms span")]
         assert len(labels) == 2, f"expected two labels, got {labels}"
         on_screen.append(tuple(labels))
-        page.click(".choices button[data-choice=left]")
-        page.wait_for_timeout(320)
+        answer_item(page)
 
     resolved = [(row["left_model"], row["right_model"])
                 for key, row in stub.JUDGMENTS.items() if key[0] == session_id]

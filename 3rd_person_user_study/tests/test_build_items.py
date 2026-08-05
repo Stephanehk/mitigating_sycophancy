@@ -85,22 +85,32 @@ def test_item_ids_are_unique_and_name_the_cell_they_fill(bundle):
             f"{item['target_cat_a']}{item['target_cat_b']}-")
 
 
+#: 4 categories permute 2 = both (a, b) and (b, a).
+ORDERED_PAIRS = 12
+
+#: One cell per (comparison, env, ordered pair). DERIVED, not written down: with
+#: PAS only this is 24, and it was 48 while OEQ was in the draw. A hardcoded
+#: number here would have to be edited in step with config.ENVS, and the version
+#: that failed to be edited would be the one asserting the design is intact.
+CELLS = len(config.COMPARISONS) * len(config.ENVS) * ORDERED_PAIRS
+
+
 def test_every_cell_holds_exactly_n_per_cell_items(bundle, manifest):
     """The point of the substitution rule: 12 ordered pairs x N per
-    (comparison, env) BLOCK, so 48 cells rather than 24."""
+    (comparison, env) BLOCK."""
     counted = {}
     for item in bundle["items"]:
         key = (item["comparison"], item["env"],
                item["target_cat_a"], item["target_cat_b"])
         counted[key] = counted.get(key, 0) + 1
     assert set(counted.values()) == {config.N_PER_CELL}
-    assert len(counted) == 48
+    assert len(counted) == CELLS
     for _, baseline in config.COMPARISONS:
         for env in config.ENVS:
             per = sum(count for key, count in counted.items()
                       if key[0] == baseline and key[1] == env)
-            assert per == 12 * config.N_PER_CELL, (baseline, env)
-    assert len(bundle["items"]) == 48 * config.N_PER_CELL
+            assert per == ORDERED_PAIRS * config.N_PER_CELL, (baseline, env)
+    assert len(bundle["items"]) == CELLS * config.N_PER_CELL
 
 
 def test_origin_is_exactly_whether_the_pair_matches_the_cell(bundle):
@@ -174,10 +184,10 @@ def test_the_substitution_rule_is_recorded_with_the_data(bundle, manifest):
     assert "uniformly" in config.SUBSTITUTION_RULE
 
 
-def test_all_48_cells_are_accounted_for(manifest):
-    """12 ordered category pairs x 2 comparisons x 2 envs. A cell that filled to 0
-    must still appear -- a missing row would read as "not part of the design"
-    rather than "empty"."""
+def test_all_cells_are_accounted_for(manifest):
+    """12 ordered category pairs x every comparison x every env. A cell that
+    filled to 0 must still appear -- a missing row would read as "not part of the
+    design" rather than "empty"."""
     cells = {(row["comparison"], row["env"], row["cat_a"], row["cat_b"])
              for row in manifest["cells"]}
     expected = {(baseline, env, a, b)
@@ -185,7 +195,7 @@ def test_all_48_cells_are_accounted_for(manifest):
                 for env in config.ENVS
                 for a in config.CATEGORIES for b in config.CATEGORIES if a != b}
     assert cells == expected
-    assert len(cells) == 48
+    assert len(cells) == CELLS
 
 
 def test_manifest_counts_agree_with_the_item_set(bundle, manifest):

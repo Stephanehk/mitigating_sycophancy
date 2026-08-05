@@ -89,8 +89,11 @@ def session_for_token(args):
 
 
 def record(args):
-    """pref_record. The browser sends a SIDE; the arms are resolved here, from
-    this session's own draw -- the same division of trust as the RPC."""
+    """pref_record. The browser sends a SIDE per question; the arms are resolved
+    here, from this session's own draw -- the same division of trust as the RPC.
+
+    Both questions are written together, as the SQL does, so the stub cannot
+    accept a half-answered item the database would reject."""
     session = session_for_token(args)
     if session is None:
         return 401, {"message": "unknown session", "code": "P0002"}
@@ -98,6 +101,9 @@ def record(args):
         return 400, {"message": "session already complete"}
     if args.get("p_choice") not in config.CHOICES:
         return 400, {"message": f"bad choice: {args.get('p_choice')}"}
+    if args.get("p_realize_choice") not in config.REALIZE_CHOICES:
+        return 400, {"message":
+                     f"bad realize choice: {args.get('p_realize_choice')}"}
 
     item_id = args.get("p_item_id")
     assignment = next((a for a in session["assignments"] if a["item_id"] == item_id),
@@ -109,13 +115,19 @@ def record(args):
     left, right = ((item["model_b"], item["model_a"]) if assignment["flipped"]
                    else (item["model_a"], item["model_b"]))
     choice = args["p_choice"]
-    preferred = {"left": left, "right": right}.get(choice)
+    realize_choice = args["p_realize_choice"]
+    sides = {"left": left, "right": right}
+    preferred = sides.get(choice)
+    realize = sides.get(realize_choice)
     JUDGMENTS[(session["session_id"], item_id)] = {
-        "choice": choice, "left_model": left, "right_model": right,
-        "preferred_model": preferred, "ms_elapsed": args.get("p_ms_elapsed")}
+        "choice": choice, "realize_choice": realize_choice,
+        "left_model": left, "right_model": right,
+        "preferred_model": preferred, "realize_model": realize,
+        "ms_elapsed": args.get("p_ms_elapsed")}
     answered = sum(1 for key in JUDGMENTS if key[0] == session["session_id"])
     print(f"[{answered:>3}/{len(session['assignments'])}] {item_id:<24} "
-          f"{choice:<10} left={left:<14} right={right:<14} -> {preferred}")
+          f"{choice:<10} left={left:<14} right={right:<14} -> {preferred}"
+          f"  | realize={realize_choice:<10} -> {realize}")
     return 200, {"answered": answered}
 
 

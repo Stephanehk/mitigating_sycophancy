@@ -157,26 +157,35 @@ create table if not exists public.pref_assignments (
     primary key (session_id, item_id)
 );
 
--- One row per answered item. `choice` is a SCREEN SIDE; the resolved arms are
--- stored beside it so analysis never has to redo the flip arithmetic.
+-- One row per answered item, holding BOTH questions. `choice` and
+-- `realize_choice` are SCREEN SIDES; the resolved arms are stored beside them so
+-- analysis never has to redo the flip arithmetic.
 create table if not exists public.pref_judgments (
     id            bigint generated always as identity primary key,
     session_id    text not null references public.pref_sessions (session_id)
                        on delete cascade,
     item_id       text not null references public.pref_items (item_id)
                        on delete cascade,
+    -- Q1: which response the rater prefers.
     choice        text not null check (choice in (@CHOICES@)),
+    -- Q2: which is likelier to make the writer realize they are wrong. Its own
+    -- domain, because it also allows 'not_wrong' -- a judgement about the item
+    -- rather than an answer about the responses.
+    realize_choice text not null check (realize_choice in (@REALIZE_CHOICES@)),
     -- Resolved inside pref_record from the session's own draw, never sent by the
-    -- browser. `preferred_model` is null for 'same' and 'cant_tell'.
+    -- browser. `preferred_model` is null for 'same' and 'cant_tell';
+    -- `realize_model` is additionally null for 'not_wrong'.
     left_model    text not null,
     right_model   text not null,
     preferred_model text,
+    realize_model text,
     ms_elapsed    integer,
     created_at    timestamptz not null default now(),
     -- A rater answers each item once. A revisit updates in place (see
     -- pref_record's on conflict), so this is the guard, not an error path.
     unique (session_id, item_id)
 );
+
 
 create index if not exists idx_pref_judgments_item on public.pref_judgments (item_id);
 create index if not exists idx_pref_judgments_session on public.pref_judgments (session_id);
@@ -188,6 +197,20 @@ alter table public.pref_judgments   enable row level security;
 
 -- No policies, on purpose: the anon key can touch none of these directly and
 -- reaches them only through the SECURITY DEFINER functions below.
+"""
+
+Q2_MIGRATION = """
+-- The Q2 columns, for a pref_judgments that predates them. Emitted as alters as
+-- well as in the create above so an existing project gains them; they sit AFTER
+-- the item truncate in the assembled file, where the table is already empty, so
+-- `set not null` cannot fail against rows that never had a Q2 answer.
+alter table public.pref_judgments add column if not exists realize_choice text;
+alter table public.pref_judgments add column if not exists realize_model text;
+alter table public.pref_judgments alter column realize_choice set not null;
+alter table public.pref_judgments
+    drop constraint if exists pref_judgments_realize_choice_check;
+alter table public.pref_judgments add constraint pref_judgments_realize_choice_check
+    check (realize_choice in (@REALIZE_CHOICES@));
 """
 
 FUNCTIONS = """
@@ -268,8 +291,16 @@ $$;
 -- Record one judgment. The browser sends a SIDE; the arms are resolved here from
 -- this session's own `flipped`, which is why the page never has to be trusted
 -- with -- or told -- which arm it rendered where.
+-- The four-argument version, from before the second question. Dropped rather
+-- than left in place: `create or replace` with a new argument list makes an
+-- OVERLOAD, so without this a page still calling it would keep recording items
+-- with no answer to Q2 -- and the not-null column would make that a hard error
+-- mid-session rather than something caught here.
+drop function if exists public.pref_record(text, text, text, integer);
+
 create or replace function public.pref_record(
-    p_token text, p_item_id text, p_choice text, p_ms_elapsed integer)
+    p_token text, p_item_id text, p_choice text, p_realize_choice text,
+    p_ms_elapsed integer)
 returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
@@ -279,6 +310,7 @@ declare
     v_left text;
     v_right text;
     v_preferred text;
+    v_realize text;
     v_answered integer;
 begin
     v_session := public.pref_session_for_token(p_token);
@@ -299,19 +331,27 @@ begin
     else
         v_left := v_item.model_a; v_right := v_item.model_b;
     end if;
+    -- Both questions resolve through the SAME draw, so a row can never claim the
+    -- rater preferred one arm and thought a different arm was on the same side.
     v_preferred := case p_choice when 'left' then v_left
                                  when 'right' then v_right
                                  else null end;
+    v_realize := case p_realize_choice when 'left' then v_left
+                                       when 'right' then v_right
+                                       else null end;
 
-    insert into public.pref_judgments (session_id, item_id, choice, left_model,
-                                       right_model, preferred_model, ms_elapsed)
-    values (v_session.session_id, p_item_id, p_choice, v_left, v_right,
-            v_preferred, p_ms_elapsed)
+    insert into public.pref_judgments (session_id, item_id, choice,
+                                       realize_choice, left_model, right_model,
+                                       preferred_model, realize_model, ms_elapsed)
+    values (v_session.session_id, p_item_id, p_choice, p_realize_choice,
+            v_left, v_right, v_preferred, v_realize, p_ms_elapsed)
     on conflict (session_id, item_id) do update
         set choice = excluded.choice,
+            realize_choice = excluded.realize_choice,
             left_model = excluded.left_model,
             right_model = excluded.right_model,
             preferred_model = excluded.preferred_model,
+            realize_model = excluded.realize_model,
             ms_elapsed = excluded.ms_elapsed,
             created_at = now();
 
@@ -369,7 +409,7 @@ end;
 $$;
 
 grant execute on function public.pref_start_session(text, text, text) to anon, authenticated;
-grant execute on function public.pref_record(text, text, text, integer) to anon, authenticated;
+grant execute on function public.pref_record(text, text, text, text, integer) to anon, authenticated;
 grant execute on function public.pref_progress(text) to anon, authenticated;
 grant execute on function public.pref_complete(text) to anon, authenticated;
 
@@ -387,11 +427,20 @@ def main():
     # (raise-exception placeholders), and every one of them would have to be
     # doubled to survive it.
     choices = ", ".join(sql_str(c) for c in config.CHOICES)
+    realize = ", ".join(sql_str(c) for c in config.REALIZE_CHOICES)
+
+    def fill(text):
+        return text.replace("@CHOICES@", choices).replace("@REALIZE_CHOICES@", realize)
+
+    # Q2_MIGRATION goes AFTER items_seed on purpose: the truncate there empties
+    # pref_judgments, so `alter column ... set not null` cannot trip over rows
+    # collected before the second question existed.
     out = [HEADER,
-           TABLES.replace("@CHOICES@", choices),
+           fill(TABLES),
            "",
            items_seed(bundle),
-           FUNCTIONS.replace("@SHA@", sql_str(bundle["items_sha256"]))]
+           fill(Q2_MIGRATION),
+           fill(FUNCTIONS).replace("@SHA@", sql_str(bundle["items_sha256"]))]
     sys.stdout.write("\n".join(out))
 
 

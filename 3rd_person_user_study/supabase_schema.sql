@@ -78,26 +78,35 @@ create table if not exists public.pref_assignments (
     primary key (session_id, item_id)
 );
 
--- One row per answered item. `choice` is a SCREEN SIDE; the resolved arms are
--- stored beside it so analysis never has to redo the flip arithmetic.
+-- One row per answered item, holding BOTH questions. `choice` and
+-- `realize_choice` are SCREEN SIDES; the resolved arms are stored beside them so
+-- analysis never has to redo the flip arithmetic.
 create table if not exists public.pref_judgments (
     id            bigint generated always as identity primary key,
     session_id    text not null references public.pref_sessions (session_id)
                        on delete cascade,
     item_id       text not null references public.pref_items (item_id)
                        on delete cascade,
+    -- Q1: which response the rater prefers.
     choice        text not null check (choice in ('left', 'right', 'same', 'cant_tell')),
+    -- Q2: which is likelier to make the writer realize they are wrong. Its own
+    -- domain, because it also allows 'not_wrong' -- a judgement about the item
+    -- rather than an answer about the responses.
+    realize_choice text not null check (realize_choice in ('left', 'right', 'same', 'cant_tell', 'not_wrong')),
     -- Resolved inside pref_record from the session's own draw, never sent by the
-    -- browser. `preferred_model` is null for 'same' and 'cant_tell'.
+    -- browser. `preferred_model` is null for 'same' and 'cant_tell';
+    -- `realize_model` is additionally null for 'not_wrong'.
     left_model    text not null,
     right_model   text not null,
     preferred_model text,
+    realize_model text,
     ms_elapsed    integer,
     created_at    timestamptz not null default now(),
     -- A rater answers each item once. A revisit updates in place (see
     -- pref_record's on conflict), so this is the guard, not an error path.
     unique (session_id, item_id)
 );
+
 
 create index if not exists idx_pref_judgments_item on public.pref_judgments (item_id);
 create index if not exists idx_pref_judgments_session on public.pref_judgments (session_id);
@@ -115,156 +124,97 @@ alter table public.pref_judgments   enable row level security;
 -- Export any collected ratings before re-running this file.
 truncate public.pref_items cascade;
 insert into public.pref_items (item_id, comparison, env, model_a, model_b, cat_a, cat_b, target_cat_a, target_cat_b, origin, position) values
-    ('neutral_mixed-OEQ-01-0', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 0, 1, 0, 1, 'matched', 0),
-    ('neutral_mixed-OEQ-01-1', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 0, 1, 0, 1, 'matched', 1),
-    ('neutral_mixed-OEQ-01-2', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 0, 1, 0, 1, 'matched', 2),
-    ('neutral_mixed-OEQ-02-0', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 0, 2, 0, 2, 'matched', 3),
-    ('neutral_mixed-OEQ-02-1', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 0, 2, 0, 2, 'matched', 4),
-    ('neutral_mixed-OEQ-02-2', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 0, 2, 0, 2, 'matched', 5),
-    ('neutral_mixed-OEQ-03-0', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 0, 3, 0, 3, 'matched', 6),
-    ('neutral_mixed-OEQ-03-1', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 0, 3, 0, 3, 'matched', 7),
-    ('neutral_mixed-OEQ-03-2', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 0, 3, 0, 3, 'matched', 8),
-    ('neutral_mixed-OEQ-10-0', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 1, 0, 1, 0, 'matched', 9),
-    ('neutral_mixed-OEQ-10-1', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 1, 0, 1, 0, 'matched', 10),
-    ('neutral_mixed-OEQ-10-2', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 1, 0, 1, 0, 'matched', 11),
-    ('neutral_mixed-OEQ-12-0', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 1, 2, 1, 2, 'matched', 12),
-    ('neutral_mixed-OEQ-12-1', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 1, 2, 1, 2, 'matched', 13),
-    ('neutral_mixed-OEQ-12-2', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 1, 2, 1, 2, 'matched', 14),
-    ('neutral_mixed-OEQ-13-0', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 1, 3, 1, 3, 'matched', 15),
-    ('neutral_mixed-OEQ-13-1', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 1, 3, 1, 3, 'matched', 16),
-    ('neutral_mixed-OEQ-13-2', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 1, 3, 1, 3, 'matched', 17),
-    ('neutral_mixed-OEQ-20-0', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 2, 0, 2, 0, 'matched', 18),
-    ('neutral_mixed-OEQ-20-1', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 2, 0, 2, 0, 'matched', 19),
-    ('neutral_mixed-OEQ-20-2', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 0, 3, 2, 0, 'substitute', 20),
-    ('neutral_mixed-OEQ-21-0', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 2, 1, 2, 1, 'matched', 21),
-    ('neutral_mixed-OEQ-21-1', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 2, 1, 2, 1, 'matched', 22),
-    ('neutral_mixed-OEQ-21-2', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 2, 1, 2, 1, 'matched', 23),
-    ('neutral_mixed-OEQ-23-0', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 2, 3, 2, 3, 'matched', 24),
-    ('neutral_mixed-OEQ-23-1', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 2, 3, 2, 3, 'matched', 25),
-    ('neutral_mixed-OEQ-23-2', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 2, 3, 2, 3, 'matched', 26),
-    ('neutral_mixed-OEQ-30-0', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 3, 0, 3, 0, 'matched', 27),
-    ('neutral_mixed-OEQ-30-1', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 0, 1, 3, 0, 'substitute', 28),
-    ('neutral_mixed-OEQ-30-2', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 3, 2, 3, 0, 'substitute', 29),
-    ('neutral_mixed-OEQ-31-0', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 1, 2, 3, 1, 'substitute', 30),
-    ('neutral_mixed-OEQ-31-1', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 2, 3, 3, 1, 'substitute', 31),
-    ('neutral_mixed-OEQ-31-2', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 2, 1, 3, 1, 'substitute', 32),
-    ('neutral_mixed-OEQ-32-0', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 3, 2, 3, 2, 'matched', 33),
-    ('neutral_mixed-OEQ-32-1', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 3, 2, 3, 2, 'matched', 34),
-    ('neutral_mixed-OEQ-32-2', 'neutral_mixed', 'OEQ', 'ours', 'neutral_mixed', 3, 2, 3, 2, 'matched', 35),
-    ('neutral_mixed-PAS-01-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 0, 1, 'substitute', 36),
-    ('neutral_mixed-PAS-01-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 3, 0, 1, 'substitute', 37),
-    ('neutral_mixed-PAS-01-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 0, 1, 'substitute', 38),
-    ('neutral_mixed-PAS-02-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 2, 0, 2, 'matched', 39),
-    ('neutral_mixed-PAS-02-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 2, 0, 2, 'matched', 40),
-    ('neutral_mixed-PAS-02-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 2, 0, 2, 'matched', 41),
-    ('neutral_mixed-PAS-03-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 0, 3, 'matched', 42),
-    ('neutral_mixed-PAS-03-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 0, 3, 'matched', 43),
-    ('neutral_mixed-PAS-03-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 0, 3, 'matched', 44),
-    ('neutral_mixed-PAS-10-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 1, 0, 'substitute', 45),
-    ('neutral_mixed-PAS-10-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 1, 0, 'substitute', 46),
-    ('neutral_mixed-PAS-10-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 3, 1, 0, 'substitute', 47),
-    ('neutral_mixed-PAS-12-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 2, 1, 2, 'matched', 48),
-    ('neutral_mixed-PAS-12-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 3, 1, 2, 'substitute', 49),
-    ('neutral_mixed-PAS-12-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 3, 1, 2, 'substitute', 50),
-    ('neutral_mixed-PAS-13-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 3, 1, 3, 'matched', 51),
-    ('neutral_mixed-PAS-13-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 3, 1, 3, 'matched', 52),
-    ('neutral_mixed-PAS-13-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 3, 1, 3, 'matched', 53),
-    ('neutral_mixed-PAS-20-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 2, 0, 'substitute', 54),
-    ('neutral_mixed-PAS-20-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 2, 0, 'substitute', 55),
-    ('neutral_mixed-PAS-20-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 2, 0, 'substitute', 56),
-    ('neutral_mixed-PAS-21-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 3, 2, 1, 'substitute', 57),
-    ('neutral_mixed-PAS-21-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 2, 1, 'substitute', 58),
-    ('neutral_mixed-PAS-21-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 2, 1, 'substitute', 59),
-    ('neutral_mixed-PAS-23-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 2, 3, 'matched', 60),
-    ('neutral_mixed-PAS-23-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 2, 3, 'matched', 61),
-    ('neutral_mixed-PAS-23-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 2, 3, 'matched', 62),
-    ('neutral_mixed-PAS-30-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 3, 0, 'substitute', 63),
-    ('neutral_mixed-PAS-30-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 3, 0, 'substitute', 64),
-    ('neutral_mixed-PAS-30-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 3, 3, 0, 'substitute', 65),
-    ('neutral_mixed-PAS-31-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 3, 1, 'substitute', 66),
-    ('neutral_mixed-PAS-31-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 3, 1, 'substitute', 67),
-    ('neutral_mixed-PAS-31-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 3, 1, 'substitute', 68),
-    ('neutral_mixed-PAS-32-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 3, 2, 3, 2, 'matched', 69),
-    ('neutral_mixed-PAS-32-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 3, 2, 3, 2, 'matched', 70),
-    ('neutral_mixed-PAS-32-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 3, 3, 2, 'substitute', 71),
-    ('untrained-OEQ-01-0', 'untrained', 'OEQ', 'ours', 'untrained', 0, 1, 0, 1, 'matched', 72),
-    ('untrained-OEQ-01-1', 'untrained', 'OEQ', 'ours', 'untrained', 0, 1, 0, 1, 'matched', 73),
-    ('untrained-OEQ-01-2', 'untrained', 'OEQ', 'ours', 'untrained', 0, 1, 0, 1, 'matched', 74),
-    ('untrained-OEQ-02-0', 'untrained', 'OEQ', 'ours', 'untrained', 0, 2, 0, 2, 'matched', 75),
-    ('untrained-OEQ-02-1', 'untrained', 'OEQ', 'ours', 'untrained', 0, 2, 0, 2, 'matched', 76),
-    ('untrained-OEQ-02-2', 'untrained', 'OEQ', 'ours', 'untrained', 0, 2, 0, 2, 'matched', 77),
-    ('untrained-OEQ-03-0', 'untrained', 'OEQ', 'ours', 'untrained', 0, 3, 0, 3, 'matched', 78),
-    ('untrained-OEQ-03-1', 'untrained', 'OEQ', 'ours', 'untrained', 0, 3, 0, 3, 'matched', 79),
-    ('untrained-OEQ-03-2', 'untrained', 'OEQ', 'ours', 'untrained', 0, 3, 0, 3, 'matched', 80),
-    ('untrained-OEQ-10-0', 'untrained', 'OEQ', 'ours', 'untrained', 1, 0, 1, 0, 'matched', 81),
-    ('untrained-OEQ-10-1', 'untrained', 'OEQ', 'ours', 'untrained', 0, 3, 1, 0, 'substitute', 82),
-    ('untrained-OEQ-10-2', 'untrained', 'OEQ', 'ours', 'untrained', 1, 2, 1, 0, 'substitute', 83),
-    ('untrained-OEQ-12-0', 'untrained', 'OEQ', 'ours', 'untrained', 1, 2, 1, 2, 'matched', 84),
-    ('untrained-OEQ-12-1', 'untrained', 'OEQ', 'ours', 'untrained', 1, 2, 1, 2, 'matched', 85),
-    ('untrained-OEQ-12-2', 'untrained', 'OEQ', 'ours', 'untrained', 1, 2, 1, 2, 'matched', 86),
-    ('untrained-OEQ-13-0', 'untrained', 'OEQ', 'ours', 'untrained', 1, 3, 1, 3, 'matched', 87),
-    ('untrained-OEQ-13-1', 'untrained', 'OEQ', 'ours', 'untrained', 1, 3, 1, 3, 'matched', 88),
-    ('untrained-OEQ-13-2', 'untrained', 'OEQ', 'ours', 'untrained', 0, 3, 1, 3, 'substitute', 89),
-    ('untrained-OEQ-20-0', 'untrained', 'OEQ', 'ours', 'untrained', 2, 0, 2, 0, 'matched', 90),
-    ('untrained-OEQ-20-1', 'untrained', 'OEQ', 'ours', 'untrained', 1, 2, 2, 0, 'substitute', 91),
-    ('untrained-OEQ-20-2', 'untrained', 'OEQ', 'ours', 'untrained', 2, 3, 2, 0, 'substitute', 92),
-    ('untrained-OEQ-21-0', 'untrained', 'OEQ', 'ours', 'untrained', 2, 1, 2, 1, 'matched', 93),
-    ('untrained-OEQ-21-1', 'untrained', 'OEQ', 'ours', 'untrained', 2, 1, 2, 1, 'matched', 94),
-    ('untrained-OEQ-21-2', 'untrained', 'OEQ', 'ours', 'untrained', 2, 1, 2, 1, 'matched', 95),
-    ('untrained-OEQ-23-0', 'untrained', 'OEQ', 'ours', 'untrained', 2, 3, 2, 3, 'matched', 96),
-    ('untrained-OEQ-23-1', 'untrained', 'OEQ', 'ours', 'untrained', 2, 3, 2, 3, 'matched', 97),
-    ('untrained-OEQ-23-2', 'untrained', 'OEQ', 'ours', 'untrained', 2, 3, 2, 3, 'matched', 98),
-    ('untrained-OEQ-30-0', 'untrained', 'OEQ', 'ours', 'untrained', 3, 0, 3, 0, 'matched', 99),
-    ('untrained-OEQ-30-1', 'untrained', 'OEQ', 'ours', 'untrained', 2, 1, 3, 0, 'substitute', 100),
-    ('untrained-OEQ-30-2', 'untrained', 'OEQ', 'ours', 'untrained', 0, 1, 3, 0, 'substitute', 101),
-    ('untrained-OEQ-31-0', 'untrained', 'OEQ', 'ours', 'untrained', 3, 2, 3, 1, 'substitute', 102),
-    ('untrained-OEQ-31-1', 'untrained', 'OEQ', 'ours', 'untrained', 2, 3, 3, 1, 'substitute', 103),
-    ('untrained-OEQ-31-2', 'untrained', 'OEQ', 'ours', 'untrained', 0, 2, 3, 1, 'substitute', 104),
-    ('untrained-OEQ-32-0', 'untrained', 'OEQ', 'ours', 'untrained', 3, 2, 3, 2, 'matched', 105),
-    ('untrained-OEQ-32-1', 'untrained', 'OEQ', 'ours', 'untrained', 3, 2, 3, 2, 'matched', 106),
-    ('untrained-OEQ-32-2', 'untrained', 'OEQ', 'ours', 'untrained', 3, 2, 3, 2, 'matched', 107),
-    ('untrained-PAS-01-0', 'untrained', 'PAS', 'ours', 'untrained', 0, 1, 0, 1, 'matched', 108),
-    ('untrained-PAS-01-1', 'untrained', 'PAS', 'ours', 'untrained', 0, 1, 0, 1, 'matched', 109),
-    ('untrained-PAS-01-2', 'untrained', 'PAS', 'ours', 'untrained', 0, 1, 0, 1, 'matched', 110),
-    ('untrained-PAS-02-0', 'untrained', 'PAS', 'ours', 'untrained', 0, 2, 0, 2, 'matched', 111),
-    ('untrained-PAS-02-1', 'untrained', 'PAS', 'ours', 'untrained', 0, 2, 0, 2, 'matched', 112),
-    ('untrained-PAS-02-2', 'untrained', 'PAS', 'ours', 'untrained', 0, 2, 0, 2, 'matched', 113),
-    ('untrained-PAS-03-0', 'untrained', 'PAS', 'ours', 'untrained', 0, 3, 0, 3, 'matched', 114),
-    ('untrained-PAS-03-1', 'untrained', 'PAS', 'ours', 'untrained', 0, 3, 0, 3, 'matched', 115),
-    ('untrained-PAS-03-2', 'untrained', 'PAS', 'ours', 'untrained', 0, 3, 0, 3, 'matched', 116),
-    ('untrained-PAS-10-0', 'untrained', 'PAS', 'ours', 'untrained', 1, 0, 1, 0, 'matched', 117),
-    ('untrained-PAS-10-1', 'untrained', 'PAS', 'ours', 'untrained', 1, 0, 1, 0, 'matched', 118),
-    ('untrained-PAS-10-2', 'untrained', 'PAS', 'ours', 'untrained', 0, 3, 1, 0, 'substitute', 119),
-    ('untrained-PAS-12-0', 'untrained', 'PAS', 'ours', 'untrained', 1, 2, 1, 2, 'matched', 120),
-    ('untrained-PAS-12-1', 'untrained', 'PAS', 'ours', 'untrained', 1, 2, 1, 2, 'matched', 121),
-    ('untrained-PAS-12-2', 'untrained', 'PAS', 'ours', 'untrained', 1, 2, 1, 2, 'matched', 122),
-    ('untrained-PAS-13-0', 'untrained', 'PAS', 'ours', 'untrained', 1, 3, 1, 3, 'matched', 123),
-    ('untrained-PAS-13-1', 'untrained', 'PAS', 'ours', 'untrained', 1, 3, 1, 3, 'matched', 124),
-    ('untrained-PAS-13-2', 'untrained', 'PAS', 'ours', 'untrained', 1, 3, 1, 3, 'matched', 125),
-    ('untrained-PAS-20-0', 'untrained', 'PAS', 'ours', 'untrained', 2, 0, 2, 0, 'matched', 126),
-    ('untrained-PAS-20-1', 'untrained', 'PAS', 'ours', 'untrained', 2, 0, 2, 0, 'matched', 127),
-    ('untrained-PAS-20-2', 'untrained', 'PAS', 'ours', 'untrained', 1, 2, 2, 0, 'substitute', 128),
-    ('untrained-PAS-21-0', 'untrained', 'PAS', 'ours', 'untrained', 2, 1, 2, 1, 'matched', 129),
-    ('untrained-PAS-21-1', 'untrained', 'PAS', 'ours', 'untrained', 2, 1, 2, 1, 'matched', 130),
-    ('untrained-PAS-21-2', 'untrained', 'PAS', 'ours', 'untrained', 2, 1, 2, 1, 'matched', 131),
-    ('untrained-PAS-23-0', 'untrained', 'PAS', 'ours', 'untrained', 2, 3, 2, 3, 'matched', 132),
-    ('untrained-PAS-23-1', 'untrained', 'PAS', 'ours', 'untrained', 2, 3, 2, 3, 'matched', 133),
-    ('untrained-PAS-23-2', 'untrained', 'PAS', 'ours', 'untrained', 2, 3, 2, 3, 'matched', 134),
-    ('untrained-PAS-30-0', 'untrained', 'PAS', 'ours', 'untrained', 2, 3, 3, 0, 'substitute', 135),
-    ('untrained-PAS-30-1', 'untrained', 'PAS', 'ours', 'untrained', 0, 1, 3, 0, 'substitute', 136),
-    ('untrained-PAS-30-2', 'untrained', 'PAS', 'ours', 'untrained', 0, 1, 3, 0, 'substitute', 137),
-    ('untrained-PAS-31-0', 'untrained', 'PAS', 'ours', 'untrained', 3, 1, 3, 1, 'matched', 138),
-    ('untrained-PAS-31-1', 'untrained', 'PAS', 'ours', 'untrained', 0, 2, 3, 1, 'substitute', 139),
-    ('untrained-PAS-31-2', 'untrained', 'PAS', 'ours', 'untrained', 2, 1, 3, 1, 'substitute', 140),
-    ('untrained-PAS-32-0', 'untrained', 'PAS', 'ours', 'untrained', 3, 2, 3, 2, 'matched', 141),
-    ('untrained-PAS-32-1', 'untrained', 'PAS', 'ours', 'untrained', 3, 2, 3, 2, 'matched', 142),
-    ('untrained-PAS-32-2', 'untrained', 'PAS', 'ours', 'untrained', 3, 2, 3, 2, 'matched', 143);
+    ('neutral_mixed-PAS-01-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 2, 0, 1, 'substitute', 0),
+    ('neutral_mixed-PAS-01-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 0, 1, 'substitute', 1),
+    ('neutral_mixed-PAS-01-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 0, 1, 'substitute', 2),
+    ('neutral_mixed-PAS-02-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 2, 0, 2, 'matched', 3),
+    ('neutral_mixed-PAS-02-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 2, 0, 2, 'matched', 4),
+    ('neutral_mixed-PAS-02-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 2, 0, 2, 'matched', 5),
+    ('neutral_mixed-PAS-03-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 0, 3, 'matched', 6),
+    ('neutral_mixed-PAS-03-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 0, 3, 'matched', 7),
+    ('neutral_mixed-PAS-03-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 0, 3, 'matched', 8),
+    ('neutral_mixed-PAS-10-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 1, 0, 'substitute', 9),
+    ('neutral_mixed-PAS-10-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 2, 1, 0, 'substitute', 10),
+    ('neutral_mixed-PAS-10-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 2, 1, 0, 'substitute', 11),
+    ('neutral_mixed-PAS-12-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 2, 1, 2, 'matched', 12),
+    ('neutral_mixed-PAS-12-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 3, 1, 2, 'substitute', 13),
+    ('neutral_mixed-PAS-12-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 2, 1, 2, 'substitute', 14),
+    ('neutral_mixed-PAS-13-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 3, 1, 3, 'matched', 15),
+    ('neutral_mixed-PAS-13-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 3, 1, 3, 'matched', 16),
+    ('neutral_mixed-PAS-13-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 3, 1, 3, 'matched', 17),
+    ('neutral_mixed-PAS-20-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 2, 2, 0, 'substitute', 18),
+    ('neutral_mixed-PAS-20-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 2, 2, 0, 'substitute', 19),
+    ('neutral_mixed-PAS-20-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 2, 2, 0, 'substitute', 20),
+    ('neutral_mixed-PAS-21-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 2, 1, 'substitute', 21),
+    ('neutral_mixed-PAS-21-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 2, 1, 'substitute', 22),
+    ('neutral_mixed-PAS-21-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 2, 1, 'substitute', 23),
+    ('neutral_mixed-PAS-23-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 2, 3, 'matched', 24),
+    ('neutral_mixed-PAS-23-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 2, 3, 'matched', 25),
+    ('neutral_mixed-PAS-23-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 2, 3, 'matched', 26),
+    ('neutral_mixed-PAS-30-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 2, 3, 0, 'substitute', 27),
+    ('neutral_mixed-PAS-30-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 3, 0, 'substitute', 28),
+    ('neutral_mixed-PAS-30-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 2, 3, 3, 0, 'substitute', 29),
+    ('neutral_mixed-PAS-31-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 3, 3, 1, 'substitute', 30),
+    ('neutral_mixed-PAS-31-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 3, 1, 'substitute', 31),
+    ('neutral_mixed-PAS-31-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 0, 3, 3, 1, 'substitute', 32),
+    ('neutral_mixed-PAS-32-0', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 3, 2, 3, 2, 'matched', 33),
+    ('neutral_mixed-PAS-32-1', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 3, 2, 3, 2, 'matched', 34),
+    ('neutral_mixed-PAS-32-2', 'neutral_mixed', 'PAS', 'ours', 'neutral_mixed', 1, 3, 3, 2, 'substitute', 35),
+    ('untrained-PAS-01-0', 'untrained', 'PAS', 'ours', 'untrained', 0, 1, 0, 1, 'matched', 36),
+    ('untrained-PAS-01-1', 'untrained', 'PAS', 'ours', 'untrained', 0, 1, 0, 1, 'matched', 37),
+    ('untrained-PAS-01-2', 'untrained', 'PAS', 'ours', 'untrained', 0, 1, 0, 1, 'matched', 38),
+    ('untrained-PAS-02-0', 'untrained', 'PAS', 'ours', 'untrained', 0, 2, 0, 2, 'matched', 39),
+    ('untrained-PAS-02-1', 'untrained', 'PAS', 'ours', 'untrained', 0, 2, 0, 2, 'matched', 40),
+    ('untrained-PAS-02-2', 'untrained', 'PAS', 'ours', 'untrained', 0, 2, 0, 2, 'matched', 41),
+    ('untrained-PAS-03-0', 'untrained', 'PAS', 'ours', 'untrained', 0, 3, 0, 3, 'matched', 42),
+    ('untrained-PAS-03-1', 'untrained', 'PAS', 'ours', 'untrained', 0, 3, 0, 3, 'matched', 43),
+    ('untrained-PAS-03-2', 'untrained', 'PAS', 'ours', 'untrained', 0, 3, 0, 3, 'matched', 44),
+    ('untrained-PAS-10-0', 'untrained', 'PAS', 'ours', 'untrained', 1, 0, 1, 0, 'matched', 45),
+    ('untrained-PAS-10-1', 'untrained', 'PAS', 'ours', 'untrained', 1, 0, 1, 0, 'matched', 46),
+    ('untrained-PAS-10-2', 'untrained', 'PAS', 'ours', 'untrained', 2, 1, 1, 0, 'substitute', 47),
+    ('untrained-PAS-12-0', 'untrained', 'PAS', 'ours', 'untrained', 1, 2, 1, 2, 'matched', 48),
+    ('untrained-PAS-12-1', 'untrained', 'PAS', 'ours', 'untrained', 1, 2, 1, 2, 'matched', 49),
+    ('untrained-PAS-12-2', 'untrained', 'PAS', 'ours', 'untrained', 1, 2, 1, 2, 'matched', 50),
+    ('untrained-PAS-13-0', 'untrained', 'PAS', 'ours', 'untrained', 1, 3, 1, 3, 'matched', 51),
+    ('untrained-PAS-13-1', 'untrained', 'PAS', 'ours', 'untrained', 1, 3, 1, 3, 'matched', 52),
+    ('untrained-PAS-13-2', 'untrained', 'PAS', 'ours', 'untrained', 1, 3, 1, 3, 'matched', 53),
+    ('untrained-PAS-20-0', 'untrained', 'PAS', 'ours', 'untrained', 2, 0, 2, 0, 'matched', 54),
+    ('untrained-PAS-20-1', 'untrained', 'PAS', 'ours', 'untrained', 2, 0, 2, 0, 'matched', 55),
+    ('untrained-PAS-20-2', 'untrained', 'PAS', 'ours', 'untrained', 0, 2, 2, 0, 'substitute', 56),
+    ('untrained-PAS-21-0', 'untrained', 'PAS', 'ours', 'untrained', 2, 1, 2, 1, 'matched', 57),
+    ('untrained-PAS-21-1', 'untrained', 'PAS', 'ours', 'untrained', 2, 1, 2, 1, 'matched', 58),
+    ('untrained-PAS-21-2', 'untrained', 'PAS', 'ours', 'untrained', 2, 1, 2, 1, 'matched', 59),
+    ('untrained-PAS-23-0', 'untrained', 'PAS', 'ours', 'untrained', 2, 3, 2, 3, 'matched', 60),
+    ('untrained-PAS-23-1', 'untrained', 'PAS', 'ours', 'untrained', 2, 3, 2, 3, 'matched', 61),
+    ('untrained-PAS-23-2', 'untrained', 'PAS', 'ours', 'untrained', 2, 3, 2, 3, 'matched', 62),
+    ('untrained-PAS-30-0', 'untrained', 'PAS', 'ours', 'untrained', 2, 3, 3, 0, 'substitute', 63),
+    ('untrained-PAS-30-1', 'untrained', 'PAS', 'ours', 'untrained', 1, 2, 3, 0, 'substitute', 64),
+    ('untrained-PAS-30-2', 'untrained', 'PAS', 'ours', 'untrained', 0, 1, 3, 0, 'substitute', 65),
+    ('untrained-PAS-31-0', 'untrained', 'PAS', 'ours', 'untrained', 3, 1, 3, 1, 'matched', 66),
+    ('untrained-PAS-31-1', 'untrained', 'PAS', 'ours', 'untrained', 0, 2, 3, 1, 'substitute', 67),
+    ('untrained-PAS-31-2', 'untrained', 'PAS', 'ours', 'untrained', 1, 2, 3, 1, 'substitute', 68),
+    ('untrained-PAS-32-0', 'untrained', 'PAS', 'ours', 'untrained', 3, 2, 3, 2, 'matched', 69),
+    ('untrained-PAS-32-1', 'untrained', 'PAS', 'ours', 'untrained', 3, 2, 3, 2, 'matched', 70),
+    ('untrained-PAS-32-2', 'untrained', 'PAS', 'ours', 'untrained', 3, 2, 3, 2, 'matched', 71);
+
+-- The Q2 columns, for a pref_judgments that predates them. Emitted as alters as
+-- well as in the create above so an existing project gains them; they sit AFTER
+-- the item truncate in the assembled file, where the table is already empty, so
+-- `set not null` cannot fail against rows that never had a Q2 answer.
+alter table public.pref_judgments add column if not exists realize_choice text;
+alter table public.pref_judgments add column if not exists realize_model text;
+alter table public.pref_judgments alter column realize_choice set not null;
+alter table public.pref_judgments
+    drop constraint if exists pref_judgments_realize_choice_check;
+alter table public.pref_judgments add constraint pref_judgments_realize_choice_check
+    check (realize_choice in ('left', 'right', 'same', 'cant_tell', 'not_wrong'));
+
 
 -- The digest of the item file this schema was generated from. pref_start_session
 -- refuses a session whose page is holding a DIFFERENT item file, because such a
 -- session would record judgments against text nobody can reconstruct.
 create or replace function public.pref_expected_sha256() returns text
-language sql immutable as $$ select 'd0c7565b52bc5cf252e4c1ffcc614115e6793f4295a3f86f10447c98c92d80fd'::text $$;
+language sql immutable as $$ select 'c8ec23e3e43f4b37f41572cd2472f3e0ab554ca4eaa0af954c9b7504635723ee'::text $$;
 
 create or replace function public.pref_session_for_token(p_token text)
 returns public.pref_sessions
@@ -337,8 +287,16 @@ $$;
 -- Record one judgment. The browser sends a SIDE; the arms are resolved here from
 -- this session's own `flipped`, which is why the page never has to be trusted
 -- with -- or told -- which arm it rendered where.
+-- The four-argument version, from before the second question. Dropped rather
+-- than left in place: `create or replace` with a new argument list makes an
+-- OVERLOAD, so without this a page still calling it would keep recording items
+-- with no answer to Q2 -- and the not-null column would make that a hard error
+-- mid-session rather than something caught here.
+drop function if exists public.pref_record(text, text, text, integer);
+
 create or replace function public.pref_record(
-    p_token text, p_item_id text, p_choice text, p_ms_elapsed integer)
+    p_token text, p_item_id text, p_choice text, p_realize_choice text,
+    p_ms_elapsed integer)
 returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
@@ -348,6 +306,7 @@ declare
     v_left text;
     v_right text;
     v_preferred text;
+    v_realize text;
     v_answered integer;
 begin
     v_session := public.pref_session_for_token(p_token);
@@ -368,19 +327,27 @@ begin
     else
         v_left := v_item.model_a; v_right := v_item.model_b;
     end if;
+    -- Both questions resolve through the SAME draw, so a row can never claim the
+    -- rater preferred one arm and thought a different arm was on the same side.
     v_preferred := case p_choice when 'left' then v_left
                                  when 'right' then v_right
                                  else null end;
+    v_realize := case p_realize_choice when 'left' then v_left
+                                       when 'right' then v_right
+                                       else null end;
 
-    insert into public.pref_judgments (session_id, item_id, choice, left_model,
-                                       right_model, preferred_model, ms_elapsed)
-    values (v_session.session_id, p_item_id, p_choice, v_left, v_right,
-            v_preferred, p_ms_elapsed)
+    insert into public.pref_judgments (session_id, item_id, choice,
+                                       realize_choice, left_model, right_model,
+                                       preferred_model, realize_model, ms_elapsed)
+    values (v_session.session_id, p_item_id, p_choice, p_realize_choice,
+            v_left, v_right, v_preferred, v_realize, p_ms_elapsed)
     on conflict (session_id, item_id) do update
         set choice = excluded.choice,
+            realize_choice = excluded.realize_choice,
             left_model = excluded.left_model,
             right_model = excluded.right_model,
             preferred_model = excluded.preferred_model,
+            realize_model = excluded.realize_model,
             ms_elapsed = excluded.ms_elapsed,
             created_at = now();
 
@@ -438,7 +405,7 @@ end;
 $$;
 
 grant execute on function public.pref_start_session(text, text, text) to anon, authenticated;
-grant execute on function public.pref_record(text, text, text, integer) to anon, authenticated;
+grant execute on function public.pref_record(text, text, text, text, integer) to anon, authenticated;
 grant execute on function public.pref_progress(text) to anon, authenticated;
 grant execute on function public.pref_complete(text) to anon, authenticated;
 
