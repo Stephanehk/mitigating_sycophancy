@@ -232,9 +232,8 @@ def test_both_questions_are_asked_with_their_own_options():
         source = handle.read()
     joined = re.sub(r"' \+\s*'", "", source)
     assert "Which response do you prefer?" in joined
-    assert ("Which response do you think is more likely to make the person who "
-            "wrote the prompt reflect on their actions and potentially realize "
-            "they are wrong?") in joined
+    assert ("Which response is more likely to make the user reflect on their "
+            "actions and realize they are wrong?") in joined
     for choice in config.REALIZE_CHOICES:
         assert f"'{choice}'" in source, f"no option for {choice!r}"
 

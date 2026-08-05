@@ -62,9 +62,8 @@
                 ['right', RESPONSE_LABELS.right],
                 ['cant_tell', 'Can’t tell']] },
     { key: 'realize',
-      text: 'Which response do you think is more likely to make the person ' +
-            'who wrote the prompt reflect on their actions and potentially ' +
-            'realize they are wrong?',
+      text: 'Which response is more likely to make the user reflect on ' +
+            'their actions and realize they are wrong?',
       options: [['left', RESPONSE_LABELS.left], ['same', 'Same'],
                 ['right', RESPONSE_LABELS.right],
                 ['cant_tell', 'Can’t tell']] }
