@@ -82,16 +82,19 @@ def browser():
         instance.close()
 
 
-def open_page(browser, base, width=1280, height=900, query=""):
+def open_page(browser, base, width=1280, height=900, query=None):
     """A fresh page at the ID screen, with console errors collected onto it."""
     page = browser.new_page(viewport={"width": width, "height": height})
     page.errors = []
     page.on("pageerror", lambda exc: page.errors.append(str(exc)))
     page.on("console",
             lambda msg: msg.type == "error" and page.errors.append(msg.text))
-    # Every rater arrives on a #set_N link; without one the page refuses to
-    # start, so the default here is a set rather than a bare URL.
-    if "#" not in query:
+    # Every rater arrives on a set, so the DEFAULT here is a #set_N link. Pass
+    # query="" for the bare root -- that is a different code path (it claims a
+    # set) and tests of it must be able to ask for it.
+    if query is None:
+        query = "#set_1"
+    elif query and "#" not in query:
         query = query + "#set_1"
     page.goto(base + "/" + query, wait_until="networkidle")
     return page
@@ -857,3 +860,100 @@ def test_there_is_no_same_button(server, browser):
     with open(os.path.join(config.HERE, "supabase_schema.sql"), encoding="utf-8") as h:
         assert "'same'" not in h.read(), "the schema still allows 'same'"
     page.close()
+
+
+# --- claiming a set from the root link -------------------------------------
+
+def test_the_root_link_hands_out_a_different_set_each_time(server, browser):
+    """The whole point: two raters who follow the SAME root link must not be
+    given the same nine pairs."""
+    base, stub = server
+    stub.CLAIMED_SETS.clear(); stub.COMPLETED_SETS.clear()
+    seen = []
+    for _ in range(3):
+        page = open_page(browser, base, query="")
+        page.wait_for_timeout(400)
+        seen.append(page.evaluate("() => window.location.hash"))
+        assert page.query_selector(".consent-title") is not None, "no consent screen"
+        page.close()
+    assert len(set(seen)) == 3, f"the root link repeated a set: {seen}"
+    assert all(re.fullmatch(r"#set_\d+", h) for h in seen), seen
+
+
+def test_an_explicit_set_link_is_never_claimed(server, browser):
+    """#set_N links are the ones handed out deliberately. They must keep working
+    however the pool looks, and must not consume a claim."""
+    base, stub = server
+    stub.CLAIMED_SETS.clear(); stub.COMPLETED_SETS.clear()
+    page = open_page(browser, base, query="#set_5")
+    page.wait_for_timeout(400)
+    assert page.evaluate("() => window.location.hash") == "#set_5"
+    assert page.query_selector(".consent-title") is not None
+    assert stub.CLAIMED_SETS == {}, "an explicit link consumed a claim"
+    page.close()
+
+
+def test_the_root_link_refuses_once_every_set_is_taken(server, browser):
+    """Better to tell someone the study is full than to hand them a set another
+    rater is already working through."""
+    base, stub = server
+    stub.CLAIMED_SETS.clear(); stub.COMPLETED_SETS.clear()
+    n_sets = len({i["set_index"] for i in stub.ITEMS.values()})
+    for _ in range(n_sets):
+        page = open_page(browser, base, query="")
+        page.wait_for_timeout(300)
+        page.close()
+    page = open_page(browser, base, query="")
+    page.wait_for_timeout(400)
+    assert "full" in page.inner_text("body"), page.inner_text("body")[:120]
+    assert page.query_selector(".consent-title") is None
+    page.close()
+
+
+def test_an_expired_claim_returns_to_the_pool(server, browser, monkeypatch):
+    """A claim is a LEASE. With only eight sets, a tab opened and closed would
+    otherwise take one out of circulation permanently."""
+    base, stub = server
+    stub.CLAIMED_SETS.clear(); stub.COMPLETED_SETS.clear()
+    n_sets = len({i["set_index"] for i in stub.ITEMS.values()})
+    for _ in range(n_sets):
+        page = open_page(browser, base, query="")
+        page.wait_for_timeout(250)
+        page.close()
+    assert len(stub.CLAIMED_SETS) == n_sets
+
+    # Age every claim past the lease.
+    monkeypatch.setattr(config, "SET_CLAIM_LEASE_MINUTES", 0)
+    page = open_page(browser, base, query="")
+    page.wait_for_timeout(400)
+    assert re.fullmatch(r"#set_\d+", page.evaluate("() => window.location.hash")), \
+        "an expired claim was not reissued"
+    page.close()
+
+
+def test_a_completed_set_is_never_reissued(server, browser, monkeypatch):
+    """Completion is permanent, unlike a claim -- otherwise an expired lease on a
+    finished set would send a second rater through the same nine pairs."""
+    base, stub = server
+    stub.CLAIMED_SETS.clear(); stub.COMPLETED_SETS.clear()
+    stub.COMPLETED_SETS.add(4)
+    monkeypatch.setattr(config, "SET_CLAIM_LEASE_MINUTES", 0)
+    for _ in range(12):
+        page = open_page(browser, base, query="")
+        page.wait_for_timeout(200)
+        assert page.evaluate("() => window.location.hash") != "#set_4", \
+            "a completed set was handed out again"
+        page.close()
+
+
+def test_the_claim_is_atomic_in_sql(schema_sql_pref):
+    """Two raters landing together must not get the same set. The lock is what
+    makes that true; a plain `select ... limit 1` then `update` would race."""
+    assert "for update skip locked" in schema_sql_pref
+    assert "create or replace function public.pref_claim_set()" in schema_sql_pref
+    assert "grant execute on function public.pref_claim_set() to anon" in schema_sql_pref
+    # Completion retires the set, and does so INSIDE pref_complete's body --
+    # split on the definition, not on the last mention (which is the grant).
+    body = schema_sql_pref.split(
+        "create or replace function public.pref_complete(p_token text)")[1]
+    assert "update public.pref_sets" in body.split("$$;")[0]

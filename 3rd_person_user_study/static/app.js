@@ -695,27 +695,56 @@
       return Promise.reject('config.json is missing a pacing value or the code');
     }
 
-    /* No set means the link is wrong, and there is nothing sensible to show
-     * past this point -- so say so here rather than let someone consent and
-     * enter an ID before failing. */
-    S.setIndex = setFromUrl();
-    if (S.setIndex === null) {
-      fail('This link is incomplete. Please use the exact link from the study '
-           + 'listing, which ends in #set_1 through #set_8.');
-      return;
-    }
     S.digest = bundle.items_sha256;
     S.consentText = loaded[2];
     bundle.items.forEach(function (item) { S.itemsById[item.item_id] = item; });
 
+    /* Everything the screens read is in place before the set is resolved:
+     * begin() renders the consent screen immediately, and it needs the text. */
+
+    /* THE SET. A #set_N link names it; the bare root asks the database for one.
+     *
+     * Claiming happens HERE, before consent, because the rater has to end up on
+     * a real set link before anything else can proceed -- and because the claim
+     * is what stops two people who follow the root link at the same moment
+     * being handed the same nine pairs. It is a lease, not a permanent mark
+     * (see pref_claim_set), so a tab opened and closed does not cost a set.
+     *
+     * A #set_N link is NOT claimed and is never refused: those are the links to
+     * hand out deliberately, and they must keep working whatever the pool says.
+     */
+    S.setIndex = setFromUrl();
+    if (S.setIndex !== null) { return begin(); }
+
+    return rpc('pref_claim_set', {}).then(function (claim) {
+      if (!claim || claim.set_index === null) {
+        fail('This study is full — every set of items has already been rated. '
+             + 'Please return your submission on Prolific; you have not been '
+             + 'charged for your time.');
+        return;
+      }
+      S.setIndex = claim.set_index;
+      /* Put it in the address bar. The rater is now ON their set link, so a
+       * reload resumes the same set rather than claiming a second one. */
+      window.location.hash = 'set_' + S.setIndex;
+      return begin();
+    }, fail);
+
+    return undefined;
+  }).catch(fail);
+
+  /* Everything after the set is known. Split out because the set arrives two
+   * ways -- straight off the URL, or from a claim -- and both have to land in
+   * the same place. */
+  function begin() {
     /* A tab that already holds a session goes straight back to rating: consent
      * was given and the ID recorded when that session was created, and the
      * instructions have already been read, so replaying any of it would only
      * stand between a returning rater and the item they were on. A first visit
      * starts at consent. */
     var stored = storedSession();
-    if (!stored) { consentScreen(); return; }
+    if (!stored) { consentScreen(); return undefined; }
     adopt(stored);
     return resume();
-  }).catch(fail);
+  }
 }());

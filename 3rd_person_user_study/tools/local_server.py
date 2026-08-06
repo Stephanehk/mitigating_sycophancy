@@ -34,6 +34,7 @@ import json
 import os
 import random
 import sys
+import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _STUDY = os.path.dirname(_HERE)
@@ -48,6 +49,10 @@ import debug_arms
 SESSIONS = {}
 #: (session_id, item_id) -> the recorded row, as pref_judgments would hold it
 JUDGMENTS = {}
+
+#: set_index -> unix time it was claimed, and the sets already finished.
+CLAIMED_SETS = {}
+COMPLETED_SETS = set()
 
 #: What the stub tells the page the per-item minimum is. See the config.json
 #: route below for why it is not the production 60.
@@ -165,12 +170,33 @@ def complete(args):
     if session is None:
         return 401, {"message": "unknown session", "code": "P0002"}
     session["completed"] = True
+    if session.get("set_index") is not None:
+        COMPLETED_SETS.add(session["set_index"])
     answered = sum(1 for key in JUDGMENTS if key[0] == session["session_id"])
     print(f"[done] {session['session_id']}: {answered} judgments")
     return 200, {"answered": answered}
 
 
+def claim_set(args):
+    """pref_claim_set. Mirrors the SQL: a set is available when it has not been
+    completed and is either unclaimed or its lease has expired."""
+    now = time.time()
+    lease = config.SET_CLAIM_LEASE_MINUTES * 60
+    all_sets = sorted({item["set_index"] for item in ITEMS.values()})
+    free = [i for i in all_sets
+            if i not in COMPLETED_SETS
+            and (i not in CLAIMED_SETS or now - CLAIMED_SETS[i] > lease)]
+    if not free:
+        return 200, {"set_index": None}
+    # `claimed_at nulls first`, as the SQL orders it.
+    free.sort(key=lambda i: (i in CLAIMED_SETS, CLAIMED_SETS.get(i, 0), i))
+    CLAIMED_SETS[free[0]] = now
+    print(f"[claim] set {free[0]} ({len(free) - 1} others free)")
+    return 200, {"set_index": free[0]}
+
+
 RPCS = {"pref_start_session": start_session, "pref_record": record,
+        "pref_claim_set": claim_set,
         "pref_progress": progress, "pref_complete": complete}
 
 

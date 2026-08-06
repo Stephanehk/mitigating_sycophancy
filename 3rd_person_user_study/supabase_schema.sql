@@ -76,6 +76,22 @@ create table if not exists public.pref_items (
 -- at this point have no set yet.
 alter table public.pref_items add column if not exists set_index integer;
 
+-- WHICH SETS ARE STILL AVAILABLE. One row per set, seeded below alongside the
+-- items.
+--
+-- WHY A TABLE AND NOT "does a session exist for this set". The root link claims
+-- a set and redirects BEFORE the rater consents or gives an ID, so there is no
+-- session yet at the moment of claiming -- two people landing together would
+-- both see the set as free. The claim has to be its own committed row.
+--
+-- `claimed_at` is a LEASE, not a permanent mark: see pref_claim_set.
+-- `completed_at` is permanent -- a set that has been rated is never reissued.
+create table if not exists public.pref_sets (
+    set_index    integer primary key,
+    claimed_at   timestamptz,
+    completed_at timestamptz
+);
+
 -- The per-session draw: presentation order, and which arm went on which side.
 -- WHY THIS TABLE EXISTS AT ALL rather than the browser shuffling locally: it is
 -- the record of the randomization. A client-side shuffle would mean the side a
@@ -129,6 +145,7 @@ create index if not exists idx_pref_judgments_session on public.pref_judgments (
 
 alter table public.pref_sessions    enable row level security;
 alter table public.pref_items       enable row level security;
+alter table public.pref_sets        enable row level security;
 alter table public.pref_assignments enable row level security;
 alter table public.pref_judgments   enable row level security;
 
@@ -212,6 +229,19 @@ insert into public.pref_items (item_id, comparison, env, model_a, model_b, cat_a
     ('untrained-PAS-32-0', 'untrained', 'PAS', 'ours', 'untrained', 3, 2, 3, 2, 'matched', 69, 2),
     ('untrained-PAS-32-1', 'untrained', 'PAS', 'ours', 'untrained', 3, 2, 3, 2, 'matched', 70, 8),
     ('untrained-PAS-32-2', 'untrained', 'PAS', 'ours', 'untrained', 3, 2, 3, 2, 'matched', 71, 8);
+
+-- One claim row per set. Preserved across re-applies: unlike the items, which
+-- are a frozen artifact, a set's completion is collected data.
+insert into public.pref_sets (set_index) values
+    (1),
+    (2),
+    (3),
+    (4),
+    (5),
+    (6),
+    (7),
+    (8)
+    on conflict (set_index) do nothing;
 
 -- The Q2 columns, for a pref_judgments that predates them. Emitted as alters as
 -- well as in the create above so an existing project gains them; they sit AFTER
@@ -407,6 +437,43 @@ begin
 end;
 $$;
 
+-- Hand out an unclaimed set, atomically. Returns {set_index} or {set_index:null}
+-- when there is nothing left.
+--
+-- FOR UPDATE SKIP LOCKED is the whole point: two raters landing on the root link
+-- at the same instant must not be handed the same set. The row is locked for the
+-- duration of the update and a concurrent caller skips over it to the next
+-- candidate rather than blocking or racing.
+--
+-- A LEASE, NOT A PERMANENT MARK. A set is available when it has never been
+-- completed AND either was never claimed or was claimed longer than
+-- 45 minutes ago. Someone who opens the link and closes the tab would
+-- otherwise take a set with them, and there are only 8 of them.
+--
+-- Ordered `claimed_at nulls first`: never-claimed sets go out before ones being
+-- reissued, so an abandoned set is only handed out again when it is the best
+-- remaining option.
+create or replace function public.pref_claim_set()
+returns jsonb
+language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_set integer;
+begin
+    update public.pref_sets
+       set claimed_at = now()
+     where set_index = (
+         select set_index from public.pref_sets
+          where completed_at is null
+            and (claimed_at is null
+                 or claimed_at < now() - make_interval(mins => 45))
+          order by claimed_at nulls first, set_index
+          limit 1
+          for update skip locked)
+    returning set_index into v_set;
+
+    return jsonb_build_object('set_index', v_set);
+end;
+$$;
+
 -- Where this session should resume. `next_position` is the FIRST unanswered
 -- item's position, not the answered count: those agree only while items are
 -- answered in order, and a resume that assumed that would silently re-ask an
@@ -438,6 +505,9 @@ $$;
 -- Stamp the session finished. Idempotent, and it does NOT require every item to
 -- be answered: a rater who stops early has still contributed every judgment
 -- they made, because each one was written when it was made.
+-- Finalise the session AND retire its set, so a completed set is never handed
+-- out again. Retiring here rather than at claim time is what makes the claim a
+-- lease: only a session that actually finished takes its set out of the pool.
 create or replace function public.pref_complete(p_token text)
 returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
@@ -448,6 +518,15 @@ begin
     v_session := public.pref_session_for_token(p_token);
     update public.pref_sessions set completed_at = coalesce(completed_at, now())
      where session_id = v_session.session_id;
+
+    -- Retire the set. `coalesce` so a second Submit does not move the timestamp,
+    -- and guarded on set_index because sessions predating the sets have none.
+    if v_session.set_index is not null then
+        update public.pref_sets
+           set completed_at = coalesce(completed_at, now())
+         where set_index = v_session.set_index;
+    end if;
+
     select count(*) into v_answered from public.pref_judgments
      where session_id = v_session.session_id;
     return jsonb_build_object('answered', v_answered);
@@ -456,6 +535,7 @@ $$;
 
 grant execute on function public.pref_start_session(text, text, text, integer) to anon, authenticated;
 grant execute on function public.pref_record(text, text, text, text, text, integer) to anon, authenticated;
+grant execute on function public.pref_claim_set() to anon, authenticated;
 grant execute on function public.pref_progress(text) to anon, authenticated;
 grant execute on function public.pref_complete(text) to anon, authenticated;
 
