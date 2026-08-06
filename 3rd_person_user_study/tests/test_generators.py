@@ -172,7 +172,7 @@ def test_every_referenced_table_is_created(schema_sql):
     referenced = set(re.findall(r"references public\.(\w+)", schema_sql))
     assert referenced <= created, sorted(referenced - created)
     assert created == {"pref_sessions", "pref_items", "pref_assignments",
-                       "pref_judgments"}
+                       "pref_judgments", "pref_sets"}
 
 
 def test_row_level_security_is_on_for_every_table(schema_sql):

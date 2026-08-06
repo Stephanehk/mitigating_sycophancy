@@ -168,6 +168,21 @@ SET_SIZE = 9
 #: comparison. Randomised WITHIN each comparison instead, under SAMPLE_SEED, so
 #: each set carries 4 or 5 of each.
 
+#: How long a claimed-but-unfinished set stays off the table.
+#:
+#: THE PROBLEM THIS SOLVES. The root link hands out a set and marks it taken, so
+#: two raters cannot get the same nine pairs. But someone who opens the link and
+#: closes the tab has taken a set they will never rate, and with only 8 of them
+#: a handful of curious clicks would exhaust the study. A claim is therefore a
+#: LEASE: if the session behind it has not completed within this window, the set
+#: goes back in the pool.
+#:
+#: 45 minutes against a study whose floor is SET_SIZE * MIN_ITEM_SECONDS (~7
+#: minutes) -- long enough that a rater reading carefully is never bumped, short
+#: enough that an abandoned tab frees up within the hour. A COMPLETED set is
+#: never reissued regardless.
+SET_CLAIM_LEASE_MINUTES = 45
+
 #: The code a rater pastes into Prolific, imported from study/ rather than
 #: copied. The two studies pay from the same Prolific workspace, so a second
 #: literal here is a code that can silently fall out of step with the one that

@@ -58,3 +58,15 @@ def schema_sql():
     script = os.path.join(_STUDY_DIR, "tools", "generate_supabase_sql.py")
     return subprocess.run([sys.executable, script], check=True,
                           capture_output=True, text=True).stdout
+
+
+@pytest.fixture(scope="session")
+def schema_sql_pref():
+    """The committed schema, read off disk. Distinct from `schema_sql`, which
+    regenerates in-process to test the generator: here the question is what the
+    file you paste into Supabase actually says."""
+    path = os.path.join(_STUDY_DIR, "supabase_schema.sql")
+    if not os.path.exists(path):
+        pytest.skip("supabase_schema.sql not generated")
+    with open(path, encoding="utf-8") as handle:
+        return handle.read()
