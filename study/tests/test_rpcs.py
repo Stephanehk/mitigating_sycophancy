@@ -202,8 +202,8 @@ def test_the_draw_reaches_every_randomized_arm_and_no_other(
         anon, service, worker_token, clean):
     """Both halves of the narrowing (two arms since 2026-08-05), in one loop.
 
-    REACHABLE: 60 draws over 2 arms — missing one has probability
-    2*(1/2)^60 ≈ 2e-18, so a failure is a genuinely unreachable arm, not bad
+    REACHABLE: 60 draws over 3 arms — missing one has probability
+    3*(2/3)^60 ≈ 1e-10, so a failure is a genuinely unreachable arm, not bad
     luck. NOT DRAWN: a retired arm appearing even once means the deployed
     session_arm is still sampling a wider list, which would put participants
     into conditions the study no longer runs.

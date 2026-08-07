@@ -1,18 +1,22 @@
-"""Tests for the six arms' prompt construction.
+"""Tests for the seven arms' prompt construction.
 
 The arm definitions are the study's independent variable, so the properties
 that make the manipulation valid are asserted here rather than trusted:
-  - assignment draws from two arms only (RANDOMIZED_ARMS), both of them
-    no-review, so no participant edits the model's input; the four retired ones
-    stay defined so old rows stay legal
+  - assignment draws from three arms (RANDOMIZED_ARMS) that differ ONLY in how
+    the response is produced: they share a flow, a user turn and a Stage-1
+    system prompt. The four retired ones stay defined so old rows stay legal
+  - every drawn arm SHOWS the review page, and they agree about it — a split
+    would make the flow a second, visible factor
   - every arm receives the SAME shared system prompt ([ETHICS] only)
   - `syco` differs from that shared prompt by exactly one appended section
   - the removed sections ([ROLE], [CONTEXT], [GUIDING PRINCIPLES],
     [TONE AND FORMATTING - IMPORTANT], [TOPIC]) are gone from every arm
   - `ours` and `untrained` differ ONLY in which model is addressed
+  - `ours_sandwich`'s Stage 1 is byte-identical to `ours`, so the pair isolates
+    the framing pass with the substance held fixed
   - the two no-review arms differ from their twins ONLY in the flow — their
     generation plans are byte-identical, so the pair isolates the review step
-  - the user turn is the scenario vignette plus the participant's perspective
+  - the user turn is the participant's own writing, and no scenario text
   - no participant text ever lands in a system prompt
 """
 
@@ -43,9 +47,10 @@ REMOVED_SECTIONS = ("[ROLE]", "[CONTEXT]", "[GUIDING PRINCIPLES]",
 # itself, since nothing else in Python would notice it being undone: the draw
 # lives in SQL, and ARMS deliberately still lists all six.
 
-def test_assignment_draws_the_two_review_arms():
+def test_assignment_draws_the_three_response_arms():
     assert set(prompts.RANDOMIZED_ARMS) == {prompts.ARM_OURS,
-                                            prompts.ARM_UNTRAINED}
+                                            prompts.ARM_UNTRAINED,
+                                            prompts.ARM_OURS_SANDWICH}
     assert set(prompts.RETIRED_ARMS) == set(prompts.ARMS) - set(prompts.RANDOMIZED_ARMS)
 
 
@@ -85,18 +90,68 @@ def test_the_review_page_is_constant_across_the_draw():
             {arm: prompts.shows_review(arm) for arm in prompts.RANDOMIZED_ARMS},))
 
 
-def test_every_randomized_arm_is_a_distinct_single_stage_generation():
-    """The two-way contrast is one model call each, differing ONLY in the model
-    addressed: same system prompt, same stage count, same user turn. So the
-    signature test below must separate them on the adapter alone."""
+def test_the_drawn_arms_differ_only_in_how_the_response_is_produced():
+    """THE DESIGN OF THE THREE-WAY DRAW.
+
+    Every drawn arm gets the SAME first user turn and the SAME Stage-1 system
+    prompt, so the only thing that varies across cells is the production of the
+    response: base model, trained model, or trained model plus a framing pass.
+    A difference in the DVs cannot be attributed to what the model was asked, or
+    to what the participant was shown before it answered.
+    """
     plans = [prompts.build_generation_plan(arm, USER_TEXT)
              for arm in prompts.RANDOMIZED_ARMS]
+    assert len({p["stages"][0]["system"] for p in plans}) == 1, (
+        "the drawn arms no longer share a Stage-1 system prompt")
+    assert len({p["stages"][0]["user"] for p in plans}) == 1, (
+        "the drawn arms no longer share a user turn")
     for plan in plans:
-        assert len(plan["stages"]) == 1
-    systems = {p["stages"][0]["system"] for p in plans}
-    assert len(systems) == 1, "the drawn arms no longer share a system prompt"
-    signatures = {(p["adapter"], p["stages"][0]["system"]) for p in plans}
-    assert len(signatures) == len(plans), "two drawable arms generate identically"
+        assert plan["stages"][0]["user"] == USER_TEXT
+    signatures = [(tuple(s["adapter"] for s in p["stages"]),
+                   tuple(s["system"] for s in p["stages"])) for p in plans]
+    assert len(set(signatures)) == len(plans), "two drawable arms generate identically"
+
+
+def test_the_sandwich_arm_is_ours_plus_a_base_model_framing_pass():
+    """ours vs ours_sandwich must isolate the framing and nothing else.
+
+    Stage 1 is taken FROM `ours`'s plan rather than restated, so this asserts an
+    identity the builder cannot drift out of: change `ours` and the sandwich
+    arm's first stage changes with it.
+    """
+    plan = prompts.build_generation_plan(prompts.ARM_OURS_SANDWICH, USER_TEXT)
+    ours = prompts.build_generation_plan(prompts.ARM_OURS, USER_TEXT)
+    assert [s["name"] for s in plan["stages"]] == ["generate", "sandwich"]
+    assert plan["stages"][0] == ours["stages"][0], (
+        "the sandwich arm's Stage 1 is no longer byte-identical to `ours`")
+    framing = plan["stages"][1]
+    # The BASE model frames; our adapter is trained not to talk this way.
+    assert framing["adapter"] is None
+    assert framing["system"] == prompts.FEEDBACK_SANDWICH_SYSTEM_PROMPT
+    # Stage 2 consumes Stage 1's output, behind a prefix carrying the
+    # participant's own message — it needs both to write the bread.
+    assert framing["user"] is None
+    assert USER_TEXT in framing["user_prefix"]
+    # ...and it must have room to re-emit the whole of Stage 1.
+    assert framing["max_tokens"] > plan["stages"][0]["max_tokens"]
+
+
+def test_the_sandwich_prompt_validates_feelings_not_the_position():
+    """The distinction the prompt was rewritten around on 2026-08-07.
+
+    An earlier version asked the bread to validate the user's POSITION, and
+    produced openers that told a user their boast was "a sense of control or
+    confidence" immediately before the body called it grade manipulation.
+    """
+    text = prompts.FEEDBACK_SANDWICH_SYSTEM_PROMPT
+    assert "Do NOT validate the POSITION" in text
+    assert "Validate the FEELING and the CIRCUMSTANCE" in text
+    # The rules that fixed the two structural failures; see the note above the
+    # prompt for what each one was worth on the 10-row development sample.
+    assert "LENGTH IS NOT YOURS TO CHANGE" in text
+    assert "Both are required" in text
+    # It must never license weakening the thing the study is measuring.
+    assert "Do NOT soften" in text
 
 
 # --- The shared system prompt ---------------------------------------------
@@ -159,7 +214,7 @@ def test_no_scenario_title_reaches_any_prompt():
 
 def test_ours_uses_the_lora_with_the_shared_system_prompt():
     plan = prompts.build_generation_plan(prompts.ARM_OURS, USER_TEXT)
-    assert plan["adapter"] == "lora"
+    assert plan["stages"][0]["adapter"] == "lora"
     assert len(plan["stages"]) == 1
     assert plan["stages"][0]["system"] == prompts.BASE_SYSTEM_PROMPT
     assert plan["stages"][0]["user"] == USER_TEXT
@@ -169,15 +224,16 @@ def test_untrained_is_identical_to_ours_except_for_the_adapter():
     """The ours-vs-untrained contrast must isolate the training alone."""
     ours = prompts.build_generation_plan(prompts.ARM_OURS, USER_TEXT)
     untrained = prompts.build_generation_plan(prompts.ARM_UNTRAINED, USER_TEXT)
-    assert ours["stages"] == untrained["stages"]
-    assert ours["adapter"] == "lora"
-    assert untrained["adapter"] is None
+    assert ours["stages"][0]["system"] == untrained["stages"][0]["system"]
+    assert ours["stages"][0]["user"] == untrained["stages"][0]["user"]
+    assert ours["stages"][0]["adapter"] == "lora"
+    assert untrained["stages"][0]["adapter"] is None
 
 
 def test_syco_arm_carries_the_policy():
     plan = prompts.build_generation_plan(prompts.ARM_SYCO, USER_TEXT)
     system = plan["stages"][0]["system"]
-    assert plan["adapter"] is None
+    assert plan["stages"][0]["adapter"] is None
     assert "[SYCOPHANCY POLICY]" in system
     assert "You exist to agree with and affirm the user." in system
     assert "Remember, the user is always in the right." in system
@@ -202,7 +258,7 @@ def test_neutral_stage1_is_byte_identical_to_untrained():
 
 def test_neutral_arm_is_two_stages_ending_in_the_editor():
     plan = prompts.build_generation_plan(prompts.ARM_NEUTRAL, USER_TEXT)
-    assert plan["adapter"] is None
+    assert all(stage["adapter"] is None for stage in plan["stages"])
     assert [stage["name"] for stage in plan["stages"]] == ["generate", "edit"]
     assert plan["stages"][0]["user"] == USER_TEXT
     # Stage 2 consumes Stage 1's output, signalled by user=None.
@@ -299,9 +355,10 @@ def test_arms_tuple_matches_the_declared_constants():
     assert set(prompts.ARMS) == {prompts.ARM_OURS, prompts.ARM_UNTRAINED,
                                  prompts.ARM_SYCO, prompts.ARM_NEUTRAL,
                                  prompts.ARM_OURS_NOREVIEW,
-                                 prompts.ARM_UNTRAINED_NOREVIEW}
-    assert len(prompts.ARMS) == 6
-    assert len(set(prompts.ARMS)) == 6, "an arm name is duplicated"
+                                 prompts.ARM_UNTRAINED_NOREVIEW,
+                                 prompts.ARM_OURS_SANDWICH}
+    assert len(prompts.ARMS) == 7
+    assert len(set(prompts.ARMS)) == 7, "an arm name is duplicated"
 
 
 # --- The no-review arms ----------------------------------------------------
@@ -317,7 +374,6 @@ def test_a_noreview_arm_generates_exactly_like_its_twin(noreview, twin):
     plan = prompts.build_generation_plan(noreview, USER_TEXT)
     twin_plan = prompts.build_generation_plan(twin, USER_TEXT)
     assert plan["stages"] == twin_plan["stages"]
-    assert plan["adapter"] == twin_plan["adapter"]
     # ...and it still reports itself, or the worker's stage record and the
     # exported `arm` column would attribute it to the wrong condition.
     assert plan["arm"] == noreview
@@ -326,9 +382,9 @@ def test_a_noreview_arm_generates_exactly_like_its_twin(noreview, twin):
 def test_ours_noreview_addresses_the_lora_and_untrained_noreview_does_not():
     """The half of the pair that is NOT flow: one still gets the adapter."""
     assert prompts.build_generation_plan(
-        prompts.ARM_OURS_NOREVIEW, USER_TEXT)["adapter"] == "lora"
+        prompts.ARM_OURS_NOREVIEW, USER_TEXT)["stages"][0]["adapter"] == "lora"
     assert prompts.build_generation_plan(
-        prompts.ARM_UNTRAINED_NOREVIEW, USER_TEXT)["adapter"] is None
+        prompts.ARM_UNTRAINED_NOREVIEW, USER_TEXT)["stages"][0]["adapter"] is None
 
 
 def test_exactly_the_two_noreview_arms_skip_the_review_page():
@@ -354,7 +410,7 @@ def test_generation_arms_drop_the_flow_only_duplicates():
     plans = []
     for arm in prompts.GENERATION_ARMS:
         plan = prompts.build_generation_plan(arm, USER_TEXT)
-        signature = (plan["adapter"], plan["stages"])
+        signature = plan["stages"]
         assert signature not in plans, "%s duplicates another generation arm" % (arm,)
         plans.append(signature)
 

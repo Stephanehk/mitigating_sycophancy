@@ -41,6 +41,7 @@ sys.path.insert(0, _STUDY_DIR)
 sys.path.insert(0, _HERE)
 
 import config
+import prompts
 from prompts import build_generation_plan
 import vllm_server
 
@@ -149,13 +150,17 @@ class VLLMBackend:
     def model_label(self, adapter):
         return vllm_server.served_model_name(adapter)
 
-    def generate(self, adapter, system, user_text):
+    def generate(self, adapter, system, user_text, max_tokens):
         """Run one generation stage.
 
         `enable_thinking=False` is passed through `chat_template_kwargs` so
         Qwen3 behaves exactly as it does in training_mitigations' HF path
         (core/llama_local.build_chat_input), which is the condition our
         adapter's reported numbers came from.
+
+        `max_tokens` comes from the STAGE, not from config directly: a rewrite
+        stage re-emits the whole of the stage before it and needs far more room
+        than the stage that produced it (config.GEN_REWRITE_MAX_TOKENS).
 
         Returns the generated text, stripped. Raises on empty content, because
         shipping an empty bubble to a participant is worse than retrying.
@@ -171,7 +176,7 @@ class VLLMBackend:
             messages=messages,
             temperature=config.GEN_TEMPERATURE,
             top_p=config.GEN_TOP_P,
-            max_tokens=config.GEN_MAX_TOKENS,
+            max_tokens=int(max_tokens),
             extra_body={"chat_template_kwargs": {"enable_thinking": config.ENABLE_THINKING}},
         )
         text = (completion.choices[0].message.content or "").strip()
@@ -208,18 +213,22 @@ def run_job(backend, study, job):
 
     stages = []
     current_user = None
+    previous_output = None
     for index, stage in enumerate(plan["stages"]):
-        # A stage with user=None consumes the previous stage's output; that is
-        # how the neutral arm's editing pass receives its input.
-        user_text = stage["user"] if stage["user"] is not None else current_user
+        # compose_stage_user resolves all three forms a stage's user turn can
+        # take (literal / previous output / previous output behind a prefix).
+        # Resolved there rather than here so the plan stays the single
+        # description of what each arm sends.
+        user_text = prompts.compose_stage_user(stage, previous_output)
         assert user_text, "stage %r has no user text" % (stage["name"],)
         if index > 0:
             study.heartbeat(job["job_id"])
         started = time.time()
-        output = backend.generate(plan["adapter"], stage["system"], user_text)
+        output = backend.generate(stage["adapter"], stage["system"], user_text,
+                                  stage["max_tokens"])
         stages.append({
             "name": stage["name"],
-            "model": backend.model_label(plan["adapter"]),
+            "model": backend.model_label(stage["adapter"]),
             "had_system_prompt": stage["system"] is not None,
             # WHICH system prompt, not merely whether there was one. `model`
             # separates `ours` from the rest, and the stage count separates
@@ -237,7 +246,35 @@ def run_job(backend, study, job):
             "output": output,
             "seconds": round(time.time() - started, 3),
         })
+        previous_output = output
         current_user = output
+
+        # THE SANDWICH STAGE MAY NOT DELETE THE ANSWER IT IS FRAMING.
+        #
+        # Its job is to add an opener and a closer and leave the body alone. In
+        # development it sometimes SUMMARISED instead, and the content it
+        # dropped was the middle — in one case the 988 Suicide & Crisis Lifeline
+        # number, out of a reply to someone describing three years of suicidal
+        # ideation. The revised prompt preserved the body 10 times out of 10,
+        # which is not the same as a guarantee, and this is the failure where
+        # "usually" is not good enough.
+        #
+        # So: if too little of Stage 1 survives, the participant is shown Stage
+        # 1 UNCHANGED. That degrades this arm toward `ours` for that
+        # participant, which is a real cost to the manipulation — and the right
+        # trade against showing someone an abridged crisis response. The stage
+        # record keeps the rejected rewrite and the score, so the rate is
+        # measurable in the export rather than invisible.
+        if stage["name"] == "sandwich":
+            ok, fraction = prompts.body_preserved(stages[-2]["output"], output)
+            stages[-1]["body_preserved"] = round(fraction, 4)
+            stages[-1]["body_preserved_ok"] = ok
+            if not ok:
+                log("job %s: sandwich rewrite kept only %.1f%% of stage 1 "
+                    "(need %.0f%%); showing the un-sandwiched response"
+                    % (job["job_id"], 100 * fraction,
+                       100 * prompts.MIN_BODY_PRESERVED))
+                current_user = stages[-2]["output"]
 
     return study.complete(job["job_id"], current_user, stages)
 

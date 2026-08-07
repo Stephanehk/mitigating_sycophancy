@@ -226,6 +226,18 @@ GEN_TEMPERATURE = _env_float("STUDY_GEN_TEMPERATURE", 1.0)
 GEN_TOP_P = _env_float("STUDY_GEN_TOP_P", 1.0)
 GEN_MAX_TOKENS = _env_int("STUDY_GEN_MAX_TOKENS", 512)
 
+# The cap for a stage that REWRITES a previous stage's output rather than
+# generating fresh (added 2026-08-07 for `ours_sandwich`). Such a stage has to
+# re-emit the whole of Stage 1 plus its additions, so GEN_MAX_TOKENS — which
+# sized Stage 1 in the first place — cannot fit it by construction.
+#
+# 2048 against a 512-token Stage 1 is deliberate headroom, not a guess at the
+# needed size: truncating here would cut exactly the long responses the sandwich
+# prompt works hardest to preserve, and a participant would see a reply that
+# stops mid-sentence. Cheap insurance — vLLM bills the tokens it emits, not the
+# cap.
+GEN_REWRITE_MAX_TOKENS = _env_int("STUDY_GEN_REWRITE_MAX_TOKENS", 2048)
+
 # Wall-clock cap on a SINGLE generation (HF backend). Without it, one
 # pathologically slow generation blocks the worker forever: the worker is
 # single-threaded, so it never returns to the queue and every other
@@ -253,7 +265,15 @@ JOB_MAX_ATTEMPTS = _env_int("STUDY_JOB_MAX_ATTEMPTS", 4)
 
 # Wall-clock budget from job creation. Past this, the job fails even if
 # attempts remain, so a participant is never left on the loading screen.
-JOB_DEADLINE_SECONDS = _env_int("STUDY_JOB_DEADLINE_SECONDS", 420)
+#
+# RAISED FROM 420 TO 660 ON 2026-08-07, when `ours_sandwich` put a two-stage arm
+# back into the draw. GEN_MAX_SECONDS caps a SINGLE generation at 240, so a
+# two-stage job's worst case is 480 — already past the old deadline before any
+# retry. A job that cannot finish inside its own deadline even once would fail
+# every time it hit the slow path, and it would look like a GPU problem rather
+# than an arithmetic one. 660 leaves room for the worst case plus a claim delay.
+# Typical is nowhere near it: measured stages run 4-20s each.
+JOB_DEADLINE_SECONDS = _env_int("STUDY_JOB_DEADLINE_SECONDS", 660)
 
 # How long the worker waits before asking for a job again when the queue is
 # empty. THIS USED TO BE A 20-SECOND LONG POLL, and the change is a deployment

@@ -355,13 +355,13 @@ insert into public.questionnaire_options_v2 (response_key, question_id, value) v
     ('big_five_10', 'big_five', 4),
     ('big_five_10', 'big_five', 5);
 
--- Generated from prompts.ARMS: the 6 legal arm values.
+-- Generated from prompts.ARMS: the 7 legal arm values.
 alter table public.study_sessions_v2 drop constraint if exists study_sessions_v2_arm_check;
 alter table public.study_sessions_v2 add constraint study_sessions_v2_arm_check
-    check (arm in ('ours', 'untrained', 'syco', 'neutral', 'ours_noreview', 'untrained_noreview'));
+    check (arm in ('ours', 'untrained', 'syco', 'neutral', 'ours_noreview', 'untrained_noreview', 'ours_sandwich'));
 alter table public.study_submissions_v2 drop constraint if exists study_submissions_v2_arm_check;
 alter table public.study_submissions_v2 add constraint study_submissions_v2_arm_check
-    check (arm in ('ours', 'untrained', 'syco', 'neutral', 'ours_noreview', 'untrained_noreview'));
+    check (arm in ('ours', 'untrained', 'syco', 'neutral', 'ours_noreview', 'untrained_noreview', 'ours_sandwich'));
 
 -- Sessions whose arm was forced by a /debug_<key> link rather than drawn.
 -- Excluded from the export by default; see prompts.DEBUG_CONDITIONS.
@@ -381,7 +381,7 @@ insert into public.study_config_v2 (key, value) values ('max_text_chars', '4000'
     on conflict (key) do update set value = excluded.value;
 insert into public.study_config_v2 (key, value) values ('max_model_input_chars', '8002')
     on conflict (key) do update set value = excluded.value;
-insert into public.study_config_v2 (key, value) values ('job_deadline_seconds', '420')
+insert into public.study_config_v2 (key, value) values ('job_deadline_seconds', '660')
     on conflict (key) do update set value = excluded.value;
 insert into public.study_config_v2 (key, value) values ('job_lease_seconds', '180')
     on conflict (key) do update set value = excluded.value;
@@ -466,7 +466,7 @@ begin
     select arm into v_arm from public.study_sessions_v2 where session_id = p_session_id;
     if v_arm is null then
         update public.study_sessions_v2
-           set arm = (array['ours', 'untrained'])[1 + floor(random() * 2)],
+           set arm = (array['ours', 'untrained', 'ours_sandwich'])[1 + floor(random() * 3)],
                updated_at = now()
          where session_id = p_session_id and arm is null;
         select arm into v_arm from public.study_sessions_v2 where session_id = p_session_id;
@@ -530,6 +530,7 @@ begin
         v_arm := case p_debug_condition
                       when 'c1' then 'ours'
                       when 'c2' then 'untrained'
+                      when 'c3' then 'ours_sandwich'
                  end;
         -- A mistyped link must not silently become a normally randomized
         -- session: someone testing a condition would then believe they had

@@ -243,3 +243,130 @@ def test_unknown_arm_is_rejected_before_any_model_call():
     with pytest.raises(AssertionError):
         run_worker.run_job(openai, FakeStudy(), make_job("bogus_arm"))
     assert openai.client.calls == []
+
+
+# --- The sandwich arm ------------------------------------------------------
+# Added 2026-08-07. Two stages on DIFFERENT models, and a guard on the second.
+
+def test_the_sandwich_arm_runs_stage_one_on_the_lora_and_stage_two_on_the_base():
+    """The per-stage adapter, end to end.
+
+    `adapter` used to be one value for the whole plan. If it silently reverted,
+    this arm would frame with our adapter (or generate with the base) and the
+    ours-vs-ours_sandwich contrast would no longer isolate the framing.
+    """
+    body = "You were not upfront, and that put someone else in a bad position."
+    openai = make_backend([body, "Opener. %s Closer." % body])
+    study = FakeStudy()
+    run_worker.run_job(openai, study, make_job(prompts.ARM_OURS_SANDWICH))
+
+    generate, sandwich = openai.client.calls
+    assert generate["model"] == config.LORA_NAME
+    assert sandwich["model"] == config.BASE_MODEL_ID
+    assert generate["max_tokens"] == config.GEN_MAX_TOKENS
+    # The rewrite must have room for the whole of Stage 1 plus its additions.
+    assert sandwich["max_tokens"] == config.GEN_REWRITE_MAX_TOKENS
+
+    _, shown, stages = study.completed[0]
+    assert shown == "Opener. %s Closer." % body
+    assert [s["name"] for s in stages] == ["generate", "sandwich"]
+    assert [s["model"] for s in stages] == [config.LORA_NAME, config.BASE_MODEL_ID]
+
+
+def test_the_sandwich_stage_receives_both_the_participant_text_and_stage_one():
+    """It cannot write the bread without both halves.
+
+    The participant's message tells it what they feel; Stage 1's output is what
+    it is framing. The neutral arm's editing stage takes only the latter, so
+    this is the distinguishing property of the new stage form.
+    """
+    openai = make_backend(["stage one text", "wrapped"])
+    run_worker.run_job(openai, FakeStudy(), make_job(prompts.ARM_OURS_SANDWICH))
+
+    sandwich_input = openai.client.calls[1]["messages"][-1]["content"]
+    assert JOB_USER_TEXT in sandwich_input, "the participant's own message is missing"
+    assert "stage one text" in sandwich_input, "Stage 1's output is missing"
+    # Labelled, so the model can tell them apart rather than answering the lot.
+    assert sandwich_input.index(JOB_USER_TEXT) < sandwich_input.index("stage one text")
+
+
+def test_a_sandwich_rewrite_that_summarises_the_body_is_not_shown():
+    """THE SAFETY GUARD, and the reason it exists.
+
+    In development the rewrite sometimes condensed a long reply instead of
+    framing it, once deleting a crisis hotline number from a response to a user
+    describing suicidal ideation. When too little of Stage 1 survives, the
+    participant sees Stage 1 UNCHANGED rather than an abridged answer.
+    """
+    body = ("Call the 988 Suicide and Crisis Lifeline. " * 20).strip()
+    openai = make_backend([body, "I hear you. Please take care of yourself."])
+    study = FakeStudy()
+    run_worker.run_job(openai, study, make_job(prompts.ARM_OURS_SANDWICH))
+
+    _, shown, stages = study.completed[0]
+    assert shown == body, "the summarised rewrite was shown to the participant"
+    assert "988" in shown
+    # The rejected rewrite is KEPT in the record, so the fallback rate is
+    # measurable in the export rather than invisible.
+    assert stages[-1]["output"] == "I hear you. Please take care of yourself."
+    assert stages[-1]["body_preserved_ok"] is False
+    assert stages[-1]["body_preserved"] < prompts.MIN_BODY_PRESERVED
+
+
+def test_a_faithful_sandwich_rewrite_is_shown_and_scored():
+    """The other side of the guard: a good rewrite must survive it.
+
+    Scored, not merely accepted — the fraction is exported either way, so the
+    threshold can be re-examined against real data instead of re-litigated.
+    """
+    body = "Your numbers were right, but the way you raised them landed badly."
+    rewrite = "That sounds frustrating. %s None of that makes you wrong to care." % body
+    openai = make_backend([body, rewrite])
+    study = FakeStudy()
+    run_worker.run_job(openai, study, make_job(prompts.ARM_OURS_SANDWICH))
+
+    _, shown, stages = study.completed[0]
+    assert shown == rewrite
+    assert stages[-1]["body_preserved_ok"] is True
+    assert stages[-1]["body_preserved"] == 1.0
+
+
+def test_the_guard_tolerates_a_tidied_seam():
+    """A dropped leading word is what the prompt explicitly permits.
+
+    This is the real development case: one good rewrite turned "First, it's
+    important" into "It's important" and would have failed an exact-substring
+    check while reproducing 99.6% of the text. The guard is a ratio for exactly
+    this reason.
+    """
+    body = ("First, consider why this happened. " + "It matters how you raised it. " * 30).strip()
+    rewrite = "That sounds hard. " + body[len("First, "):] + " Take care of yourself."
+    ok, fraction = prompts.body_preserved(body, rewrite)
+    assert ok, "a seam adjustment was treated as a summary (kept %.3f)" % fraction
+    assert fraction > 0.99
+
+
+# --- compose_stage_user ----------------------------------------------------
+
+def test_compose_stage_user_resolves_all_three_stage_forms():
+    literal = {"name": "generate", "user": "the participant's words"}
+    assert prompts.compose_stage_user(literal, None) == "the participant's words"
+
+    chained = {"name": "edit", "user": None}
+    assert prompts.compose_stage_user(chained, "stage one") == "stage one"
+
+    prefixed = {"name": "sandwich", "user": None, "user_prefix": "CONTEXT\n"}
+    assert prompts.compose_stage_user(prefixed, "stage one") == "CONTEXT\nstage one"
+
+
+def test_compose_stage_user_refuses_a_chained_first_stage():
+    """A plan whose first stage consumes a previous output is malformed, and
+    generating from an empty prompt would be a silent, plausible-looking bug."""
+    with pytest.raises(AssertionError):
+        prompts.compose_stage_user({"name": "edit", "user": None}, None)
+
+
+def test_body_preserved_rejects_an_empty_original():
+    """Not a 100% match — a caller reaching this has already lost Stage 1."""
+    with pytest.raises(AssertionError):
+        prompts.body_preserved("", "anything")

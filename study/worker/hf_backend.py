@@ -115,12 +115,14 @@ class HFBackend:
         backend's served-model-name so the two are comparable in analysis."""
         return config.LORA_NAME if adapter == "lora" else config.BASE_MODEL_ID
 
-    def generate(self, adapter, system, user_text):
+    def generate(self, adapter, system, user_text, max_tokens):
         """Generate one stage's output.
 
         `adapter` is the generation plan's selector: "lora" runs with our
-        adapter active, None runs the frozen base. Returns stripped text and
-        raises on an empty generation, matching the vLLM backend's contract.
+        adapter active, None runs the frozen base. `max_tokens` comes from the
+        stage, because a rewrite stage needs room for the whole of the stage
+        before it. Returns stripped text and raises on an empty generation,
+        matching the vLLM backend's contract.
         """
         assert adapter in (None, "lora"), "unknown adapter selector: %r" % (adapter,)
         if adapter is None:
@@ -149,7 +151,7 @@ class HFBackend:
         input_ids = build_chat_input(self.tokenizer, user_text, system=system, device=device)
         in_len = input_ids.shape[1]
         gen_kwargs = dict(
-            max_new_tokens=int(config.GEN_MAX_TOKENS),
+            max_new_tokens=int(max_tokens),
             num_return_sequences=1,
             do_sample=True,
             temperature=float(config.GEN_TEMPERATURE),

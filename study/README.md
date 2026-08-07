@@ -3,10 +3,11 @@
 A self-contained web study adapted from `syco_label_mitigations_-_Copy_for_stephane.qsf`.
 Participants are screened onto an interpersonal dilemma they have personally
 experienced, write their side of the story, are shown **one** AI response
-generated live by one of **two** randomly assigned arms (our model or the
-untrained base — in both cases they are shown the composed model input first and
-may edit it), and then answer the source survey's reflection battery about that
-response.
+generated live by one of **three** randomly assigned arms — the untrained base,
+our model, or our model followed by a "feedback sandwich" framing pass — and then
+answer the source survey's reflection battery about that response. All three
+arms walk the identical flow and send the identical text to the model; **the only
+thing that varies is how the response is produced.**
 
 Everything — the app, the GPU worker, the tests, and the analysis export —
 lives in this directory.
@@ -18,7 +19,7 @@ lives in this directory.
 | | Source `.qsf` | This study |
 |---|---|---|
 | Interaction | 8-turn chat with gpt-4o | **One** response, no follow-up |
-| Randomized factor | 4-way sycophancy *label* (3 banners + unlabeled) | 2-way **arm**: our model vs the untrained base, both review-and-edit (6 arms defined, 4 retired) |
+| Randomized factor | 4-way sycophancy *label* (3 banners + unlabeled) | 3-way **arm**: untrained / ours / ours + feedback sandwich (7 arms defined, 4 retired) |
 | Disclaimer | Varied by condition | **Fixed** for everyone: *"Note: This chatbot is AI, not human."* |
 | Demographics (age/gender/race) | Present | **Removed** |
 | Debrief | Two variants (syco / non-syco) | **One shared** debrief |
@@ -164,6 +165,7 @@ Two links enter the study with the condition **forced** instead of drawn:
 |---|---|---|
 | `https://<host>/debug_c1` | C1 | `ours` |
 | `https://<host>/debug_c2` | C2 | `untrained` |
+| `https://<host>/debug_c3` | C3 | `ours_sandwich` |
 
 They exist because random assignment is exactly what stops you looking at a
 condition on purpose. The links cover exactly the drawable arms, so a link does
@@ -369,27 +371,91 @@ model name the request addresses.
 |---|---|---|---|---|---|
 | `ours` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 | **yes** | **yes** |
 | `untrained` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 | **yes** | **yes** |
+| `ours_sandwich` | `oeq_voice2` **then** `Qwen/Qwen3-8B` | shared `[ETHICS]`, then the sandwich prompt | 2 (generate → frame) | **yes** | **yes** |
 | `syco` | `Qwen/Qwen3-8B` | shared `[ETHICS]` + `[SYCOPHANCY POLICY]` | 1 | yes | retired |
 | `neutral` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 2 (generate → neutrality edit) | yes | retired |
 | `ours_noreview` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 | no | retired |
 | `untrained_noreview` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 | no | retired |
 
-### Assignment is a two-way draw (arms changed 2026-08-07)
+### Assignment is a three-way draw (2026-08-07)
 
-`prompts.RANDOMIZED_ARMS` — `ours` and `untrained` — is what the generated
-`session_arm` RPC samples, uniformly. Our model against the untrained base, with
-**both groups shown the composed model input and free to edit it** before
-pressing Confirm.
+`prompts.RANDOMIZED_ARMS` — `ours`, `untrained`, `ours_sandwich` — is what the
+generated `session_arm` RPC samples, uniformly. All three are shown the composed
+model input and free to edit it before pressing Confirm.
 
-That leaves **one factor**. Both arms share their system prompt, their stage
-count, their flow and their user turn, and differ only in which model the request
-addresses — so a difference in the DVs cannot be attributed to the sycophancy
-policy, to a second editing stage, or to one group seeing a page the other did
-not. `tests/test_prompts.py::test_every_randomized_arm_shows_the_review_page`,
-`::test_the_review_page_is_constant_across_the_draw` and
-`::test_every_randomized_arm_is_a_distinct_single_stage_generation` pin those
-halves; the draw itself is pinned in SQL by
+**One factor, three levels.** Every drawn arm shares its flow, its user turn and
+its Stage-1 system prompt, so the only thing that varies is *how the response is
+produced*. A difference in the DVs cannot be attributed to the sycophancy policy,
+to what the model was asked, or to one group seeing a page another did not.
+Pinned by `tests/test_prompts.py::test_the_drawn_arms_differ_only_in_how_the_response_is_produced`,
+`::test_every_randomized_arm_shows_the_review_page` and
+`::test_the_review_page_is_constant_across_the_draw`; the draw itself is pinned
+in SQL by
 `tests/test_views.py::test_the_generated_draw_samples_exactly_the_randomized_arms`.
+
+Two contrasts fall out of it: `ours` vs `untrained` is trained-vs-base, and
+`ours` vs `ours_sandwich` is the framing pass with the substance held fixed.
+
+### The sandwich arm (`ours_sandwich`, added 2026-08-07)
+
+Two calls. Stage 1 is `ours` — `build_generation_plan` takes it FROM that arm's
+plan rather than restating it, so a change to `ours` cannot fail to reach this
+arm, and `test_the_sandwich_arm_is_ours_plus_a_base_model_framing_pass` asserts
+the two are byte-identical. Stage 2 sends the participant's own message *and*
+Stage 1's reply to the **base** model, with
+`prompts.FEEDBACK_SANDWICH_SYSTEM_PROMPT`, asking it to add a brief opener and
+closer and leave the body alone.
+
+**The bread validates feelings, not the position.** That distinction is the
+prompt's central rule and it was arrived at empirically. Developed on 10 PAS
+held-out pairs from the same `voice2` adapter Stage 1 uses
+(`training_mitigations/sycoharm_runs/inputs/pas_voice2_finaldata.csv`, seed 0,
+transcripts under `logs/sandwich/`):
+
+| | v1 (validate the position) | v2 (validate feelings) |
+|---|---|---|
+| body preserved | 8/10 | **10/10** |
+| closer present | 4/10 | **9/10** |
+| all three parts | 3/10 | **9/10** |
+| specifics lost | 988 hotline dropped | **none** |
+
+v1's openers affirmed the very thing the body was about to criticise — one told
+a user their boast was "a sense of control or confidence in your academic
+performance" immediately before the body called it grade manipulation. v1 also
+*summarised* the two longest inputs rather than reproducing them, and in one case
+deleted the 988 Suicide & Crisis Lifeline number from a reply to someone
+describing three years of suicidal ideation.
+
+**`body_preserved()` is why that failure cannot reach a participant.** After
+Stage 2, the worker measures what fraction of Stage 1 survived; below
+`MIN_BODY_PRESERVED` (0.95) the participant is shown **Stage 1 unchanged**. The
+threshold is measured, not guessed: across both development runs every good
+rewrite scored 0.996–1.000 and the two summaries scored 0.193 and 0.311, so 0.95
+sits in an empty gap. It is a ratio rather than a substring test because the
+prompt permits tidying the seams, and one good rewrite dropped a leading "First,"
+while reproducing 99.6% of the text.
+
+Read the cost plainly: **a fallback degrades that participant's arm toward
+`ours`**, which weakens the manipulation for them. That was judged the right
+trade against showing someone an abridged crisis response. The rejected rewrite
+and its score are both kept in the stage record, so the fallback rate is
+measurable in the export rather than invisible — watch `body_preserved_ok` in
+`generations.csv`.
+
+Two knock-on config changes this arm forced:
+
+- `GEN_REWRITE_MAX_TOKENS` (2048). A rewrite stage re-emits the whole of the
+  stage before it, so `GEN_MAX_TOKENS` (512) — which sized Stage 1 — cannot fit
+  it by construction, and truncating would cut exactly the long responses the
+  prompt works hardest to preserve. `max_tokens` is now per stage.
+- `JOB_DEADLINE_SECONDS` 420 → 660. `GEN_MAX_SECONDS` caps a single generation
+  at 240, so a two-stage job's worst case is 480 — already past the old deadline
+  before any retry. Typical is nowhere near it (stages run 4–20s).
+
+**`adapter` is now per stage, not per plan.** This arm generates on the LoRA and
+frames on the base, so one value per plan can no longer describe it. There is no
+top-level `plan["adapter"]`; a caller still reading one gets a KeyError rather
+than silently running every stage on the wrong model.
 
 **What the review page costs, on the record.** The model's input is no longer
 fixed at exactly what the participant wrote: someone who rewrites their story on
