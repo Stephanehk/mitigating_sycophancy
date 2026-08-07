@@ -1,5 +1,10 @@
 -- Supabase table for the sycophancy user study.
 --
+-- THE `_v2` SUFFIX (2026-08-07) is config.TABLE_SUFFIX — see the note at the top
+-- of supabase_queue_schema.sql. The pre-2026-08-07 run's rows stay in the
+-- unsuffixed `study_submissions` and are never written to again; point
+-- STUDY_SUPABASE_TABLE at that name to export them.
+--
 -- Run this once in the Supabase SQL editor before launching. One row per
 -- COMPLETED participant — by design, sessions that abandon mid-study never
 -- reach here (the browser holds the payload until the end; see
@@ -10,7 +15,7 @@
 -- item needs no migration. `answers` is split out of the payload as its own
 -- JSONB column because it is the one part analysis always touches.
 
-create table if not exists public.study_submissions (
+create table if not exists public.study_submissions_v2 (
     id                bigint generated always as identity primary key,
 
     -- Server-issued. UNIQUE is the idempotency guard: the server also refuses a
@@ -80,11 +85,11 @@ create table if not exists public.study_submissions (
     submitted_at      timestamptz not null default now()
 );
 
-create index if not exists idx_submissions_arm on public.study_submissions (arm);
-create index if not exists idx_submissions_prolific on public.study_submissions (prolific_pid);
-create index if not exists idx_submissions_submitted on public.study_submissions (submitted_at);
+create index if not exists idx_submissions_v2_arm on public.study_submissions_v2 (arm);
+create index if not exists idx_submissions_v2_prolific on public.study_submissions_v2 (prolific_pid);
+create index if not exists idx_submissions_v2_submitted on public.study_submissions_v2 (submitted_at);
 
 -- The server writes with the SERVICE-ROLE key, which bypasses RLS. RLS is
 -- enabled with no policies so that the anon/public key — which is what a
 -- browser would ever hold — can neither read nor write this table.
-alter table public.study_submissions enable row level security;
+alter table public.study_submissions_v2 enable row level security;

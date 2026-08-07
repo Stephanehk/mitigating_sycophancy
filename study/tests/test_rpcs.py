@@ -32,10 +32,18 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import config
 import questionnaires
 import scenarios
 from prompts import (ARMS, DEBUG_CONDITIONS, RANDOMIZED_ARMS, RETIRED_ARMS,
                      SKIP_REVIEW_ARMS)
+
+#: PostgREST paths. Read from config so the 2026-08-07 table rename could not
+#: leave this suite pointed at the previous generation's rows, where it would
+#: have both passed and touched nothing the app uses.
+SESSIONS = config.TABLE_SESSIONS
+JOBS = config.TABLE_JOBS
+SUBMISSIONS = config.TABLE_SUBMISSIONS
 
 DESC = "I did not invite my sibling to my birthday party because I only had six seats."
 PERS = "My side is that the table was genuinely too small and I meant no slight by it."
@@ -75,7 +83,7 @@ def ask_flow(anon, session):
 
 
 def arm_of(service, session):
-    return service.get("/study_sessions?session_id=eq.%s&select=arm"
+    return service.get("/" + SESSIONS + "?session_id=eq.%s&select=arm"
                        % session["session_id"])[0]["arm"]
 
 
@@ -141,7 +149,7 @@ def test_a_participant_can_complete_the_whole_study(anon, service, worker_token,
                                        "p_payload": payload(session)})
     assert result["ok"] is True and result["duplicate"] is False
 
-    row = service.get("/study_submissions?session_id=eq.%s&select=*"
+    row = service.get("/" + SUBMISSIONS + "?session_id=eq.%s&select=*"
                       % session["session_id"])[0]
     assert row["consent"] == "agree" and row["eligibility"] == "eligible"
     assert row["shown_response"] == shown
@@ -162,7 +170,7 @@ def test_a_screened_out_participant_submits_with_no_arm(anon, service, clean):
                                          "description": None}
                                         for k in session["screening_order"]])})
     assert result["ok"] is True
-    row = service.get("/study_submissions?session_id=eq.%s&select=*"
+    row = service.get("/" + SUBMISSIONS + "?session_id=eq.%s&select=*"
                       % session["session_id"])[0]
     assert row["arm"] is None, "a screen-out never reached a generation"
     assert len(row["screening"]) == 4, "the screening funnel must survive"
@@ -174,7 +182,7 @@ def test_a_decliner_submits(anon, service, clean):
     anon.rpc("submit_study", {"p_token": session["session_token"],
         "p_payload": payload(session, consent="decline", eligibility="declined",
                              selected_scenario=None, screening=[], answers={})})
-    row = service.get("/study_submissions?session_id=eq.%s&select=arm,consent"
+    row = service.get("/" + SUBMISSIONS + "?session_id=eq.%s&select=arm,consent"
                       % session["session_id"])[0]
     assert row["consent"] == "decline" and row["arm"] is None
 
@@ -217,9 +225,9 @@ def test_the_flow_answer_matches_the_arm_that_was_drawn(anon, service, clean):
 
     Since the draw narrowed to the two no-review arms (2026-08-05) a real
     participant always gets `false` — so this asserts the CONSISTENCY (the answer
-    is a function of the arm) and pins the constant. Pinning it is the point: a
-    `true` here would mean a live participant was being offered the chance to edit
-    the model's input, which is exactly what the design removed.
+    is a function of the arm) and pins the constant. Pinning it is the point:
+    the two arms must AGREE, or the flow becomes a second — and visible — factor.
+    Since 2026-08-07 the constant is `true`; it was `false` from 2026-08-05.
     """
     for _ in range(20):
         session = start(anon)
@@ -228,8 +236,8 @@ def test_the_flow_answer_matches_the_arm_that_was_drawn(anon, service, clean):
         assert arm is not None, "response_flow returned without drawing an arm"
         assert flow["show_review"] is (arm not in SKIP_REVIEW_ARMS), (
             "arm %s got show_review=%s" % (arm, flow["show_review"]))
-        assert flow["show_review"] is False, (
-            "a randomized participant was shown the review page on arm %s" % arm)
+        assert flow["show_review"] is True, (
+            "a randomized participant was NOT shown the review page on arm %s" % arm)
 
 
 def test_the_flow_call_leaks_nothing_but_the_bit(anon, clean):
@@ -261,7 +269,7 @@ def test_the_arm_the_flow_drew_is_the_arm_the_job_gets(anon, service, clean):
     arm = arm_of(service, session)
     request_generation(anon, session)
     assert arm_of(service, session) == arm
-    job = service.get("/study_jobs?session_id=eq.%s&select=arm"
+    job = service.get("/" + JOBS + "?session_id=eq.%s&select=arm"
                       % session["session_id"])[0]
     assert job["arm"] == arm
 
@@ -271,7 +279,7 @@ def test_asking_the_flow_creates_no_job(anon, service, clean):
     leave a job for the worker to burn a GPU on."""
     session = start(anon)
     ask_flow(anon, session)
-    assert service.get("/study_jobs?session_id=eq.%s&select=job_id"
+    assert service.get("/" + JOBS + "?session_id=eq.%s&select=job_id"
                        % session["session_id"]) == []
 
 
@@ -328,7 +336,7 @@ def test_a_forced_arm_survives_to_the_submission_row_with_its_flag(
     finish_generation(anon, session, worker_token, text="A generated reply.")
     anon.rpc("submit_study", {"p_token": session["session_token"],
                               "p_payload": payload(session)})
-    row = service.get("/study_submissions?session_id=eq.%s&select=arm,is_debug"
+    row = service.get("/" + SUBMISSIONS + "?session_id=eq.%s&select=arm,is_debug"
                       % session["session_id"])[0]
     assert row["arm"] == arm
     assert row["is_debug"] is True, "a forced arm reached the dataset unflagged"
@@ -343,9 +351,9 @@ def test_a_real_participant_is_never_flagged(anon, service, worker_token, clean)
     finish_generation(anon, session, worker_token)
     anon.rpc("submit_study", {"p_token": session["session_token"],
                               "p_payload": payload(session)})
-    assert service.get("/study_sessions?session_id=eq.%s&select=is_debug"
+    assert service.get("/" + SESSIONS + "?session_id=eq.%s&select=is_debug"
                        % session["session_id"])[0]["is_debug"] is False
-    assert service.get("/study_submissions?session_id=eq.%s&select=is_debug"
+    assert service.get("/" + SUBMISSIONS + "?session_id=eq.%s&select=is_debug"
                        % session["session_id"])[0]["is_debug"] is False
 
 
@@ -362,7 +370,7 @@ def test_a_debug_link_still_never_returns_the_arm(anon, clean):
 def test_an_unknown_condition_is_refused_rather_than_randomized(anon, clean):
     """A mistyped link must fail loudly. Falling back to a normal draw would let
     someone believe they had seen a condition they never saw."""
-    for bad in ("c9", "ours", "", "ours_noreview"):
+    for bad in ("c9", "ours_noreview", "", "untrained"):
         response = anon.try_rpc("start_session", {"p_user_agent": "pytest",
                                                   "p_debug_condition": bad})
         if bad == "":
@@ -397,13 +405,13 @@ def test_a_client_cannot_forge_its_arm_or_response(anon, service, worker_token, 
     session = start(anon)
     request_generation(anon, session)
     shown = finish_generation(anon, session, worker_token, text="THE REAL REPLY")
-    actual = service.get("/study_sessions?session_id=eq.%s&select=arm"
+    actual = service.get("/" + SESSIONS + "?session_id=eq.%s&select=arm"
                          % session["session_id"])[0]["arm"]
 
     anon.rpc("submit_study", {"p_token": session["session_token"],
         "p_payload": payload(session, arm="syco", shown_response="FORGED",
                              user_text="FORGED", stages=[{"name": "fake"}])})
-    row = service.get("/study_submissions?session_id=eq.%s&select=*"
+    row = service.get("/" + SUBMISSIONS + "?session_id=eq.%s&select=*"
                       % session["session_id"])[0]
     assert row["arm"] == actual
     assert row["shown_response"] == shown and row["shown_response"] != "FORGED"
@@ -415,7 +423,7 @@ def test_one_job_per_session_forever(anon, service, clean):
     """The one-way door. Re-posting different text must not regenerate."""
     session = start(anon)
     first = request_generation(anon, session)
-    arm = service.get("/study_sessions?session_id=eq.%s&select=arm"
+    arm = service.get("/" + SESSIONS + "?session_id=eq.%s&select=arm"
                       % session["session_id"])[0]["arm"]
 
     again = request_generation(
@@ -424,11 +432,11 @@ def test_one_job_per_session_forever(anon, service, clean):
         perspective="and a completely different perspective on it, written out here")
     assert again["job_id"] == first["job_id"]
 
-    jobs = service.get("/study_jobs?session_id=eq.%s&select=user_text"
+    jobs = service.get("/" + JOBS + "?session_id=eq.%s&select=user_text"
                        % session["session_id"])
     assert len(jobs) == 1
     assert jobs[0]["user_text"] == DESC + "\n\n" + PERS
-    assert service.get("/study_sessions?session_id=eq.%s&select=arm"
+    assert service.get("/" + SESSIONS + "?session_id=eq.%s&select=arm"
                        % session["session_id"])[0]["arm"] == arm
 
 
@@ -437,7 +445,7 @@ def test_no_vignette_text_reaches_the_model(anon, service, clean):
     answer about the wrong story entirely."""
     session = start(anon)
     request_generation(anon, session)
-    user_text = service.get("/study_jobs?session_id=eq.%s&select=user_text"
+    user_text = service.get("/" + JOBS + "?session_id=eq.%s&select=user_text"
                             % session["session_id"])[0]["user_text"]
     for scenario in scenarios.SCENARIOS:
         assert scenario["vignette"] not in user_text
@@ -453,7 +461,7 @@ def test_submitting_twice_stores_one_row(anon, service, worker_token, clean):
     second = anon.rpc("submit_study", {"p_token": session["session_token"],
                                        "p_payload": payload(session)})
     assert first["duplicate"] is False and second["duplicate"] is True
-    assert len(service.get("/study_submissions?session_id=eq.%s&select=session_id"
+    assert len(service.get("/" + SUBMISSIONS + "?session_id=eq.%s&select=session_id"
                            % session["session_id"])) == 1
 
 
@@ -487,7 +495,7 @@ def test_the_longest_composition_the_client_can_produce_is_accepted(anon, servic
     perspective = "p" * config.MAX_TEXT_CHARS
     session = start(anon)
     request_generation(anon, session, description=description, perspective=perspective)
-    stored = service.get("/study_jobs?session_id=eq.%s&select=user_text"
+    stored = service.get("/" + JOBS + "?session_id=eq.%s&select=user_text"
                          % session["session_id"])[0]["user_text"]
     assert len(stored) == config.MAX_MODEL_INPUT_CHARS
     assert stored == description + "\n\n" + perspective, "the input was altered"
@@ -523,7 +531,7 @@ def test_an_out_of_domain_answer_is_rejected(anon, service, worker_token, clean)
     response = anon.try_rpc("submit_study", {"p_token": session["session_token"],
                                              "p_payload": payload(session, answers=answers)})
     assert response.status_code >= 400
-    assert service.get("/study_submissions?session_id=eq.%s&select=session_id"
+    assert service.get("/" + SUBMISSIONS + "?session_id=eq.%s&select=session_id"
                        % session["session_id"]) == []
 
 
@@ -540,7 +548,7 @@ def test_a_missing_answer_is_recorded_not_rejected(anon, service, worker_token, 
                                        "p_payload": payload(session, answers=answers)})
     assert result["ok"] is True
     assert result["missing_keys"] == ["fk_1"]
-    row = service.get("/study_submissions?session_id=eq.%s&select=missing_keys"
+    row = service.get("/" + SUBMISSIONS + "?session_id=eq.%s&select=missing_keys"
                       % session["session_id"])[0]
     assert row["missing_keys"] == ["fk_1"]
 
@@ -617,7 +625,7 @@ def test_concurrent_workers_never_double_claim(anon, service, worker_token, tag,
 
     # Whoever took them, every job this test created must now be held by exactly
     # one worker — no job left pending and unclaimable, none held by two.
-    rows = service.get("/study_jobs?session_id=in.(%s)&select=job_id,status,worker_id"
+    rows = service.get("/" + JOBS + "?session_id=in.(%s)&select=job_id,status,worker_id"
                        % ",".join(session_ids))
     assert len(rows) == 8
     for row in rows:
@@ -637,11 +645,11 @@ def test_a_worker_that_lost_its_lease_cannot_overwrite_the_winner(
     import requests
     session = start(anon)
     request_generation(anon, session)
-    job_id = service.get("/study_jobs?session_id=eq.%s&select=job_id"
+    job_id = service.get("/" + JOBS + "?session_id=eq.%s&select=job_id"
                          % session["session_id"])[0]["job_id"]
 
     # 'slow' holds it, with a lease that has already expired.
-    requests.patch("%s/study_jobs?job_id=eq.%s" % (service.base, job_id),
+    requests.patch("%s/%s?job_id=eq.%s" % (service.base, JOBS, job_id),
                    headers=service.headers, timeout=30,
                    json={"status": "running", "worker_id": "slow",
                          "lease_expires_at": "2000-01-01T00:00:00Z"})
@@ -651,7 +659,7 @@ def test_a_worker_that_lost_its_lease_cannot_overwrite_the_winner(
     # is for is complete_job's worker_id check, below.
     anon.rpc("response_status", {"p_token": session["session_token"]})  # drives the reap
 
-    requests.patch("%s/study_jobs?job_id=eq.%s" % (service.base, job_id),
+    requests.patch("%s/%s?job_id=eq.%s" % (service.base, JOBS, job_id),
                    headers=service.headers, timeout=30,
                    json={"status": "running", "worker_id": "fast",
                          "lease_expires_at": "2099-01-01T00:00:00Z"})
@@ -664,7 +672,7 @@ def test_a_worker_that_lost_its_lease_cannot_overwrite_the_winner(
         "p_worker_token": worker_token, "p_job_id": job_id,
         "p_worker_id": "slow", "p_response_text": "loser",
         "p_stages": []})["accepted"] is False
-    assert service.get("/study_jobs?job_id=eq.%s&select=response_text"
+    assert service.get("/" + JOBS + "?job_id=eq.%s&select=response_text"
                        % job_id)[0]["response_text"] == "winner"
 
 
@@ -674,15 +682,15 @@ def test_retry_is_capped(anon, service, worker_token, clean):
     request_generation(anon, session)
     # Written directly rather than claimed: a live pool would otherwise take the
     # job first. What is under test is the manual-retry cap, not who claimed it.
-    job_id = service.get("/study_jobs?session_id=eq.%s&select=job_id"
+    job_id = service.get("/" + JOBS + "?session_id=eq.%s&select=job_id"
                          % session["session_id"])[0]["job_id"]
-    requests.patch("%s/study_jobs?job_id=eq.%s" % (service.base, job_id),
+    requests.patch("%s/%s?job_id=eq.%s" % (service.base, JOBS, job_id),
                    headers=service.headers, timeout=30, json={"status": "failed"})
     state = anon.rpc("response_status", {"p_token": session["session_token"]})
     assert state["status"] == "failed" and state["can_retry"] is True
 
     anon.rpc("retry_response", {"p_token": session["session_token"]})
-    requests.patch("%s/study_jobs?job_id=eq.%s" % (service.base, job_id),
+    requests.patch("%s/%s?job_id=eq.%s" % (service.base, JOBS, job_id),
                    headers=service.headers, timeout=30, json={"status": "failed"})
     state = anon.rpc("response_status", {"p_token": session["session_token"]})
     assert state["can_retry"] is False, "manual retries must be capped"
@@ -692,10 +700,7 @@ def test_retry_is_capped(anon, service, worker_token, clean):
 
 # --- 6. The permission boundary --------------------------------------------
 
-@pytest.mark.parametrize("table", [
-    "study_sessions", "study_jobs", "study_submissions",
-    "study_config", "questionnaire_options", "study_scenarios",
-])
+@pytest.mark.parametrize("table", config.ALL_TABLES)
 def test_the_public_key_cannot_read_any_table(anon, table):
     """RLS with no policies. study_config is the sharp one — the worker secret
     lives in it, and it WAS readable until 2026-07-28."""
@@ -741,6 +746,7 @@ def test_worker_rpcs_require_the_shared_secret(anon):
 
 
 def test_the_worker_secret_is_not_readable(anon):
-    response = anon.try_get("/study_config?key=eq.worker_token&select=value")
+    response = anon.try_get("/%s?key=eq.worker_token&select=value"
+                            % config.TABLE_CONFIG)
     leaked = response.status_code == 200 and response.json() not in ([], None)
     assert not leaked, "the worker token is readable with the public key"

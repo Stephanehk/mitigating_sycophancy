@@ -1,7 +1,17 @@
 -- Supabase schema for the sycophancy study's SESSION + JOB QUEUE.
 --
 -- Run this once in the Supabase SQL editor, alongside supabase_schema.sql
--- (which defines study_submissions, the finished-participant table).
+-- (which defines study_submissions_v2, the finished-participant table).
+--
+-- THE `_v2` SUFFIX (2026-08-07) is config.TABLE_SUFFIX. The 2026-08-07 revision
+-- is a different instrument — new screening scenarios, and a draw over the
+-- review-page arms — so it writes to its own tables and leaves the previous
+-- run's rows where they are. The FUNCTION names are deliberately unsuffixed:
+-- `create or replace` repoints them at the new tables, so the browser and the
+-- GPU worker call exactly what they called before. Anything that renames a
+-- table here must also change config.TABLE_SUFFIX;
+-- tests/test_views.py::test_the_sql_files_and_config_agree_about_the_table_suffix
+-- pins the two together.
 --
 -- WHY THIS EXISTS. The queue used to be SQLite on the study server's local
 -- disk. That works for one always-on process; it cannot work behind Lambda,
@@ -28,7 +38,7 @@
 
 -- One participant's run. Deliberately thin: no answers, no stage cursor. The
 -- browser owns navigation and posts everything at the end (see README §1b).
-create table if not exists public.study_sessions (
+create table if not exists public.study_sessions_v2 (
     session_id        text primary key,
     -- Opaque token the browser holds; separate from session_id so a leaked id
     -- in a log cannot be used to resume or mutate someone's session.
@@ -64,13 +74,13 @@ create table if not exists public.study_sessions (
     submitted_at      timestamptz
 );
 
-create index if not exists idx_sessions_token on public.study_sessions (session_token);
-create index if not exists idx_sessions_arm on public.study_sessions (arm);
+create index if not exists idx_sessions_v2_token on public.study_sessions_v2 (session_token);
+create index if not exists idx_sessions_v2_arm on public.study_sessions_v2 (arm);
 
 -- The generation queue. One row per requested model response.
-create table if not exists public.study_jobs (
+create table if not exists public.study_jobs_v2 (
     job_id            text primary key,
-    session_id        text not null references public.study_sessions (session_id) on delete cascade,
+    session_id        text not null references public.study_sessions_v2 (session_id) on delete cascade,
     arm               text not null,
     topic_title       text not null,
     user_text         text not null,
@@ -92,11 +102,11 @@ create table if not exists public.study_jobs (
 );
 
 -- claim_job filters on exactly this pair, in this order.
-create index if not exists idx_jobs_claim on public.study_jobs (status, created_at);
-create index if not exists idx_jobs_session on public.study_jobs (session_id, created_at desc);
+create index if not exists idx_jobs_v2_claim on public.study_jobs_v2 (status, created_at);
+create index if not exists idx_jobs_v2_session on public.study_jobs_v2 (session_id, created_at desc);
 
-alter table public.study_sessions enable row level security;
-alter table public.study_jobs enable row level security;
+alter table public.study_sessions_v2 enable row level security;
+alter table public.study_jobs_v2 enable row level security;
 
 
 -- =========================================================================
@@ -113,17 +123,25 @@ alter table public.study_jobs enable row level security;
 -- Attempts increment at CLAIM time, not completion, so a worker that crashes
 -- mid-generation still burns an attempt. Without that, a job that reliably
 -- kills its worker would be retried forever.
+--
+-- DROPPED FIRST because its return type is a TABLE type. `create or replace`
+-- cannot change a function's return type, so re-running this file against a
+-- database where claim_job already returns `setof public.study_jobs` (the
+-- pre-2026-08-07 table) fails with "cannot change return type of existing
+-- function" rather than repointing it. The drop makes the rename idempotent.
+drop function if exists public.claim_job(text, integer);
+
 create or replace function public.claim_job(
     p_worker_id text,
     p_lease_seconds integer
-) returns setof public.study_jobs
+) returns setof public.study_jobs_v2
 language plpgsql security definer
 set search_path = public, pg_temp as $$
 declare
     v_job_id text;
 begin
     select job_id into v_job_id
-    from public.study_jobs
+    from public.study_jobs_v2
     where status = 'pending'
     order by created_at, job_id
     for update skip locked
@@ -134,7 +152,7 @@ begin
     end if;
 
     return query
-    update public.study_jobs
+    update public.study_jobs_v2
     set status = 'running',
         worker_id = p_worker_id,
         attempts = attempts + 1,
@@ -161,7 +179,7 @@ declare
     v_failed integer;
 begin
     with r as (
-        update public.study_jobs
+        update public.study_jobs_v2
         set status = 'pending', worker_id = null, lease_expires_at = null,
             updated_at = now()
         where status = 'running' and lease_expires_at is not null
@@ -170,7 +188,7 @@ begin
     ) select count(*)::integer into v_requeued from r;
 
     with f as (
-        update public.study_jobs
+        update public.study_jobs_v2
         set status = 'failed', updated_at = now(), completed_at = now(),
             error = coalesce(error, 'exhausted: attempts or deadline')
         where status in ('pending', 'running')
@@ -199,7 +217,7 @@ begin
     if p_response_text is null or btrim(p_response_text) = '' then
         raise exception 'refusing to complete job % with empty response text', p_job_id;
     end if;
-    update public.study_jobs
+    update public.study_jobs_v2
     set status = 'done', response_text = p_response_text, stages = p_stages,
         error = null, updated_at = now(), completed_at = now(),
         lease_expires_at = null
@@ -226,7 +244,7 @@ declare
     v_status text;
 begin
     select attempts, deadline_at into v_attempts, v_deadline
-    from public.study_jobs
+    from public.study_jobs_v2
     where job_id = p_job_id and worker_id = p_worker_id and status = 'running'
     for update;
 
@@ -237,7 +255,7 @@ begin
     v_status := case when v_attempts >= p_max_attempts or v_deadline < now()
                      then 'failed' else 'pending' end;
 
-    update public.study_jobs
+    update public.study_jobs_v2
     set status = v_status,
         error = left(p_error, 2000),
         updated_at = now(),
@@ -262,7 +280,7 @@ set search_path = public, pg_temp as $$
 declare
     v_rows integer;
 begin
-    update public.study_jobs
+    update public.study_jobs_v2
     set lease_expires_at = now() + make_interval(secs => p_lease_seconds),
         updated_at = now()
     where job_id = p_job_id and worker_id = p_worker_id and status = 'running';
@@ -283,7 +301,7 @@ set search_path = public, pg_temp as $$
 declare
     v_rows integer;
 begin
-    update public.study_jobs
+    update public.study_jobs_v2
     set status = 'pending', attempts = 0, error = null, worker_id = null,
         lease_expires_at = null, completed_at = null,
         manual_retries = manual_retries + 1,
@@ -306,7 +324,7 @@ set search_path = public, pg_temp as $$
 declare
     v_rows integer;
 begin
-    update public.study_sessions
+    update public.study_sessions_v2
     set submitted_at = now(), updated_at = now()
     where session_id = p_session_id and submitted_at is null;
     get diagnostics v_rows = row_count;
@@ -322,15 +340,15 @@ set search_path = public, pg_temp as $$
     select jsonb_build_object(
         'queue', coalesce((select jsonb_object_agg(status, n)
                            from (select status, count(*)::int as n
-                                 from public.study_jobs group by status) q), '{}'::jsonb),
+                                 from public.study_jobs_v2 group by status) q), '{}'::jsonb),
         'submitted_by_arm', coalesce((select jsonb_object_agg(arm, n)
                            from (select arm, count(*)::int as n
-                                 from public.study_sessions
+                                 from public.study_sessions_v2
                                  where arm is not null and submitted_at is not null
                                  group by arm) a), '{}'::jsonb),
         'saw_response_never_submitted', (
-            select count(*)::int from public.study_sessions s
-            join public.study_jobs j on j.session_id = s.session_id
+            select count(*)::int from public.study_sessions_v2 s
+            join public.study_jobs_v2 j on j.session_id = s.session_id
             where s.submitted_at is null and j.status = 'done')
     );
 $$;

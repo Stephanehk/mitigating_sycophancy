@@ -65,17 +65,23 @@ def seed_jobs(tag):
     GENERATION_ARMS, not ARMS: the two no-review arms are flow-only variants
     whose generation plans are byte-identical to `ours` and `untrained`
     (test_prompts.py pins that), so generating for them would spend two GPU
-    minutes re-testing the same code path.
+    minutes re-testing the same code path. They are retired as of 2026-08-07;
+    the exclusion still holds because it is about the PLANS, not the draw.
     """
     import datetime
+    import config
     import scenarios
     from prompts import GENERATION_ARMS, build_user_turn
 
-    scenario = scenarios.get_scenario("exclusion")
+    # Any real key will do — nothing about the scenario reaches the model. Taken
+    # from scenarios.py rather than written as a literal so the 2026-08-07
+    # instrument change (which replaced all four keys) could not leave a
+    # hardcoded one here that start_response would reject.
+    scenario = scenarios.SCENARIOS[0]
     # Same composition start_response performs: the participant's own screening
     # description of their incident, then their side of it. NOT the vignette.
-    own_description = ("I did not invite my brother to my birthday dinner because"
-                       " I could only book a table for six.")
+    own_description = ("My sister asked what I thought of her wedding dress and"
+                       " I told her it did not suit her.")
     user_text = build_user_turn(own_description, USER_TEXT)
     deadline = (datetime.datetime.now(datetime.timezone.utc)
                 + datetime.timedelta(seconds=1800)).isoformat()
@@ -83,11 +89,12 @@ def seed_jobs(tag):
     jobs = {}
     for arm in GENERATION_ARMS:
         session_id = "%s-%s" % (tag, arm)
-        _rest("/study_sessions", "POST", json={
+        _rest("/" + config.TABLE_SESSIONS, "POST", json={
             "session_id": session_id, "session_token": session_id + "-tok",
-            "screening_order": ["exclusion"], "arm": arm, "user_agent": "smoke"})
+            "screening_order": [scenario["key"]], "arm": arm,
+            "user_agent": "smoke"})
         job_id = "%s-job-%s" % (tag, arm)
-        _rest("/study_jobs", "POST", json={
+        _rest("/" + config.TABLE_JOBS, "POST", json={
             "job_id": job_id, "session_id": session_id, "arm": arm,
             "topic_title": scenario["topic_title"], "user_text": user_text,
             "status": "pending", "deadline_at": deadline})
@@ -97,13 +104,17 @@ def seed_jobs(tag):
 
 def cleanup(tag):
     """Delete every row this run created. Jobs cascade off the session."""
-    for row in _rest("/study_sessions?session_id=like.%s*&select=session_id" % tag):
-        _rest("/study_sessions?session_id=eq.%s" % row["session_id"], "DELETE")
+    import config
+    for row in _rest("/%s?session_id=like.%s*&select=session_id"
+                     % (config.TABLE_SESSIONS, tag)):
+        _rest("/%s?session_id=eq.%s" % (config.TABLE_SESSIONS, row["session_id"]),
+              "DELETE")
 
 
 def get_job(job_id):
     """One job row from Supabase. `stages` is already parsed jsonb."""
-    rows = _rest("/study_jobs?job_id=eq.%s&select=*" % job_id)
+    import config
+    rows = _rest("/%s?job_id=eq.%s&select=*" % (config.TABLE_JOBS, job_id))
     return rows[0] if rows else None
 
 

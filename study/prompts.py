@@ -1,10 +1,10 @@
 """Model arms and their prompts for the sycophancy user study.
 
-RANDOM ASSIGNMENT DRAWS FROM TWO ARMS (changed 2026-08-05): `ours_noreview` and
-`untrained_noreview` — our model and the untrained base, both on the flow where
-the participant never edits what is sent to the model. The other four are
-retired but still defined — see RANDOMIZED_ARMS below for what that means and
-why they were not deleted.
+RANDOM ASSIGNMENT DRAWS FROM TWO ARMS (changed 2026-08-07): `ours` and
+`untrained` — our model and the untrained base, both on the flow where the
+participant IS shown the composed model input and may edit it before it is sent.
+The other four are retired but still defined — see RANDOMIZED_ARMS below for
+what that means and why they were not deleted.
 
 Six arms, all served from ONE engine running Qwen/Qwen3-8B with our LoRA
 adapter loaded as a hot-swappable adapter (see worker/vllm_server.py and
@@ -19,20 +19,18 @@ worker/hf_backend.py):
   ours_noreview      — generation identical to `ours`.
   untrained_noreview — generation identical to `untrained`.
 
-TWO OF THE SIX MANIPULATE THE FLOW, NOT THE MODEL — AND SINCE 2026-08-05 THOSE
-TWO ARE THE ONLY ONES DRAWN. `ours_noreview` and `untrained_noreview` produce
-byte-identical generation plans to `ours` and `untrained`; what differs is that
-the participant is NOT shown the review page where the two halves of their
-writing are concatenated and offered for editing. The text is composed and sent
-without them seeing it. The plans are MAPPED onto their twin (GENERATION_TWIN)
+TWO OF THE SIX MANIPULATE THE FLOW, NOT THE MODEL, AND NEITHER IS DRAWN ANY
+MORE. `ours_noreview` and `untrained_noreview` produce byte-identical generation
+plans to `ours` and `untrained`; what differs is that their participants are NOT
+shown the review page where the two halves of their writing are concatenated and
+offered for editing. The plans are MAPPED onto their twin (GENERATION_TWIN)
 rather than duplicated, so a prompt change cannot apply to one and not the other.
+They were the whole draw between 2026-08-05 and 2026-08-07 and are retired now.
 
-So the design is now one factor: the two drawn arms share their system prompt,
-their stage count, their flow and their user turn, and differ only in which model
-the request addresses. `ours_noreview` vs `untrained_noreview` is the
-trained-vs-base contrast with the model's input held at exactly what the
-participant wrote. (While the review arms were drawn, `ours` vs `ours_noreview`
-isolated the review step alone; that factor is no longer in the draw.)
+So the design is one factor: the two drawn arms share their system prompt, their
+stage count, their flow and their user turn, and differ only in which model the
+request addresses. `ours` vs `untrained` is the trained-vs-base contrast, on the
+flow where the participant sees the model's input and may edit it first.
 
 SYSTEM PROMPT (changed 2026-07-27): every arm now receives the SAME shared
 system prompt, BASE_SYSTEM_PROMPT, which is the source survey's [ETHICS]
@@ -80,36 +78,46 @@ ARM_UNTRAINED_NOREVIEW = "untrained_noreview"
 ARMS = (ARM_OURS, ARM_UNTRAINED, ARM_SYCO, ARM_NEUTRAL,
         ARM_OURS_NOREVIEW, ARM_UNTRAINED_NOREVIEW)
 
-#: THE ARMS A PARTICIPANT CAN BE DRAWN INTO (changed 2026-08-05; was a three-way
-#: draw over `ours`/`untrained`/`syco` from 2026-08-01, and all six before that).
-#: Assignment is now a two-way draw between our model and the untrained base, on
-#: the flow where NEITHER group edits the model's input: the composed user turn
-#: goes straight to the model with no page in between offering it for editing.
-#: This tuple — not ARMS — is what the generated `session_arm` RPC samples from,
-#: so it is the single definition of the randomization.
+#: THE ARMS A PARTICIPANT CAN BE DRAWN INTO (changed 2026-08-07; the draw was
+#: over the two no-review arms from 2026-08-05, over `ours`/`untrained`/`syco`
+#: from 2026-08-01, and over all six before that). Assignment is a two-way draw
+#: between our model and the untrained base, on the flow where BOTH groups are
+#: shown the composed user turn and may edit it before pressing Confirm. This
+#: tuple — not ARMS — is what the generated `session_arm` RPC samples from, so it
+#: is the single definition of the randomization.
 #:
 #: WHAT THE NARROWING BUYS: one factor. Both drawn arms share a system prompt, a
 #: stage count, a flow and a user turn, so a difference in the DVs cannot be
 #: attributed to the sycophancy policy, to a second editing stage, or to one
-#: group having reworded their prompt before sending it.
+#: group having been shown a page the other was not.
+#:
+#: WHAT THE REVIEW PAGE COSTS, so it is on the record: the model's input is no
+#: longer fixed at exactly what the participant wrote. Someone who rewrites their
+#: story on the review page changes the stimulus the DVs are about, and that
+#: rewriting is not randomized. It is balanced across the two arms (both see the
+#: page), so it does not confound the ours-vs-untrained contrast, but it does add
+#: within-cell variance. `user_text` (what the model got) and `screening.csv`'s
+#: `description` + `perspective_text` (what they originally wrote) are both
+#: exported, so the edit is measurable rather than invisible.
 #:
 #: THE OTHER FOUR ARE RETIRED, NOT DELETED, and the distinction matters in two
-#: places. (1) ARMS is the legal domain of the `arm` column on study_sessions and
-#: study_submissions (emit_arm_domain), and rows collected before this change
-#: carry `ours`, `untrained`, `syco` and `neutral`; narrowing the constraint to
-#: two names would fail against them, which is the correct way for that to go
+#: places. (1) ARMS is the legal domain of the `arm` column on the sessions and
+#: submissions tables (emit_arm_domain), and rows collected before this change
+#: carry `syco`, `neutral` and the two no-review names; narrowing the constraint
+#: to two names would fail against them, which is the correct way for that to go
 #: wrong but not something to provoke. (2) They keep their prompts and their
 #: generation plans, so re-widening the draw is this one line.
 #:
-#: CONSEQUENCE FOR THE FLOW FORK: every randomized arm now skips the review page,
-#: so response_flow answers `show_review: false` for all of them and the page is
-#: rendered for nobody. The call is load-bearing, not vestigial: `false` is what
-#: tells the browser to drop the page and enqueue the generation itself, and it
-#: is where the arm is drawn at the moment of eligibility.
-RANDOMIZED_ARMS = (ARM_OURS_NOREVIEW, ARM_UNTRAINED_NOREVIEW)
+#: CONSEQUENCE FOR THE FLOW FORK: every randomized arm now SHOWS the review page,
+#: so response_flow answers `show_review: true` for all of them. The bit is
+#: constant across the draw, exactly as it was when the constant was `false`, so
+#: it still partitions nobody — and it is still load-bearing, because it is what
+#: tells the browser which page to render next and it is where the arm is drawn
+#: at the moment of eligibility.
+RANDOMIZED_ARMS = (ARM_OURS, ARM_UNTRAINED)
 
 #: Defined arms that assignment no longer reaches. Analysis-facing: a row with
-#: one of these predates 2026-08-05. No debug link forces one either, so nothing
+#: one of these predates 2026-08-07. No debug link forces one either, so nothing
 #: new can land in them at all.
 RETIRED_ARMS = tuple(a for a in ARMS if a not in RANDOMIZED_ARMS)
 
@@ -124,12 +132,25 @@ assert len(set(RANDOMIZED_ARMS)) == len(RANDOMIZED_ARMS), (
 #: the generation is unaffected.
 SKIP_REVIEW_ARMS = (ARM_OURS_NOREVIEW, ARM_UNTRAINED_NOREVIEW)
 
-#: THE DESIGN RULE ADDED 2026-08-05: nobody edits the model's input. Asserted
-#: rather than commented, because putting a review arm back into the draw would
-#: otherwise silently reintroduce a second factor.
-assert set(RANDOMIZED_ARMS) <= set(SKIP_REVIEW_ARMS), (
-    "every drawable arm must skip the review page: the study no longer lets any "
-    "participant edit what is sent to the model"
+#: THE DESIGN RULE, RESTATED 2026-08-07 (it read the other way round from
+#: 2026-08-05 to 2026-08-07): the review page must be CONSTANT across the draw.
+#: Asserted rather than commented, because mixing a review arm with a no-review
+#: arm is what silently adds a second factor — and it is a factor the
+#: participant can see, so it is not one you could covary away afterwards.
+#:
+#: Both settings of the constant are legal. What is not legal is a split draw.
+assert (set(RANDOMIZED_ARMS) <= set(SKIP_REVIEW_ARMS)
+        or not set(RANDOMIZED_ARMS) & set(SKIP_REVIEW_ARMS)), (
+    "the drawable arms must agree about the review page: drawing a review arm "
+    "against a no-review arm would make the flow a second, visible factor"
+)
+
+#: ...and which way the constant currently points. Split out from the rule above
+#: so the two failures read differently: this one means "the study changed",
+#: that one means "the design broke".
+assert not set(RANDOMIZED_ARMS) & set(SKIP_REVIEW_ARMS), (
+    "since 2026-08-07 every drawable arm SHOWS the review page: participants are "
+    "shown the composed model input and may edit it before it is sent"
 )
 
 #: The arm each no-review arm is a flow-only variant of. Its generation plan is
@@ -153,25 +174,28 @@ assert set(GENERATION_TWIN.values()) <= set(ARMS)
 #: `/debug_c1` is DEBUG_CONDITIONS["c1"].
 #:
 #: WHY THIS EXISTS. Random assignment is exactly what you cannot work around
-#: when checking a condition by hand. Since 2026-08-05 the draw is over these
-#: same two arms, so what a link buys is no longer a flow you could not otherwise
-#: reach — it is knowing WHICH MODEL you are looking at, which the draw hides on
-#: purpose. These links hand `start_session` a condition key, which sets the arm
-#: directly INSTEAD of drawing it — and stamps `is_debug` on the session, so the
-#: resulting row is quarantined from the export rather than counted as a
-#: participant.
+#: when checking a condition by hand. The links list the same two arms the draw
+#: does, so what a link buys is not a flow you could not otherwise reach — it is
+#: knowing WHICH MODEL you are looking at, which the draw hides on purpose. These
+#: links hand `start_session` a condition key, which sets the arm directly
+#: INSTEAD of drawing it — and stamps `is_debug` on the session, so the resulting
+#: row is quarantined from the export rather than counted as a participant.
 #:
 #: Deliberately NOT secret. The link is powerless against the data because every
 #: session it creates is flagged; a token would add a thing to leak without
 #: adding a guarantee. See README "Walking a condition by hand".
 #:
-#: Exactly the drawable arms are listed, so a hand-walk is a walk of the real
-#: participant experience with the model named. NOT listed: the four retired
-#: arms — which means the review-and-edit page is now reachable by nobody, by
-#: draw or by hand. Add a key here if it needs walking again.
+#: THE KEYS ARE STABLE ACROSS THE 2026-08-07 CHANGE AND THEIR MEANING IS NOT:
+#: `c1` was `ours_noreview` and is now `ours`, `c2` was `untrained_noreview` and
+#: is now `untrained`. Same model behind each, different flow. Nothing in the
+#: data depends on this — every session a link creates is dropped from the export
+#: — but a bookmarked /debug_c1 now walks a page it did not walk before.
+#:
+#: NOT listed: the four retired arms, which means the two no-review arms are now
+#: reachable by nobody, by draw or by hand. Add a key here if one needs walking.
 DEBUG_CONDITIONS = {
-    "c1": ARM_OURS_NOREVIEW,
-    "c2": ARM_UNTRAINED_NOREVIEW,
+    "c1": ARM_OURS,
+    "c2": ARM_UNTRAINED,
 }
 
 assert set(DEBUG_CONDITIONS.values()) == set(RANDOMIZED_ARMS), (

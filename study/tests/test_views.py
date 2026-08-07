@@ -12,6 +12,7 @@ that behaviour is now job_state() in plpgsql and is covered by test_rpcs.py.
 
 import json
 import os
+import re
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -150,7 +151,7 @@ def test_the_generated_schema_constrains_the_arm_column_to_exactly_the_arms():
     """
     sql = _sql("supabase_app_schema.sql")
     expected = "check (arm in (%s))" % ", ".join("'%s'" % arm for arm in ARMS)
-    for table in ("study_sessions", "study_submissions"):
+    for table in (config.TABLE_SESSIONS, config.TABLE_SUBMISSIONS):
         assert "%s_arm_check" % table in sql, (
             "%s's arm constraint is not emitted, so it can never be updated"
             % table)
@@ -187,6 +188,73 @@ def test_the_retired_arms_stay_legal_but_undrawable():
     for arm in RETIRED_ARMS:
         assert "'%s'" % arm in sql, "%s is no longer a legal arm value" % arm
         assert "'%s'" % arm not in draw, "%s is still being drawn" % arm
+
+
+# --- The table generation --------------------------------------------------
+
+#: The only EXECUTABLE statements allowed to name a retired table: the guarded
+#: drop of the function typed on the previous generation's row type (see
+#: emit_legacy_drops). Comment lines are exempt separately — prose that explains
+#: the rename has to be able to spell the old name.
+_UNSUFFIXED_ALLOWED = (
+    "if to_regtype('public.study_jobs') is not null then",
+    "execute 'drop function if exists public.job_state(public.study_jobs)';",
+)
+
+
+def test_the_sql_files_and_config_agree_about_the_table_suffix():
+    """A rename that reaches two of the three .sql files is a broken deploy.
+
+    The RPCs live in the generated file and the tables they read live in the two
+    hand-written ones, so a suffix applied to only some of them produces SQL that
+    runs cleanly and then fails at the first participant — `relation
+    "public.study_jobs_v2" does not exist`, from inside a SECURITY DEFINER
+    function, at the moment someone presses Continue.
+
+    Checks both directions: every app table reference carries the suffix, and
+    the suffix is the one config.py declares.
+    """
+    pattern = re.compile(
+        r"public\.(%s)(?!%s)" % ("|".join(config.LEGACY_TABLES),
+                                 re.escape(config.TABLE_SUFFIX)))
+    for name in ("supabase_schema.sql", "supabase_queue_schema.sql",
+                 "supabase_app_schema.sql"):
+        sql = _sql(name)
+        for line in sql.splitlines():
+            if line.lstrip().startswith("--") or not pattern.search(line):
+                continue
+            assert any(allowed in line for allowed in _UNSUFFIXED_ALLOWED), (
+                "%s names a table without config.TABLE_SUFFIX (%r):\n    %s"
+                % (name, config.TABLE_SUFFIX, line.strip()))
+        # ...and that the suffixed form is actually present, so a file that
+        # stopped mentioning tables at all cannot pass by saying nothing.
+        assert config.TABLE_SUFFIX in sql, (
+            "%s names no suffixed table; is it still part of the schema?" % name)
+
+
+def test_the_legacy_tables_are_never_written_to_again():
+    """The whole point of the suffix: the previous run's rows are read-only now.
+
+    A stray `insert into public.study_submissions` would append a new-instrument
+    row to the old table, where the scenario keys and the arm draw mean something
+    different — the exact mixing the suffix exists to prevent.
+    """
+    for name in ("supabase_schema.sql", "supabase_queue_schema.sql",
+                 "supabase_app_schema.sql"):
+        sql = _sql(name)
+        for legacy in config.LEGACY_TABLES:
+            for verb in ("insert into", "update", "truncate"):
+                statement = "%s public.%s\n" % (verb, legacy)
+                assert statement not in sql + "\n", (
+                    "%s writes to the retired table %s" % (name, legacy))
+
+
+def test_the_export_defaults_to_the_current_generation():
+    """`STUDY_SUPABASE_TABLE` is env-overridable, so the DEFAULT is what protects
+    someone who exports without thinking about it."""
+    assert config.SUPABASE_TABLE.endswith(config.TABLE_SUFFIX) or (
+        os.environ.get("STUDY_SUPABASE_TABLE")), (
+        "the export default points at a retired table: %r" % (config.SUPABASE_TABLE,))
 
 
 def test_no_hand_written_schema_file_hardcodes_the_arm_list():
@@ -234,7 +302,7 @@ def test_the_debug_flag_column_is_emitted_for_both_tables():
     column declared only in the hand-written schema would not exist in the live
     database — and submit_study inserts into it."""
     sql = _sql("supabase_app_schema.sql")
-    for table in ("study_sessions", "study_submissions"):
+    for table in (config.TABLE_SESSIONS, config.TABLE_SUBMISSIONS):
         assert ("alter table public.%s add column if not exists is_debug" % table) in sql
 
 

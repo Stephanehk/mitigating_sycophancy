@@ -3,6 +3,9 @@
 --
 -- Run AFTER supabase_schema.sql and supabase_queue_schema.sql.
 --
+-- Tables carry config.TABLE_SUFFIX ('_v2'). The three .sql files must agree on it;
+-- tests/test_views.py checks that they do.
+--
 -- Generate supabase_app_schema.sql — the RPCs the browser and worker call.
 -- 
 -- WHY GENERATED RATHER THAN HAND-WRITTEN. Dropping the API server moves four
@@ -25,30 +28,48 @@
 --     the worker    a shared secret, compared against study_config inside the RPC
 -- 
 -- service_role is then only ever used from a developer machine, for exports.
+-- 
+-- TABLE NAMES ARE WRITTEN UNSUFFIXED BELOW AND SUFFIXED ON THE WAY OUT (see
+-- suffix_tables and config.TABLE_SUFFIX, added 2026-08-07). The SQL reads as
+-- `public.study_jobs` and is emitted as `public.study_jobs_v2`, so moving the
+-- study to a fresh generation of tables is one constant in config.py rather than
+-- forty edits here. FUNCTION names are not suffixed: `create or replace` repoints
+-- them at the new tables and the browser and worker call them unchanged.
+
+-- Functions typed on the PREVIOUS generation's tables. See
+-- emit_legacy_drops() in tools/generate_supabase_app_sql.py for why
+-- `create or replace` cannot handle these two on its own.
+do $$
+begin
+    if to_regtype('public.study_jobs') is not null then
+        execute 'drop function if exists public.job_state(public.study_jobs)';
+    end if;
+end $$;
+drop function if exists public.session_for_token(text);
 
 -- Generated from scenarios.py. Only what the queue needs: the key
 -- (validated on start_response) and topic_title (stored on the job).
-create table if not exists public.study_scenarios (
+create table if not exists public.study_scenarios_v2 (
     key         text primary key,
     topic_title text not null,
     position    integer not null
 );
-truncate public.study_scenarios;
-insert into public.study_scenarios (key, topic_title, position) values
-    ('relationship', 'Relationship Boundaries', 0),
-    ('others', 'Involving Yourself in Someone Else’s Business', 1),
-    ('exclusion', 'Excluding Someone', 2),
-    ('uncomfortable', 'Making Someone Uncomfortable', 3);
+truncate public.study_scenarios_v2;
+insert into public.study_scenarios_v2 (key, topic_title, position) values
+    ('honest_opinion', 'Giving an Honest Opinion', 0),
+    ('correction', 'Correcting Someone in Public', 1),
+    ('apology', 'Deciding Who Apologizes', 2),
+    ('joke', 'Making a Joke at Someone’s Expense', 3);
 
 -- Generated from questionnaires.py: 284 (response_key, value) pairs across 42 response keys.
-create table if not exists public.questionnaire_options (
+create table if not exists public.questionnaire_options_v2 (
     response_key text not null,
     question_id  text not null,
     value        integer not null,
     primary key (response_key, value)
 );
-truncate public.questionnaire_options;
-insert into public.questionnaire_options (response_key, question_id, value) values
+truncate public.questionnaire_options_v2;
+insert into public.questionnaire_options_v2 (response_key, question_id, value) values
     ('fk_1', 'fk', 1),
     ('fk_1', 'fk', 2),
     ('fk_1', 'fk', 3),
@@ -335,48 +356,49 @@ insert into public.questionnaire_options (response_key, question_id, value) valu
     ('big_five_10', 'big_five', 5);
 
 -- Generated from prompts.ARMS: the 6 legal arm values.
-alter table public.study_sessions drop constraint if exists study_sessions_arm_check;
-alter table public.study_sessions add constraint study_sessions_arm_check
+alter table public.study_sessions_v2 drop constraint if exists study_sessions_v2_arm_check;
+alter table public.study_sessions_v2 add constraint study_sessions_v2_arm_check
     check (arm in ('ours', 'untrained', 'syco', 'neutral', 'ours_noreview', 'untrained_noreview'));
-alter table public.study_submissions drop constraint if exists study_submissions_arm_check;
-alter table public.study_submissions add constraint study_submissions_arm_check
+alter table public.study_submissions_v2 drop constraint if exists study_submissions_v2_arm_check;
+alter table public.study_submissions_v2 add constraint study_submissions_v2_arm_check
     check (arm in ('ours', 'untrained', 'syco', 'neutral', 'ours_noreview', 'untrained_noreview'));
 
 -- Sessions whose arm was forced by a /debug_<key> link rather than drawn.
 -- Excluded from the export by default; see prompts.DEBUG_CONDITIONS.
-alter table public.study_sessions add column if not exists is_debug boolean not null default false;
-alter table public.study_submissions add column if not exists is_debug boolean not null default false;
+alter table public.study_sessions_v2 add column if not exists is_debug boolean not null default false;
+alter table public.study_submissions_v2 add column if not exists is_debug boolean not null default false;
 
 -- Generated from config.py. Thresholds the RPCs enforce.
-create table if not exists public.study_config (
+create table if not exists public.study_config_v2 (
     key   text primary key,
     value text not null
 );
-insert into public.study_config (key, value) values ('min_describe_chars', '20')
+insert into public.study_config_v2 (key, value) values ('min_describe_chars', '20')
     on conflict (key) do update set value = excluded.value;
-insert into public.study_config (key, value) values ('min_perspective_chars', '50')
+insert into public.study_config_v2 (key, value) values ('min_perspective_chars', '50')
     on conflict (key) do update set value = excluded.value;
-insert into public.study_config (key, value) values ('max_text_chars', '4000')
+insert into public.study_config_v2 (key, value) values ('max_text_chars', '4000')
     on conflict (key) do update set value = excluded.value;
-insert into public.study_config (key, value) values ('max_model_input_chars', '8002')
+insert into public.study_config_v2 (key, value) values ('max_model_input_chars', '8002')
     on conflict (key) do update set value = excluded.value;
-insert into public.study_config (key, value) values ('job_deadline_seconds', '420')
+insert into public.study_config_v2 (key, value) values ('job_deadline_seconds', '420')
     on conflict (key) do update set value = excluded.value;
-insert into public.study_config (key, value) values ('job_lease_seconds', '180')
+insert into public.study_config_v2 (key, value) values ('job_lease_seconds', '180')
     on conflict (key) do update set value = excluded.value;
-insert into public.study_config (key, value) values ('job_max_attempts', '4')
+insert into public.study_config_v2 (key, value) values ('job_max_attempts', '4')
     on conflict (key) do update set value = excluded.value;
-insert into public.study_config (key, value) values ('max_manual_retries', '1')
+insert into public.study_config_v2 (key, value) values ('max_manual_retries', '1')
     on conflict (key) do update set value = excluded.value;
-insert into public.study_config (key, value) values ('client_poll_interval_ms', '1200')
+insert into public.study_config_v2 (key, value) values ('client_poll_interval_ms', '1200')
     on conflict (key) do update set value = excluded.value;
-insert into public.study_config (key, value) values ('client_slow_notice_ms', '12000')
+insert into public.study_config_v2 (key, value) values ('client_slow_notice_ms', '12000')
     on conflict (key) do update set value = excluded.value;
 
 -- The worker's shared secret. NOT generated — set it yourself, once:
---   insert into public.study_config (key, value)
+--   insert into public.study_config_v2 (key, value)
 --   values ('worker_token', '<the same secret the worker exports>')
 --   on conflict (key) do update set value = excluded.value;
+
 
 -- =========================================================================
 -- Helpers
@@ -384,12 +406,12 @@ insert into public.study_config (key, value) values ('client_slow_notice_ms', '1
 
 create or replace function public.cfg(p_key text) returns integer
 language sql stable security definer set search_path = public, pg_temp as $$
-    select value::integer from public.study_config where key = p_key;
+    select value::integer from public.study_config_v2 where key = p_key;
 $$;
 
 -- The client-facing view of a job. Shared by start_response, response_status
 -- and retry_response so the three cannot describe the same job differently.
-create or replace function public.job_state(p_job public.study_jobs) returns jsonb
+create or replace function public.job_state(p_job public.study_jobs_v2) returns jsonb
 language sql stable security definer set search_path = public, pg_temp as $$
     select jsonb_strip_nulls(jsonb_build_object(
         'job_id', p_job.job_id,
@@ -404,11 +426,11 @@ $$;
 -- Resolve a participant's opaque token. Raises rather than returning null, so
 -- every caller fails the same way on a lost session.
 create or replace function public.session_for_token(p_token text)
-returns public.study_sessions
+returns public.study_sessions_v2
 language plpgsql stable security definer set search_path = public, pg_temp as $$
-declare v_session public.study_sessions;
+declare v_session public.study_sessions_v2;
 begin
-    select * into v_session from public.study_sessions where session_token = p_token;
+    select * into v_session from public.study_sessions_v2 where session_token = p_token;
     if not found then
         raise exception 'unknown session' using errcode = 'P0002';
     end if;
@@ -418,11 +440,12 @@ $$;
 
 -- Draw this session's arm, ONCE, and return it.
 --
--- A UNIFORM TWO-WAY DRAW over prompts.RANDOMIZED_ARMS (ours_noreview /
--- untrained_noreview): our model vs the untrained base, both on the flow where
--- the participant never edits the model's input. The four retired arms are still
--- legal column values but are never sampled, and no debug link forces one, so
--- nothing new can land in them.
+-- A UNIFORM TWO-WAY DRAW over prompts.RANDOMIZED_ARMS (ours / untrained): our
+-- model vs the untrained base, both on the flow where the participant is shown
+-- the composed model input and may edit it. The four retired arms — including
+-- the two no-review ones, drawn 2026-08-05 to 2026-08-07 — are still legal
+-- column values but are never sampled, and no debug link forces one, so nothing
+-- new can land in them.
 --
 -- Sticky by construction: the update only fires while `arm` is null, and the
 -- value is re-read afterwards so a caller that lost a concurrent race still
@@ -440,13 +463,13 @@ create or replace function public.session_arm(p_session_id text) returns text
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare v_arm text;
 begin
-    select arm into v_arm from public.study_sessions where session_id = p_session_id;
+    select arm into v_arm from public.study_sessions_v2 where session_id = p_session_id;
     if v_arm is null then
-        update public.study_sessions
-           set arm = (array['ours_noreview', 'untrained_noreview'])[1 + floor(random() * 2)],
+        update public.study_sessions_v2
+           set arm = (array['ours', 'untrained'])[1 + floor(random() * 2)],
                updated_at = now()
          where session_id = p_session_id and arm is null;
-        select arm into v_arm from public.study_sessions where session_id = p_session_id;
+        select arm into v_arm from public.study_sessions_v2 where session_id = p_session_id;
     end if;
     return v_arm;
 end;
@@ -458,7 +481,7 @@ create or replace function public.assert_worker(p_worker_token text) returns voi
 language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare v_expected text;
 begin
-    select value into v_expected from public.study_config where key = 'worker_token';
+    select value into v_expected from public.study_config_v2 where key = 'worker_token';
     if v_expected is null or v_expected = '' then
         raise exception 'worker_token is not configured' using errcode = 'P0001';
     end if;
@@ -478,9 +501,9 @@ $$;
 -- p_debug_condition IS THE ONE WAY TO CHOOSE AN ARM, and it is for walking a
 -- condition by hand (see prompts.DEBUG_CONDITIONS and the /debug_<key> pages).
 -- Random assignment is precisely what you cannot work around when you need to
--- SEE a condition. Since the draw narrowed to the two no-review arms these links
--- reach the same flow a participant does; what they add is knowing which model
--- is answering, which the draw hides on purpose.
+-- SEE a condition. The links cover exactly the drawable arms, so they reach the
+-- same flow a participant does; what they add is knowing which model is
+-- answering, which the draw hides on purpose.
 --
 -- WHAT KEEPS IT FROM CORRUPTING THE DATA. The session is stamped is_debug, and
 -- the export drops those rows by default, so a forced arm is quarantined rather
@@ -505,8 +528,8 @@ declare
 begin
     if coalesce(p_debug_condition, '') <> '' then
         v_arm := case p_debug_condition
-                      when 'c1' then 'ours_noreview'
-                      when 'c2' then 'untrained_noreview'
+                      when 'c1' then 'ours'
+                      when 'c2' then 'untrained'
                  end;
         -- A mistyped link must not silently become a normally randomized
         -- session: someone testing a condition would then believe they had
@@ -518,8 +541,8 @@ begin
     end if;
     -- Randomized per participant, drawn here so the order is recorded even
     -- though the browser renders the pages.
-    select jsonb_agg(key order by random()) into v_order from public.study_scenarios;
-    insert into public.study_sessions (session_id, session_token, screening_order,
+    select jsonb_agg(key order by random()) into v_order from public.study_scenarios_v2;
+    insert into public.study_sessions_v2 (session_id, session_token, screening_order,
                                        user_agent, arm, is_debug)
     values (v_id, v_token, v_order, left(coalesce(p_user_agent, ''), 500),
             v_arm, v_arm is not null);
@@ -539,18 +562,19 @@ $$;
 -- drawn here — one page before it is needed — and exactly one bit of it is
 -- returned: `show_review`. The arm ITSELF is still never sent.
 --
--- SINCE THE DRAW NARROWED TO THE TWO NO-REVIEW ARMS (2026-08-05) this bit is
--- constant for real participants — every one of them gets `false` — so it
--- partitions nothing and leaks nothing. It is still what makes the flow happen:
--- `false` is the instruction to drop the page and enqueue the generation
--- straight from response_intro. The within-session guarantees are unchanged: the
--- draw is sticky (session_arm), the job is one-per-session, and WHICH of the two
--- arms a participant got is unknowable to the browser.
+-- SINCE 2026-08-07 THE DRAW IS OVER ours / untrained, so this bit is constant at
+-- `true` for every real participant. It was constant at `false` from 2026-08-05
+-- to 2026-08-07 and split before that. Constant either way means it partitions
+-- nothing and leaks nothing, and it is still what makes the flow happen: the
+-- answer is what tells the browser whether the next page is review-and-edit or
+-- the loading screen. The within-session guarantees are unchanged: the draw is
+-- sticky (session_arm), the job is one-per-session, and WHICH of the two arms a
+-- participant got is unknowable to the browser.
 create or replace function public.response_flow(p_token text)
 returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
-    v_session public.study_sessions;
+    v_session public.study_sessions_v2;
     v_arm text;
 begin
     v_session := public.session_for_token(p_token);
@@ -562,13 +586,13 @@ $$;
 
 -- Enqueue the generation from the text the participant CONFIRMED.
 --
--- Takes the finished user turn, not the two halves. On the no-review arms — which
--- since 2026-08-05 is every arm a participant can be drawn into — the browser
--- composes the two halves and sends the result without showing it. On the review
--- arms (retired) a page showed them exactly what would be sent and let them edit
--- it before pressing Confirm, which is why the composition lives in the browser
--- at all: composing it server-side afterwards would have discarded those edits.
--- The string is the same either way.
+-- Takes the finished user turn, not the two halves. On the review arms — which
+-- since 2026-08-07 is every arm a participant can be drawn into — a page shows
+-- them exactly what will be sent and lets them edit it before pressing Confirm.
+-- That is why the composition lives in the browser at all: composing it
+-- server-side afterwards would discard those edits. On the no-review arms
+-- (retired) the browser composes the same two halves and sends the result
+-- without showing it.
 --
 -- The floor is min_describe + min_perspective, i.e. the same total the two
 -- separate pages already enforced, so editing cannot be used to get past the
@@ -589,8 +613,8 @@ returns jsonb
 language plpgsql security definer
 set search_path = public, pg_temp as $$
 declare
-    v_session public.study_sessions;
-    v_job public.study_jobs;
+    v_session public.study_sessions_v2;
+    v_job public.study_jobs_v2;
     v_topic text;
     v_arm text;
     v_text text := btrim(coalesce(p_user_text, ''));
@@ -598,14 +622,14 @@ declare
 begin
     v_session := public.session_for_token(p_token);
 
-    select * into v_job from public.study_jobs
+    select * into v_job from public.study_jobs_v2
     where session_id = v_session.session_id
     order by created_at desc limit 1;
     if found then
         return public.job_state(v_job);
     end if;
 
-    select topic_title into v_topic from public.study_scenarios where key = p_scenario_key;
+    select topic_title into v_topic from public.study_scenarios_v2 where key = p_scenario_key;
     if v_topic is null then
         raise exception 'Unknown scenario.' using errcode = 'P0001';
     end if;
@@ -616,9 +640,10 @@ begin
             using errcode = 'P0001';
     end if;
     -- The COMPOSED cap, not the per-field one: this text is two capped fields
-    -- joined by a blank line. On a no-review arm the participant has no page
-    -- holding it, so a rejection here would be a dead end rather than something
-    -- they could shorten.
+    -- joined by a blank line. On a review arm the participant is looking at the
+    -- text and can shorten it; on a no-review arm (retired) they had no page
+    -- holding it, so a rejection here would have been a dead end. The composed
+    -- cap is what makes the worst case reachable in both flows.
     if length(v_text) > cfg('max_model_input_chars') then
         raise exception 'Your answer is too long (limit % characters).',
             cfg('max_model_input_chars') using errcode = 'P0001';
@@ -630,7 +655,7 @@ begin
     -- re-rolling, and still works for a client that never called response_flow.
     v_arm := public.session_arm(v_session.session_id);
 
-    insert into public.study_jobs (job_id, session_id, arm, topic_title, user_text,
+    insert into public.study_jobs_v2 (job_id, session_id, arm, topic_title, user_text,
                                    status, deadline_at)
     values (replace(gen_random_uuid()::text, '-', ''), v_session.session_id, v_arm,
             v_topic, v_text, 'pending',
@@ -647,12 +672,12 @@ create or replace function public.response_status(p_token text)
 returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
-    v_session public.study_sessions;
-    v_job public.study_jobs;
+    v_session public.study_sessions_v2;
+    v_job public.study_jobs_v2;
 begin
     v_session := public.session_for_token(p_token);
     perform public.reap_expired_jobs(cfg('job_max_attempts'));
-    select * into v_job from public.study_jobs
+    select * into v_job from public.study_jobs_v2
     where session_id = v_session.session_id order by created_at desc limit 1;
     if not found then
         raise exception 'no generation for this session' using errcode = 'P0002';
@@ -666,11 +691,11 @@ create or replace function public.retry_response(p_token text)
 returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
-    v_session public.study_sessions;
-    v_job public.study_jobs;
+    v_session public.study_sessions_v2;
+    v_job public.study_jobs_v2;
 begin
     v_session := public.session_for_token(p_token);
-    select * into v_job from public.study_jobs
+    select * into v_job from public.study_jobs_v2
     where session_id = v_session.session_id order by created_at desc limit 1;
     if not found or v_job.status <> 'failed' then
         raise exception 'no failed generation to retry' using errcode = 'P0001';
@@ -679,14 +704,14 @@ begin
         raise exception 'retries exhausted' using errcode = 'P0001';
     end if;
     perform public.requeue_job(v_job.job_id, cfg('job_deadline_seconds'));
-    select * into v_job from public.study_jobs where job_id = v_job.job_id;
+    select * into v_job from public.study_jobs_v2 where job_id = v_job.job_id;
     return public.job_state(v_job);
 end;
 $$;
 
 -- Accept the whole study in one payload.
 --
--- The client's answers are validated against questionnaire_options, then
+-- The client's answers are validated against questionnaire_options_v2, then
 -- MERGED WITH SERVER-OWNED FACTS — arm, job id, the exact user_text the model
 -- received, the response text, per-stage outputs, attempt counts — none of
 -- which is taken from the payload, because the browser was never told the arm
@@ -701,8 +726,8 @@ create or replace function public.submit_study(p_token text, p_payload jsonb)
 returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
-    v_session public.study_sessions;
-    v_job public.study_jobs;
+    v_session public.study_sessions_v2;
+    v_job public.study_jobs_v2;
     v_answers jsonb := coalesce(p_payload -> 'answers', '{}'::jsonb);
     v_key text;
     v_raw text;
@@ -721,7 +746,7 @@ begin
         raise exception 'Missing or invalid eligibility.' using errcode = 'P0001';
     end if;
     if v_selected is not null
-       and not exists (select 1 from public.study_scenarios where key = v_selected) then
+       and not exists (select 1 from public.study_scenarios_v2 where key = v_selected) then
         raise exception 'Unknown selected scenario.' using errcode = 'P0001';
     end if;
     if v_eligibility = 'eligible' and v_selected is null then
@@ -739,7 +764,7 @@ begin
         exception when others then
             raise exception 'Invalid answer for %.', v_key using errcode = 'P0001';
         end;
-        if not exists (select 1 from public.questionnaire_options
+        if not exists (select 1 from public.questionnaire_options_v2
                        where response_key = v_key and value = v_val) then
             raise exception 'Invalid answer for %.', v_key using errcode = 'P0001';
         end if;
@@ -747,10 +772,10 @@ begin
 
     select coalesce(jsonb_agg(q.response_key order by q.response_key), '[]'::jsonb)
     into v_missing
-    from (select distinct response_key from public.questionnaire_options) q
+    from (select distinct response_key from public.questionnaire_options_v2) q
     where not (v_answers ? q.response_key);
 
-    select * into v_job from public.study_jobs
+    select * into v_job from public.study_jobs_v2
     where session_id = v_session.session_id order by created_at desc limit 1;
     if v_eligibility = 'eligible' and v_job.job_id is null then
         raise exception 'Eligible submission with no generation job.' using errcode = 'P0001';
@@ -766,7 +791,7 @@ begin
     -- is_debug is carried from the SESSION, not the payload, for the same reason
     -- the arm is: a debug walk-through must be identifiable at analysis time
     -- even though the browser has no say in it.
-    insert into public.study_submissions (
+    insert into public.study_submissions_v2 (
         session_id, arm, is_debug, job_id, topic_title, user_text, shown_response,
         shown_response_chars, stages, worker_attempts, manual_retries,
         prolific_pid, consent, eligibility, selected_scenario, screening_order,
@@ -799,7 +824,7 @@ $$;
 create or replace function public.worker_claim(p_worker_token text, p_worker_id text)
 returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
-declare v_job public.study_jobs;
+declare v_job public.study_jobs_v2;
 begin
     perform public.assert_worker(p_worker_token);
     perform public.reap_expired_jobs(cfg('job_max_attempts'));
@@ -871,7 +896,7 @@ grant execute on function public.worker_fail(text, text, text, text) to anon, au
 -- inherits PUBLIC. Verified the hard way on 2026-07-28: with only the grants
 -- above in place, the anon key could call claim_job, complete_job,
 -- mark_submitted, requeue_job, reap_expired_jobs and queue_stats, and could
--- SELECT study_config and read the worker token straight out of it. Anyone who
+-- SELECT study_config_v2 and read the worker token straight out of it. Anyone who
 -- loaded the study page could have poisoned the dataset with fabricated
 -- responses.
 --
@@ -895,7 +920,7 @@ revoke execute on function public.extend_lease(text, text, integer) from public,
 revoke execute on function public.requeue_job(text, integer) from public, anon, authenticated;
 revoke execute on function public.mark_submitted(text) from public, anon, authenticated;
 revoke execute on function public.queue_stats() from public, anon, authenticated;
-revoke execute on function public.job_state(public.study_jobs) from public, anon, authenticated;
+revoke execute on function public.job_state(public.study_jobs_v2) from public, anon, authenticated;
 revoke execute on function public.session_for_token(text) from public, anon, authenticated;
 -- session_arm is the arm draw itself. Callable with the anon key it would let a
 -- participant burn draws on other sessions, and — worse — it RETURNS the arm.
@@ -916,8 +941,8 @@ grant execute on function public.queue_stats() to service_role;
 grant execute on function public.session_arm(text) to service_role;
 
 -- RLS on the generated data tables too. Without this the anon key could read
--- study_config, which is where the worker's shared secret lives.
-alter table public.study_scenarios enable row level security;
-alter table public.questionnaire_options enable row level security;
-alter table public.study_config enable row level security;
+-- study_config_v2, which is where the worker's shared secret lives.
+alter table public.study_scenarios_v2 enable row level security;
+alter table public.questionnaire_options_v2 enable row level security;
+alter table public.study_config_v2 enable row level security;
 

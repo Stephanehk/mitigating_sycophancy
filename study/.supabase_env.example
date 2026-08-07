@@ -12,4 +12,7 @@
 
 export STUDY_SUPABASE_URL="https://<project-ref>.supabase.co"
 export STUDY_SUPABASE_SERVICE_KEY="<service_role key>"
-export STUDY_SUPABASE_TABLE="study_submissions"
+# Leave this UNSET to follow config.TABLE_SUFFIX (currently study_submissions_v2).
+# Set it only to export an older generation, e.g. the pre-2026-08-07 run:
+#   export STUDY_SUPABASE_TABLE="study_submissions"
+export STUDY_SUPABASE_TABLE="study_submissions_v2"

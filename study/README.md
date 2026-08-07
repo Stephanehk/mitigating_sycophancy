@@ -4,8 +4,9 @@ A self-contained web study adapted from `syco_label_mitigations_-_Copy_for_steph
 Participants are screened onto an interpersonal dilemma they have personally
 experienced, write their side of the story, are shown **one** AI response
 generated live by one of **two** randomly assigned arms (our model or the
-untrained base — in both cases what they wrote goes to the model unedited), and
-then answer the source survey's reflection battery about that response.
+untrained base — in both cases they are shown the composed model input first and
+may edit it), and then answer the source survey's reflection battery about that
+response.
 
 Everything — the app, the GPU worker, the tests, and the analysis export —
 lives in this directory.
@@ -17,17 +18,29 @@ lives in this directory.
 | | Source `.qsf` | This study |
 |---|---|---|
 | Interaction | 8-turn chat with gpt-4o | **One** response, no follow-up |
-| Randomized factor | 4-way sycophancy *label* (3 banners + unlabeled) | 2-way **arm**: our model vs the untrained base, both no-review (6 arms defined, 4 retired) |
+| Randomized factor | 4-way sycophancy *label* (3 banners + unlabeled) | 2-way **arm**: our model vs the untrained base, both review-and-edit (6 arms defined, 4 retired) |
 | Disclaimer | Varied by condition | **Fixed** for everyone: *"Note: This chatbot is AI, not human."* |
 | Demographics (age/gender/race) | Present | **Removed** |
 | Debrief | Two variants (syco / non-syco) | **One shared** debrief |
 | Screening free-text | Required on every page | Required only on *Very / Somewhat similar* |
 | Platform | Qualtrics | Standalone FastAPI + vanilla-JS SPA |
 | Data capture | Saved per page | **One payload at the end**, to Supabase (see §1b) |
+| Screening dilemmas | 4 relatability vignettes | **4 replacements** (2026-08-07), all "I was right and they objected" |
 
-Kept verbatim: consent, Prolific ID, prelude, all four dilemmas and their
-similarity items, the perspective question, the anonymity reminder, the full DV
-battery, the attention check, AI use / AIAS, and Big Five.
+Kept verbatim: consent, Prolific ID, prelude, the similarity items, the
+perspective question, the anonymity reminder, the full DV battery, the attention
+check, AI use / AIAS, and Big Five.
+
+**The four dilemmas are NOT the source survey's any more.** They were replaced on
+2026-08-07 (`scenarios.py`) with four that screen for a narrower thing: a
+situation where the participant believes they were RIGHT and the other person
+objected anyway — an honest opinion that landed as rudeness, a correct fact
+raised badly, an apology they felt was not theirs to give, a joke the other
+person also makes. That is the shape a sycophantic model has the most room to
+flatter, which is why the study now selects for it. The four old keys
+(`relationship`, `others`, `exclusion`, `uncomfortable`) and the four new ones
+(`honest_opinion`, `correction`, `apology`, `joke`) are disjoint by assertion, so
+the two instruments are separable in a pooled export.
 
 ### Stage flow
 
@@ -40,12 +53,12 @@ prolific_id ─▶ prelude ─▶ screening (4 scenarios, random order, one per 
               │ first "Very similar" selects the scenario
               ▼
         perspective ─▶ response_intro ─┬─▶ response (loading ─▶ reply)
-                            │          │      both drawn arms (no-review): the two
-                            │          │      halves are composed and sent unshown
+                            │          │      2 retired no-review arms only: the
+                            │          │      two halves are composed and sent unshown
                             │          └─▶ review_input ─▶ response
-                            │                 4 retired review arms only: the
-                            │                 composed text is shown and can be
-                            │                 edited before Confirm
+                            │                 both drawn arms: the composed text
+                            │                 is shown and can be edited before
+                            │                 Confirm
                             │
                             │  the arm is drawn HERE, server-side, on the
                             │  response_flow call — so screen-outs consume no
@@ -120,11 +133,12 @@ Two arms remove the review-and-edit page. A page that is not rendered cannot be
 hidden from the browser, so `response_flow` returns `show_review` — one boolean
 derived from the arm. Stated plainly:
 
-- **Since 2026-08-05 it leaks nothing.** *Both* arms in the draw skip the page, so
-  every real participant gets `false` and the bit partitions nothing. The call is
-  still load-bearing: `false` is what tells the browser to drop the page and
-  enqueue the generation itself, and it is where the arm is drawn at the moment of
-  eligibility.
+- **It leaks nothing, and has not since 2026-08-05.** *Both* arms in the draw
+  agree about the page, so the bit is a constant and partitions nothing. Which
+  constant has flipped once: `false` from 2026-08-05 to 2026-08-07 (nobody saw the
+  page), `true` since (everybody does). The call is load-bearing either way — the
+  answer is what tells the browser whether the next page is review-and-edit or the
+  loading screen, and it is where the arm is drawn at the moment of eligibility.
 - **What it does not give up.** *Which* of the two arms a participant got is
   unknowable client-side. The draw is sticky (`session_arm` only writes while
   `arm is null`), so pressing Continue again cannot re-roll it, and
@@ -138,7 +152,8 @@ derived from the arm. Stated plainly:
 - **Fail-safe direction.** `S.showReview` is `null` until the call answers, and
   only an explicit `false` drops the page. The failure mode that matters is a
   client proceeding *without* an answer, and this default makes it show a page
-  rather than send text nobody confirmed. In practice a failed call does not
+  rather than send text nobody confirmed — which since 2026-08-07 is also the
+  correct behaviour, not merely the safe one. In practice a failed call does not
   proceed at all: `response_intro` re-enables Continue and surfaces the error.
 
 #### Walking a condition by hand
@@ -147,19 +162,25 @@ Two links enter the study with the condition **forced** instead of drawn:
 
 | Link | Condition | Arm |
 |---|---|---|
-| `https://<host>/debug_c1` | C1 | `ours_noreview` |
-| `https://<host>/debug_c2` | C2 | `untrained_noreview` |
+| `https://<host>/debug_c1` | C1 | `ours` |
+| `https://<host>/debug_c2` | C2 | `untrained` |
 
 They exist because random assignment is exactly what stops you looking at a
-condition on purpose. Since 2026-08-05 the draw is over these same two arms, so a
-link no longer reaches a flow you could not otherwise see — what it gives you is
-**knowing which model is answering**, which the draw hides. Both walk the
-identical no-review flow that every participant walks; only the model behind the
+condition on purpose. The links cover exactly the drawable arms, so a link does
+not reach a flow you could not otherwise see — what it gives you is **knowing
+which model is answering**, which the draw hides. Both walk the identical
+review-and-edit flow that every participant walks; only the model behind the
 response differs.
 
-Note the flip side: the review-and-edit page is now reachable by **nobody** — no
-arm in the draw shows it and no debug link forces one that does. Add a key to
-`prompts.DEBUG_CONDITIONS` (and re-run `tools/build_static.py`) if it needs
+**The keys are stable and their meaning is not.** `c1` was `ours_noreview` until
+2026-08-07 and is `ours` now; `c2` likewise. Same model behind each, different
+flow — a bookmarked `/debug_c1` now walks a page it did not walk before. Nothing
+in the data depends on it (every session a link creates is dropped from the
+export), but do not read an old screenshot as the current condition.
+
+Note the flip side: the two **no-review** arms are now reachable by nobody — no
+arm in the draw is one and no debug link forces one. Add a key to
+`prompts.DEBUG_CONDITIONS` (and re-run `tools/build_static.py`) if one needs
 walking again.
 
 How it works, and what keeps it contained:
@@ -170,12 +191,12 @@ How it works, and what keeps it contained:
   needed an SPA rewrite would 404 on a fresh app. It bounces to `/?debug=c1`,
   which the app also accepts directly.
 - The browser forwards the **key**, never an arm name. `start_session` maps
-  `c1 → ours_noreview` in SQL (generated, so it cannot drift from `prompts.py`)
+  `c1 → ours` in SQL (generated, so it cannot drift from `prompts.py`)
   and sets the arm at session creation; `session_arm` is sticky, so the same rule
   that stops a re-roll is what makes the forced arm hold. An unknown key is
   **refused**, not quietly randomized.
-- Every such session is stamped **`is_debug`** on both `study_sessions` and
-  `study_submissions`, and `analysis/export_responses.py` **drops those rows by
+- Every such session is stamped **`is_debug`** on both `study_sessions_v2` and
+  `study_submissions_v2`, and `analysis/export_responses.py` **drops those rows by
   default** (`--include-debug` keeps them, and the count is always printed). That
   filter — not secrecy — is what protects the dataset, which is why the links
   need no token: a participant who found one would produce a quarantined row, not
@@ -245,6 +266,99 @@ relevant check fails.
 
 ---
 
+## 1c. The tables have a generation suffix (added 2026-08-07)
+
+Every table this study touches carries **`_v2`** — `study_submissions_v2`,
+`study_sessions_v2`, `study_jobs_v2`, `study_scenarios_v2`,
+`questionnaire_options_v2`, `study_config_v2`. The suffix is
+`config.TABLE_SUFFIX` and it is the whole mechanism.
+
+**Why.** The 2026-08-07 revision is a different instrument, not a tweak: four new
+screening scenarios with new keys, and a draw over the review-page arms instead of
+their no-review twins. Appending those rows to the tables the previous run filled
+would put two instruments in one table, separable only by knowing the changeover
+date. And `study_scenarios` is `TRUNCATE`d and repopulated on every deploy of the
+generated schema, so re-running it against the old tables would have **deleted the
+old key → topic_title mapping outright**.
+
+**What did NOT change.** Same Supabase project, same URL, same anon key, same
+worker token — nothing deployed needs new credentials. The **RPC names are not
+suffixed**: `create or replace function` repoints `start_session`,
+`start_response`, `submit_study`, `worker_claim` and the rest at the new tables,
+so `static/app.js` and `worker/run_worker.py` are untouched by the rename.
+
+**Where the old data is.** In the unsuffixed tables, never written to again.
+
+```bash
+$PY analysis/export_responses.py --out-dir data/export        # the current run
+STUDY_SUPABASE_TABLE=study_submissions \
+  $PY analysis/export_responses.py --out-dir data/export_v1   # the previous one
+```
+
+Three guards, because a rename that reaches two of the three `.sql` files is a
+deploy that runs cleanly and then fails at the first participant with
+*relation "public.study_jobs_v2" does not exist*, from inside a SECURITY DEFINER
+function, the moment someone presses Continue:
+
+- `test_views.py::test_the_sql_files_and_config_agree_about_the_table_suffix` —
+  every executable table reference in all three files carries `config.TABLE_SUFFIX`;
+- `::test_the_legacy_tables_are_never_written_to_again` — no `insert`/`update`/
+  `truncate` names an unsuffixed table;
+- `::test_the_export_defaults_to_the_current_generation`.
+
+`tools/generate_supabase_app_sql.py` writes its SQL with **bare** table names and
+suffixes them on the way out (`suffix_tables`), so the next generation is one
+constant in `config.py`, not forty edits. The two hand-written `.sql` files spell
+the suffix out; the first test above is what keeps them in step.
+
+**One subtlety in the migration SQL.** Two functions are typed on a table row
+type — `job_state(public.study_jobs)` takes one and `session_for_token` returns
+one — and `create or replace` can neither change a return type nor replace across
+differing argument types (it would create a second *overload*, left granted to
+`anon`). The generated file therefore opens with an `emit_legacy_drops()` block
+that drops both, guarded on `to_regtype` so it is also safe on a fresh project.
+`claim_job` gets the same treatment in `supabase_queue_schema.sql`.
+
+### Deploying the 2026-08-07 change
+
+In the Supabase SQL editor, **in this order** — the app schema's RPCs reference
+tables the first two create:
+
+```bash
+cat supabase_schema.sql          # creates study_submissions_v2
+cat supabase_queue_schema.sql    # creates study_sessions_v2, study_jobs_v2
+cat supabase_app_schema.sql      # scenarios, options, config, and every RPC
+```
+
+Then set the worker secret **on the new config table** — it is not generated, and
+without it every `worker_claim` raises *worker_token is not configured*:
+
+```sql
+insert into public.study_config_v2 (key, value)
+values ('worker_token', '<the same secret the worker exports>')
+on conflict (key) do update set value = excluded.value;
+```
+
+Then redeploy the SPA so the browser gets the new `content.json` (Amplify runs
+`tools/build_static.py`; locally it is `$PY tools/build_static.py` with
+`STUDY_SUPABASE_URL` and `STUDY_SUPABASE_ANON_KEY` exported), and restart the GPU
+pool so it picks up the current `prompts.py`:
+
+```bash
+scancel <old job>
+cd /next/u/stephhk/sycophancy && set -a && source study/.supabase_env && set +a
+export STUDY_WORKER_TOKEN="$(cat study/.trial_token)"
+sbatch --export=ALL,STUDY_WORKER_TOKEN,STUDY_SUPABASE_URL,STUDY_SUPABASE_ANON_KEY \
+       study/worker/trial_worker_pool.sbatch
+```
+
+Order note: applying the SQL while a pool is already running is fine. The worker
+calls RPCs **by name** and `create or replace` repoints them under it, so it
+starts serving the new tables on its next poll without a restart. The restart is
+for `prompts.py`, which the pool holds in memory.
+
+---
+
 ## 2. The arms
 
 All of them run on **one** vLLM engine: Qwen3-8B loaded once, with our LoRA
@@ -253,29 +367,38 @@ model name the request addresses.
 
 | Arm | Model addressed | System prompt | Stages | Review page | Drawn? |
 |---|---|---|---|---|---|
-| `ours` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 | yes | retired |
-| `untrained` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 | yes | retired |
+| `ours` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 | **yes** | **yes** |
+| `untrained` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 | **yes** | **yes** |
 | `syco` | `Qwen/Qwen3-8B` | shared `[ETHICS]` + `[SYCOPHANCY POLICY]` | 1 | yes | retired |
 | `neutral` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 2 (generate → neutrality edit) | yes | retired |
-| `ours_noreview` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 | **no** | **yes** |
-| `untrained_noreview` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 | **no** | **yes** |
+| `ours_noreview` | `oeq_voice2` (LoRA) | shared `[ETHICS]` | 1 | no | retired |
+| `untrained_noreview` | `Qwen/Qwen3-8B` | shared `[ETHICS]` | 1 | no | retired |
 
-### Assignment is a two-way draw (changed 2026-08-05)
+### Assignment is a two-way draw (arms changed 2026-08-07)
 
-`prompts.RANDOMIZED_ARMS` — `ours_noreview` and `untrained_noreview` — is what the
-generated `session_arm` RPC samples, uniformly. Our model against the untrained
-base, with **neither group editing the model's input**: the composed user turn
-goes straight to the model, so nothing about what the model sees is under the
-participant's control after they finish writing.
+`prompts.RANDOMIZED_ARMS` — `ours` and `untrained` — is what the generated
+`session_arm` RPC samples, uniformly. Our model against the untrained base, with
+**both groups shown the composed model input and free to edit it** before
+pressing Confirm.
 
 That leaves **one factor**. Both arms share their system prompt, their stage
 count, their flow and their user turn, and differ only in which model the request
 addresses — so a difference in the DVs cannot be attributed to the sycophancy
-policy, to a second editing stage, or to one group having reworded their prompt.
-`tests/test_prompts.py::test_every_randomized_arm_skips_the_review_page` and
-`::test_every_randomized_arm_is_a_distinct_single_stage_generation` pin both
+policy, to a second editing stage, or to one group seeing a page the other did
+not. `tests/test_prompts.py::test_every_randomized_arm_shows_the_review_page`,
+`::test_the_review_page_is_constant_across_the_draw` and
+`::test_every_randomized_arm_is_a_distinct_single_stage_generation` pin those
 halves; the draw itself is pinned in SQL by
 `tests/test_views.py::test_the_generated_draw_samples_exactly_the_randomized_arms`.
+
+**What the review page costs, on the record.** The model's input is no longer
+fixed at exactly what the participant wrote: someone who rewrites their story on
+that page changes the stimulus their own DVs are about, and that rewriting is not
+randomized. It is *balanced* — both arms see the page — so it does not confound
+the ours-vs-untrained contrast, but it adds within-cell variance. Both texts are
+exported (`generations.csv:user_text` is what the model got;
+`screening.csv:description` + `participants.csv:perspective_text` is what they
+originally wrote), so the size of the edit is measurable rather than invisible.
 
 The other four are **retired, not deleted**: they keep their prompts and stay in
 `prompts.ARMS`, which is the legal domain of the `arm` column, because rows
@@ -284,13 +407,16 @@ re-widening the draw a one-line edit. `prompts.RETIRED_ARMS` names them, and
 `tests/test_views.py::test_the_retired_arms_stay_legal_but_undrawable` pins both
 halves of that.
 
-Consequences: no real participant walks the review-and-edit page any more, so
-`response_flow` answers `show_review: false` for all of them; the analysis is a
-two-cell comparison; and any `syco`/`neutral`/`ours`/`untrained` row in the export
-predates 2026-08-05. The draw history is layered — four arms until 2026-07-30, six
-until 08-01, three until 08-05, two after — which matters when pooling.
+Consequences: every real participant walks the review-and-edit page again, so
+`response_flow` answers `show_review: true` for all of them; the analysis is a
+two-cell comparison; and any `syco`/`neutral`/`*_noreview` row in the export
+predates 2026-08-07. The draw history is layered — four arms until 2026-07-30, six
+until 08-01, three until 08-05, the two no-review arms until 08-07, the two review
+arms after — which matters when pooling. Rows from before 2026-08-07 are also in
+**different tables** (see §1c), so the layering is visible before you reach the
+`arm` column.
 
-### The two drawn arms manipulate the flow, not the model (added 2026-07-30, the only drawn arms since 2026-08-05)
+### The two no-review arms manipulate the flow, not the model (added 2026-07-30, drawn 2026-08-05 → 08-07, retired since)
 
 `ours_noreview` and `untrained_noreview` generate **identically** to `ours` and
 `untrained` — `build_generation_plan` maps each onto its twin's plan rather than
@@ -302,11 +428,13 @@ never get to edit it. The browser composes the same string with the same
 
 So `ours` vs `ours_noreview` isolates the review-and-edit step alone, and
 likewise for `untrained`. It was never a full factorial — `syco` and `neutral`
-have no no-review counterpart — and the review factor is not estimable from new
-data: it was in the draw only between 07-30 and 08-01, and since 08-05 the
-no-review side of it is *all* that is drawn. The comparison the study now runs
-(`ours_noreview` vs `untrained_noreview`) is the model contrast, on the flow where
-the model's input is fixed at what the participant wrote.
+have no no-review counterpart — and the review factor is **not estimable from new
+data**: both sides were in the draw only between 07-30 and 08-01, the no-review
+side was all of it from 08-05 to 08-07, and the review side is all of it since.
+Estimating it means pooling across those windows, across two different screening
+instruments, and (from 08-07) across two sets of tables. The comparison the study
+now runs (`ours` vs `untrained`) is the model contrast, on the flow where the
+participant sees and may edit the model's input.
 
 For the GPU this means four distinct generations, not six:
 `prompts.GENERATION_ARMS` drops the flow-only duplicates, and the smoke test
@@ -434,8 +562,8 @@ browser and costs no HTTP at all.
 
 **Request lifecycle.** The participant presses Continue on the response-intro
 page → the client asks `response_flow` which flow this arm walks → it posts the
-composed text, straight away on the no-review arms (which since 2026-08-05 is
-everyone) or after the participant confirms it on the review page → the database
+composed text, after the participant confirms it on the review page (which since
+2026-08-07 is everyone) or straight away on the no-review arms → the database
 inserts a `pending` job → the
 worker's next poll returns it → the worker generates locally → posts the text
 back → the participant's next 1.2s status poll renders it. Typical end-to-end
@@ -528,7 +656,7 @@ match to `eval_endorsement_heldout.py`, which is the parity target for the
 cd /next/u/stephhk/sycophancy/study
 PY=/next/u/stephhk/miniconda3/envs/llm/bin/python
 
-$PY -m pytest tests/ -q -k "not test_rpcs"   # 123 tests — USE THIS ONE
+$PY -m pytest tests/ -q -k "not test_rpcs"   # 152 tests — USE THIS ONE
 $PY -m uvicorn server:app --reload --port 8000
 ```
 
@@ -587,7 +715,7 @@ export STUDY_WORKER_TOKEN="$(openssl rand -hex 32)"
 # table has RLS on with no policies so the anon key can neither read nor write.
 export STUDY_SUPABASE_URL="https://<project>.supabase.co"
 export STUDY_SUPABASE_SERVICE_KEY="<service-role key>"
-export STUDY_SUPABASE_TABLE="study_submissions"
+export STUDY_SUPABASE_TABLE="study_submissions_v2"   # config.TABLE_SUFFIX; see §1c
 
 # LOCAL DISK. next1 has a 939G NVMe at /scr. This database is only the job
 # queue now, but putting it back on /next reintroduces the 10-14s lock stalls.
@@ -721,6 +849,10 @@ $PY analysis/export_responses.py --out-dir data/export            # from Supabas
 $PY analysis/export_responses.py --source local                   # from the fallback JSONL
 $PY analysis/export_responses.py --eligible-only                  # drop screen-outs/decliners
 $PY analysis/export_responses.py --include-debug                  # keep hand-walked sessions
+
+# The PREVIOUS instrument (pre-2026-08-07): different table, different scenario
+# keys, different arms. See §1c.
+STUDY_SUPABASE_TABLE=study_submissions $PY analysis/export_responses.py --out-dir data/export_v1
 ```
 
 Writes three tidy CSVs:
@@ -882,11 +1014,11 @@ committed.
 
 ```
 study/
-├── config.py             Tunables, env-driven; production config assertions
+├── config.py             Tunables, env-driven; TABLE_SUFFIX; production config assertions
 ├── content.py            All participant-facing prose, lifted from the .qsf
 ├── questionnaires.py     Scale definitions (DVs, attention check, AI use, Big Five)
-├── scenarios.py          The four dilemmas + similarity options
-├── prompts.py            The arms (3 drawn, 3 retired); shared [ETHICS] prompt + user turn
+├── scenarios.py          The four dilemmas (replaced 2026-08-07) + similarity options
+├── prompts.py            The arms (2 drawn, 4 retired); shared [ETHICS] prompt + user turn
 ├── flow.py               Randomization + submission validation (pure logic, no I/O)
 ├── views.py              The one-shot content bundle + the response state
 ├── store.py              The only module that speaks SQL — job queue ONLY

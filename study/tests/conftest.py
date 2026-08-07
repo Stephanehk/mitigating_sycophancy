@@ -38,6 +38,12 @@ sys.path.insert(0, _TESTS_DIR)
 
 import config
 
+#: PostgREST paths, read from config so this fixture always cleans the tables
+#: the app actually writes to (see config.TABLE_SUFFIX). A stale literal here
+#: would leave every test row behind in the live study.
+SESSIONS = config.TABLE_SESSIONS
+SUBMISSIONS = config.TABLE_SUBMISSIONS
+
 
 def supabase_configured():
     return bool(config.SUPABASE_URL and config.SUPABASE_ANON_KEY
@@ -112,16 +118,16 @@ def clean(service):
     Runs even when a test fails, so a red suite cannot leave rows in the same
     tables the real study writes to.
     """
-    before = {row["session_id"] for row in service.get("/study_sessions?select=session_id")}
+    before = {row["session_id"] for row in service.get("/" + SESSIONS + "?select=session_id")}
     subs_before = {row["session_id"] for row in
-                   service.get("/study_submissions?select=session_id")}
+                   service.get("/" + SUBMISSIONS + "?select=session_id")}
     yield
     for session_id in ({row["session_id"] for row in
-                        service.get("/study_submissions?select=session_id")} - subs_before):
-        service.delete("/study_submissions?session_id=eq.%s" % session_id)
+                        service.get("/" + SUBMISSIONS + "?select=session_id")} - subs_before):
+        service.delete("/" + SUBMISSIONS + "?session_id=eq.%s" % session_id)
     for session_id in ({row["session_id"] for row in
-                        service.get("/study_sessions?select=session_id")} - before):
-        service.delete("/study_sessions?session_id=eq.%s" % session_id)
+                        service.get("/" + SESSIONS + "?select=session_id")} - before):
+        service.delete("/" + SESSIONS + "?session_id=eq.%s" % session_id)
 
 
 @pytest.fixture()

@@ -85,6 +85,48 @@ def _normalize_supabase_url(raw):
     return trimmed
 
 
+#: THE TABLE GENERATION (added 2026-08-07). Every table this study touches
+#: carries this suffix.
+#:
+#: WHY. The 2026-08-07 revision is a different instrument, not a tweak: four new
+#: screening scenarios with new keys, and a draw over `ours`/`untrained` (the
+#: review-page arms) instead of their no-review twins. Appending those rows to
+#: the tables the previous run filled would put two instruments in one table,
+#: distinguishable only by reading `selected_scenario` and `arm` and knowing the
+#: changeover date. Worse, `study_scenarios` is TRUNCATED and repopulated on every
+#: deploy of the generated schema — so re-running it against the old tables would
+#: delete the old key→topic_title mapping outright.
+#:
+#: A NEW SET OF TABLES IN THE SAME PROJECT, not a new project: same URL, same
+#: anon key, same worker token, so nothing deployed needs new credentials. The
+#: RPC names are deliberately NOT suffixed — `create or replace function`
+#: repoints them at the new tables and the browser and worker call them
+#: unchanged. The old tables keep their rows and stop being written to.
+#:
+#: NOT env-driven, on purpose. The three .sql files are static artifacts a human
+#: pastes into the Supabase SQL editor, so a suffix that could differ at runtime
+#: from the one baked into them would be a way to point the app at tables that do
+#: not exist. tests/test_views.py pins the two together.
+TABLE_SUFFIX = "_v2"
+
+#: The five tables the app owns. Everything that names a table in Python reads
+#: it from here; the .sql files spell the same names out and the test above keeps
+#: them in step.
+TABLE_SUBMISSIONS = "study_submissions" + TABLE_SUFFIX
+TABLE_SESSIONS = "study_sessions" + TABLE_SUFFIX
+TABLE_JOBS = "study_jobs" + TABLE_SUFFIX
+TABLE_SCENARIOS = "study_scenarios" + TABLE_SUFFIX
+TABLE_QUESTIONNAIRE_OPTIONS = "questionnaire_options" + TABLE_SUFFIX
+TABLE_CONFIG = "study_config" + TABLE_SUFFIX
+
+ALL_TABLES = (TABLE_SUBMISSIONS, TABLE_SESSIONS, TABLE_JOBS, TABLE_SCENARIOS,
+              TABLE_QUESTIONNAIRE_OPTIONS, TABLE_CONFIG)
+
+#: The unsuffixed names, i.e. the tables the pre-2026-08-07 study wrote to. Kept
+#: as data so a half-finished rename is a test failure rather than a table that
+#: silently keeps collecting.
+LEGACY_TABLES = tuple(name[: -len(TABLE_SUFFIX)] for name in ALL_TABLES)
+
 SUPABASE_URL = _normalize_supabase_url(_env("STUDY_SUPABASE_URL", ""))
 
 # PUBLIC. Ships in the page and runs on the GPU worker. Powerless on its own:
@@ -95,7 +137,9 @@ SUPABASE_ANON_KEY = _env("STUDY_SUPABASE_ANON_KEY", "")
 # PRIVILEGED — bypasses RLS. Used only from a developer machine, for exports and
 # ops. Must never be built into the page or exported to the cluster.
 SUPABASE_SERVICE_KEY = _env("STUDY_SUPABASE_SERVICE_KEY", "")
-SUPABASE_TABLE = _env("STUDY_SUPABASE_TABLE", "study_submissions")
+#: Which submissions table the EXPORT reads. Defaults to the current generation;
+#: point it at "study_submissions" to export the pre-2026-08-07 run.
+SUPABASE_TABLE = _env("STUDY_SUPABASE_TABLE", TABLE_SUBMISSIONS)
 SUPABASE_TIMEOUT_SECONDS = _env_int("STUDY_SUPABASE_TIMEOUT_SECONDS", 20)
 
 SUBMISSION_FALLBACK_PATH = _env("STUDY_SUBMISSION_FALLBACK_PATH", os.path.join(

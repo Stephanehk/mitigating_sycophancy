@@ -20,6 +20,13 @@ SECURITY DEFINER and authenticates its own caller:
     the worker    a shared secret, compared against study_config inside the RPC
 
 service_role is then only ever used from a developer machine, for exports.
+
+TABLE NAMES ARE WRITTEN UNSUFFIXED BELOW AND SUFFIXED ON THE WAY OUT (see
+suffix_tables and config.TABLE_SUFFIX, added 2026-08-07). The SQL reads as
+`public.study_jobs` and is emitted as `public.study_jobs_v2`, so moving the
+study to a fresh generation of tables is one constant in config.py rather than
+forty edits here. FUNCTION names are not suffixed: `create or replace` repoints
+them at the new tables and the browser and worker call them unchanged.
 """
 
 import os
@@ -40,6 +47,71 @@ def sql_str(value):
     if value is None:
         return "NULL"
     return "'" + str(value).replace("'", "''") + "'"
+
+
+def suffix_tables(sql):
+    """Rewrite every unsuffixed app table name in `sql` to the current generation.
+
+    Input: SQL (or SQL comments) that names tables the way this file writes
+    them — bare, e.g. `public.study_jobs` or `study_sessions_arm_check`.
+    Output: the same text with config.TABLE_SUFFIX appended to each app table
+    name, e.g. `public.study_jobs_v2`.
+
+    Applied to EVERYTHING this script prints, comments included, so the generated
+    file describes the tables it actually creates.
+
+    Assumptions, both checked below:
+      - the longest name is substituted first, so `study_config` cannot eat the
+        `study_config`-prefixed part of a longer name (none exists today, but
+        the ordering makes that a non-question);
+      - the input never already carries the suffix, i.e. this is not idempotent
+        and must not be applied twice. Double-suffixing would produce
+        `study_jobs_v2_v2`, which would create real, wrong tables rather than
+        failing, so it is asserted rather than tolerated.
+    """
+    assert config.TABLE_SUFFIX not in sql, (
+        "suffix_tables() was applied to text that already names a suffixed "
+        "table; write table names bare in this file")
+    for legacy in sorted(config.LEGACY_TABLES, key=len, reverse=True):
+        sql = sql.replace(legacy, legacy + config.TABLE_SUFFIX)
+    return sql
+
+
+def emit_legacy_drops():
+    """Drop the functions the PREVIOUS generation of tables left behind.
+
+    `create or replace function` cannot change a function's return type, and
+    cannot replace a function whose argument types differ — it creates an
+    OVERLOAD instead. Two functions here are typed on a table, so the 2026-08-07
+    rename hits both cases:
+
+      job_state(public.study_jobs)  — argument is a table type. Without this
+          drop, the new job_state(public.study_jobs_v2) would be a SECOND
+          function, and the `revoke ... from anon` at the end of this file would
+          name only the new one, leaving the old overload executable by anon.
+      session_for_token(text)       — argument types are unchanged but the
+          RETURN type is public.study_sessions, so a plain replace errors with
+          "cannot change return type of existing function".
+
+    Guarded on the legacy type still existing, because `drop function if exists
+    f(public.study_jobs)` raises "type does not exist" on a FRESH project — the
+    IF EXISTS covers the function, not the types in its signature.
+
+    NOT passed through suffix_tables(): these deliberately name the old tables.
+    """
+    lines = ["-- Functions typed on the PREVIOUS generation's tables. See",
+             "-- emit_legacy_drops() in tools/generate_supabase_app_sql.py for why",
+             "-- `create or replace` cannot handle these two on its own.",
+             "do $$",
+             "begin"]
+    for table, signature in (("study_jobs", "public.job_state(public.study_jobs)"),):
+        lines.append("    if to_regtype('public.%s') is not null then" % table)
+        lines.append("        execute 'drop function if exists %s';" % signature)
+        lines.append("    end if;")
+    lines.append("end $$;")
+    # No table type in the signature, so this one needs no guard.
+    lines.append("drop function if exists public.session_for_token(text);")
+    return "\n".join(lines)
 
 
 def emit_scenarios():
@@ -230,11 +302,12 @@ $$;
 
 -- Draw this session's arm, ONCE, and return it.
 --
--- A UNIFORM TWO-WAY DRAW over prompts.RANDOMIZED_ARMS (ours_noreview /
--- untrained_noreview): our model vs the untrained base, both on the flow where
--- the participant never edits the model's input. The four retired arms are still
--- legal column values but are never sampled, and no debug link forces one, so
--- nothing new can land in them.
+-- A UNIFORM TWO-WAY DRAW over prompts.RANDOMIZED_ARMS (ours / untrained): our
+-- model vs the untrained base, both on the flow where the participant is shown
+-- the composed model input and may edit it. The four retired arms — including
+-- the two no-review ones, drawn 2026-08-05 to 2026-08-07 — are still legal
+-- column values but are never sampled, and no debug link forces one, so nothing
+-- new can land in them.
 --
 -- Sticky by construction: the update only fires while `arm` is null, and the
 -- value is re-read afterwards so a caller that lost a concurrent race still
@@ -290,9 +363,9 @@ $$;
 -- p_debug_condition IS THE ONE WAY TO CHOOSE AN ARM, and it is for walking a
 -- condition by hand (see prompts.DEBUG_CONDITIONS and the /debug_<key> pages).
 -- Random assignment is precisely what you cannot work around when you need to
--- SEE a condition. Since the draw narrowed to the two no-review arms these links
--- reach the same flow a participant does; what they add is knowing which model
--- is answering, which the draw hides on purpose.
+-- SEE a condition. The links cover exactly the drawable arms, so they reach the
+-- same flow a participant does; what they add is knowing which model is
+-- answering, which the draw hides on purpose.
 --
 -- WHAT KEEPS IT FROM CORRUPTING THE DATA. The session is stamped is_debug, and
 -- the export drops those rows by default, so a forced arm is quarantined rather
@@ -350,13 +423,14 @@ $$;
 -- drawn here — one page before it is needed — and exactly one bit of it is
 -- returned: `show_review`. The arm ITSELF is still never sent.
 --
--- SINCE THE DRAW NARROWED TO THE TWO NO-REVIEW ARMS (2026-08-05) this bit is
--- constant for real participants — every one of them gets `false` — so it
--- partitions nothing and leaks nothing. It is still what makes the flow happen:
--- `false` is the instruction to drop the page and enqueue the generation
--- straight from response_intro. The within-session guarantees are unchanged: the
--- draw is sticky (session_arm), the job is one-per-session, and WHICH of the two
--- arms a participant got is unknowable to the browser.
+-- SINCE 2026-08-07 THE DRAW IS OVER ours / untrained, so this bit is constant at
+-- `true` for every real participant. It was constant at `false` from 2026-08-05
+-- to 2026-08-07 and split before that. Constant either way means it partitions
+-- nothing and leaks nothing, and it is still what makes the flow happen: the
+-- answer is what tells the browser whether the next page is review-and-edit or
+-- the loading screen. The within-session guarantees are unchanged: the draw is
+-- sticky (session_arm), the job is one-per-session, and WHICH of the two arms a
+-- participant got is unknowable to the browser.
 create or replace function public.response_flow(p_token text)
 returns jsonb
 language plpgsql security definer set search_path = public, pg_temp as $$
@@ -373,13 +447,13 @@ $$;
 
 -- Enqueue the generation from the text the participant CONFIRMED.
 --
--- Takes the finished user turn, not the two halves. On the no-review arms — which
--- since 2026-08-05 is every arm a participant can be drawn into — the browser
--- composes the two halves and sends the result without showing it. On the review
--- arms (retired) a page showed them exactly what would be sent and let them edit
--- it before pressing Confirm, which is why the composition lives in the browser
--- at all: composing it server-side afterwards would have discarded those edits.
--- The string is the same either way.
+-- Takes the finished user turn, not the two halves. On the review arms — which
+-- since 2026-08-07 is every arm a participant can be drawn into — a page shows
+-- them exactly what will be sent and lets them edit it before pressing Confirm.
+-- That is why the composition lives in the browser at all: composing it
+-- server-side afterwards would discard those edits. On the no-review arms
+-- (retired) the browser composes the same two halves and sends the result
+-- without showing it.
 --
 -- The floor is min_describe + min_perspective, i.e. the same total the two
 -- separate pages already enforced, so editing cannot be used to get past the
@@ -427,9 +501,10 @@ begin
             using errcode = 'P0001';
     end if;
     -- The COMPOSED cap, not the per-field one: this text is two capped fields
-    -- joined by a blank line. On a no-review arm the participant has no page
-    -- holding it, so a rejection here would be a dead end rather than something
-    -- they could shorten.
+    -- joined by a blank line. On a review arm the participant is looking at the
+    -- text and can shorten it; on a no-review arm (retired) they had no page
+    -- holding it, so a rejection here would have been a dead end. The composed
+    -- cap is what makes the worst case reachable in both flows.
     if length(v_text) > cfg('max_model_input_chars') then
         raise exception 'Your answer is too long (limit % characters).',
             cfg('max_model_input_chars') using errcode = 'P0001';
@@ -741,21 +816,28 @@ def main():
     print("--")
     print("-- Run AFTER supabase_schema.sql and supabase_queue_schema.sql.")
     print("--")
+    print("-- Tables carry config.TABLE_SUFFIX (%r). The three .sql files must "
+          "agree on it;" % (config.TABLE_SUFFIX,))
+    print("-- tests/test_views.py checks that they do.")
+    print("--")
     print(__doc__.strip().replace("\n", "\n-- ").join(["-- ", ""]))
     print()
-    print(emit_scenarios())
+    # emit_legacy_drops is the one section that names the OLD tables on purpose,
+    # so it is printed outside suffix_tables().
+    print(emit_legacy_drops())
     print()
-    print(emit_questionnaire_options())
-    print()
-    print(emit_arm_domain())
-    print()
-    print(emit_debug_column())
-    print()
-    print(emit_config())
-    print(RPCS.replace("__RANDOMIZED_ARRAY__", RANDOMIZED_ARRAY)
-              .replace("__RANDOMIZED_COUNT__", str(len(RANDOMIZED_ARMS)))
-              .replace("__SKIP_REVIEW_ARRAY__", SKIP_REVIEW_ARRAY)
-              .replace("__DEBUG_CASE__", DEBUG_CASE))
+    body = "\n\n".join([
+        emit_scenarios(),
+        emit_questionnaire_options(),
+        emit_arm_domain(),
+        emit_debug_column(),
+        emit_config(),
+        RPCS.replace("__RANDOMIZED_ARRAY__", RANDOMIZED_ARRAY)
+            .replace("__RANDOMIZED_COUNT__", str(len(RANDOMIZED_ARMS)))
+            .replace("__SKIP_REVIEW_ARRAY__", SKIP_REVIEW_ARRAY)
+            .replace("__DEBUG_CASE__", DEBUG_CASE),
+    ])
+    print(suffix_tables(body))
 
 
 if __name__ == "__main__":
