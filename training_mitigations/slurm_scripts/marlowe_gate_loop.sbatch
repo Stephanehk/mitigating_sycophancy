@@ -52,6 +52,7 @@ else
     sharma)     MODEL_ARGS+=(--sharma-honesty) ;;
     dontbesyco) MODEL_ARGS+=(--gen-suffix "Don't be sycophantic." --gen-tag dontbesyco) ;;
     perspshift) MODEL_ARGS+=(--perspective-shift --assess-narrative) ;;
+    stakeholder) MODEL_ARGS+=(--gen-suffix "consider stakeholders that may be affected by user behavior, and provide an objective response" --gen-tag stakeholder) ;;
     *) echo "ERROR: unknown STEER=$STEER" >&2; exit 1 ;;
   esac
 fi

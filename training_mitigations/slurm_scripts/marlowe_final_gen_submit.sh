@@ -47,6 +47,7 @@ adapter_tag() { # kind steer -> the eval's adapter_tag (mirrors marlowe_final_ge
     explicit) echo base-explicit ;; sharma) echo base-sharma ;;
     dontbesyco) echo base-dontbesyco ;; perspshift) echo base-perspshiftassess ;;
     besyco) echo base-besycophantic ;;
+    stakeholder) echo base-stakeholder ;;
     *) echo UNKNOWN ;;
   esac
 }
@@ -59,6 +60,7 @@ JOBS=(
   "OEQ base none $OEQ_BASE"  "OEQ base becritical $OEQ_BASE"  "OEQ base explicit $OEQ_BASE"
   "OEQ base sharma $OEQ_BASE" "OEQ base dontbesyco $OEQ_BASE" "OEQ base perspshift $OEQ_BASE"
   "OEQ base besyco $OEQ_BASE"
+  "OEQ base stakeholder $OEQ_BASE"
   "OEQ trained none dpo_lora_oeq_qwen3-8b_n1000_mixed_P6_perspshift_distill_gp_rpo0p5_final"
   "OEQ trained none dpo_lora_oeq_qwen3-8b_P6_perspshift_rpo0p5_final_voicedpo"
   "OEQ trained none dpo_lora_oeq_qwen3-8b_n1000_neutral_final"
@@ -67,6 +69,7 @@ JOBS=(
   "PAS base none $PAS_BASE"  "PAS base becritical $PAS_BASE"  "PAS base explicit $PAS_BASE"
   "PAS base sharma $PAS_BASE" "PAS base dontbesyco $PAS_BASE" "PAS base perspshift $PAS_BASE"
   "PAS base besyco $PAS_BASE"
+  "PAS base stakeholder $PAS_BASE"
   "PAS trained none dpo_lora_pas_qwen3-8b_n1000_mixed_P6_perspshift_distill_gp_rpo0p5_final"
   "PAS trained none dpo_lora_pas_qwen3-8b_P6_perspshift_rpo0p5_final_voicedpo"
   "PAS trained none dpo_lora_pas_qwen3-8b_n1000_neutral_final"
@@ -75,9 +78,11 @@ JOBS=(
   "AITA base none $AITA_BASE" "AITA base becritical $AITA_BASE" "AITA base explicit $AITA_BASE"
   "AITA base sharma $AITA_BASE" "AITA base dontbesyco $AITA_BASE" "AITA base perspshift $AITA_BASE"
   "AITA base besyco $AITA_BASE"
+  "AITA base stakeholder $AITA_BASE"
   "AITA trained none dpo_lora_aita_qwen3-8b_n1000_mixed_P6_perspshift_distill_gp_rpo0p5_final"
   "AITA-NTA-FLIP base none $FLIP_BASE" "AITA-NTA-FLIP base becritical $FLIP_BASE" "AITA-NTA-FLIP base explicit $FLIP_BASE"
   "AITA-NTA-FLIP base sharma $FLIP_BASE" "AITA-NTA-FLIP base dontbesyco $FLIP_BASE" "AITA-NTA-FLIP base perspshift $FLIP_BASE"
+  "AITA-NTA-FLIP base stakeholder $FLIP_BASE"
   "AITA-NTA-FLIP trained none dpo_lora_flip_qwen3-8b_n500_mixed_P6_perspshift_distill_gp_rpo0p5_final"
 )
 

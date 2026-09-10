@@ -38,6 +38,7 @@ AITA_JOBS=(
   "AITA baseline_final_AITA base-sharma_finaldata_temp1.0_seed0 1"
   "AITA baseline_final_AITA base-dontbesyco_finaldata_temp1.0_seed0 1"
   "AITA baseline_final_AITA base-perspshiftassess_finaldata_temp1.0_seed0 1"
+  "AITA baseline_final_AITA base-stakeholder_finaldata_temp1.0_seed0 1"
   "AITA baseline_final_AITA base-besycophantic_finaldata_temp1.0_seed0 1"
   "AITA dpo_lora_aita_qwen3-8b_n1000_mixed_P6_perspshift_distill_gp_rpo0p5_final final_finaldata_temp1.0_seed0 1"
 )
@@ -48,6 +49,7 @@ FLIP_JOBS=(
   "AITA-NTA-FLIP baseline_final_AITA-NTA-FLIP base-sharma_finaldata_temp1.0_seed0 2"
   "AITA-NTA-FLIP baseline_final_AITA-NTA-FLIP base-dontbesyco_finaldata_temp1.0_seed0 2"
   "AITA-NTA-FLIP baseline_final_AITA-NTA-FLIP base-perspshiftassess_finaldata_temp1.0_seed0 2"
+  "AITA-NTA-FLIP baseline_final_AITA-NTA-FLIP base-stakeholder_finaldata_temp1.0_seed0 2"
   "AITA-NTA-FLIP dpo_lora_flip_qwen3-8b_n500_mixed_P6_perspshift_distill_gp_rpo0p5_final final_finaldata_temp1.0_seed0 5"
 )
 case "$GROUP" in
