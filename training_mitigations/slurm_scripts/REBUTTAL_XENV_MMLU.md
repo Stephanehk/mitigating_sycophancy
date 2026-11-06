@@ -109,3 +109,32 @@ and `--env` always explicit:
 3. OEQ/PAS: `eval/stage_heldout_inputs.py --run-dir <c> --tag final_finaldata_temp1.0_seed0 --num-shards 8 --name <c>` then `eval/run_endorse_gpt5mini.py`;
    AITA/FLIP: `eval/classify_aita_verdicts.py --run-dir <c> --env <E> --tag final_finaldata_temp1.0_seed0 --num-shards <N>`
 4. gated tables: `eval/build_gated_finaldata_tables.py` (add the 12 rows).
+
+## Cross-dataset generation on vLLM (next, 2026-11-06) -- what was actually run
+
+The HF path above samples one prompt at a time (~40 min per 125-prompt PAS shard
+on an A6000; ~19 h for all 138 shards on 6 GPUs). For the rebuttal the 12
+conditions were instead generated with batched offline vLLM:
+
+```bash
+sbatch --array=0-11 training_mitigations/slurm_scripts/next_xenv_vllm_gen.sbatch
+```
+
+- `eval/xenv_vllm_gen.py`: one task per condition (index -> `conditions()`), whole
+  1000-prompt / 1000-pair split in one `LLM.generate`, written into the HF shard
+  layout/filenames/columns under `runs/xenv_vllm_qwen3-8b_<train>_on_<eval>/`, so
+  the deferred scoring steps run unchanged (pass `--env`, shard counts 8/10/20).
+- Parity settings: same prompt ids (`build_chat_input`), temp 1.0 / top_p 0.95 /
+  top_k 20 (HF keeps Qwen3's generation_config top_k=20), stop only on
+  `<|im_end|>` (asserted per generation), `generation_config="vllm"`. Seeds are
+  per request (`attempt_seed(text, 1, 0)`), so samples differ from HF's draws.
+- `eval/xenv_vllm_parity.py` (greedy, oeq adapter, 8 PAS prompts): teacher-forced
+  |dlogp| HF+PEFT vs vLLM+LoRA mean 0.015 nats (max 0.25); greedy shared prefix
+  median 149 tokens vs 36 for HF-base vs vLLM-base; vLLM base vs HF+PEFT diverges
+  at token 0 on 7/8 (adapter is applied).
+- HF reference `runs/xenv_qwen3-8b_oeq_on_pas/` (all 8 HF shards, 1000 rows) vs
+  vLLM same condition: response-length KS p=0.37 (median 327 vs 354 tokens,
+  ~capped at 512: 28.2% vs 31.7%).
+- Note for scoring: AITA/FLIP adapters on OEQ hit the 512-token cap on ~97% of
+  responses (OEQ/PAS protocol cap); PAS/OEQ adapters on AITA/FLIP almost never
+  hit 1536. This is adapter behaviour, present on HF too.
