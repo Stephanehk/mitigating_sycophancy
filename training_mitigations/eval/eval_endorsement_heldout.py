@@ -42,6 +42,7 @@ sampling temperature, and the seed, so reruns don't clobber each other.
 import argparse
 import json
 import os
+import random
 import sys
 
 import pandas as pd
@@ -57,7 +58,8 @@ sys.path.insert(0, os.path.join(_HERE, "core"))
 from explore_mitigations import OEQ_DATA_CSV, PAS_DATA_CSV, load_oeq, load_pas
 from gate_common import attempt_seed
 from gate_loop import make_judge, resample_until_pass
-from llama_local import DEFAULT_HF_MODEL_ID, load_llama, build_chat_input
+from llama_local import (DEFAULT_HF_MODEL_ID, load_llama, build_chat_input,
+                         eos_ids_for_generate)
 from perspective_shift import perspective_shift_post
 from train_data import final_ids_path
 
@@ -171,7 +173,7 @@ def generate_one(model, tokenizer, prompt, max_new_tokens, temperature, top_p, g
         num_return_sequences=1,
         do_sample=not greedy,
         pad_token_id=tokenizer.pad_token_id,
-        eos_token_id=tokenizer.eos_token_id,
+        eos_token_id=eos_ids_for_generate(model, tokenizer),
     )
     if not greedy:
         gen_kwargs["temperature"] = float(temperature)
@@ -273,6 +275,23 @@ def main():
                              "do not volunteer actions) at GENERATION time "
                              "only. The judge still scores the bare post. Tags "
                              "outputs '<adapter_tag>-besycophantic'.")
+    parser.add_argument("--k-shot-human", type=int, default=None,
+                        help="prompt-only baseline: k-shot in-context exemplar "
+                             "baseline. Draws --k-shot-human (prompt, "
+                             "human_response) pairs from --train-ids-file "
+                             "(freshly, independently per target prompt, seeded "
+                             "by --exemplar-seed) and presents them as REAL "
+                             "prior turns (user: exemplar post / assistant: "
+                             "exemplar human response) before the held-out "
+                             "post's own user turn. OEQ only (PAS has no paired "
+                             "human response). Tags outputs "
+                             "'<adapter_tag>-<k>shothuman'.")
+    parser.add_argument("--exemplar-seed", type=int, default=0,
+                        help="seed for --k-shot-human's per-prompt exemplar draw")
+    parser.add_argument("--train-ids-file", default=None,
+                        help="ids json for --k-shot-human's exemplar pool "
+                             "(the TRAIN split the eval's own --test-ids-file "
+                             "must be disjoint from)")
     parser.add_argument("--gen-suffix", default=None,
                         help="generic prompt-only baseline: append "
                              "'\\n\\n<text>' to each held-out post at "
@@ -434,15 +453,34 @@ def main():
     n_steers = sum(bool(x) for x in (args.be_critical, args.explicit,
                                      args.sharma_honesty, args.gen_suffix,
                                      args.gen_prefix, args.perspective_shift,
-                                     args.be_sycophantic))
+                                     args.be_sycophantic, args.k_shot_human))
     assert n_steers <= 1, (
         "--be-critical / --explicit / --sharma-honesty / --gen-suffix / "
-        "--gen-prefix / --perspective-shift / --be-sycophantic are mutually "
-        "exclusive (pick at most one prompt-only steer)"
+        "--gen-prefix / --perspective-shift / --be-sycophantic / "
+        "--k-shot-human are mutually exclusive (pick at most one prompt-only "
+        "steer)"
     )
     assert not (args.assess_narrative and not args.perspective_shift), (
         "--assess-narrative only applies with --perspective-shift"
     )
+    if args.k_shot_human:
+        assert env == "OEQ", "--k-shot-human needs a paired human response; PAS has none"
+        assert args.train_ids_file, "--k-shot-human requires --train-ids-file"
+    exemplar_pool = None
+    if args.k_shot_human:
+        human_df = load_oeq(OEQ_DATA_CSV)
+        human_df["id"] = human_df["id"].astype(str)
+        with open(args.train_ids_file) as f:
+            train_ids = [str(i) for i in json.load(f)]
+        by_id = human_df.set_index("id")
+        missing = [i for i in train_ids if i not in by_id.index]
+        assert not missing, f"{len(missing)} train ids not found in OEQ csv (e.g. {missing[:3]})"
+        exemplar_pool = [(by_id.at[i, "post_text"], by_id.at[i, "human_response"])
+                         for i in train_ids]
+        adapter_tag = f"{adapter_tag}-{args.k_shot_human}shothuman"
+        print(f"[k-shot] {args.k_shot_human}-shot human exemplar pool: "
+              f"{len(exemplar_pool)} train prompts, exemplar-seed={args.exemplar_seed}")
+
     gen_prefix = ""
     gen_suffix = ""
     if args.perspective_shift:
@@ -556,6 +594,10 @@ def main():
         out_dir = os.path.join(args.run_dir, "eval", "gate")
         os.makedirs(out_dir, exist_ok=True)
         tag = f"{tag}_gateloop" if args.gate_loop else f"{tag}_gateattempt{args.attempt}"
+    # k-shot exemplar draws are independent per target prompt but reproducible:
+    # one RNG seeded by --exemplar-seed, advanced in the fixed `pairs` order.
+    exemplar_rng = random.Random(args.exemplar_seed) if exemplar_pool is not None else None
+
     responses_path = os.path.join(out_dir, f"responses_{tag}.jsonl")
     with open(responses_path, "w") as rf:
         for k, (pid, post) in enumerate(pairs):
@@ -565,7 +607,20 @@ def main():
             # condition. `body` is what the prefix/suffix wrap and the model sees.
             rewritten = _rewrite(post) if args.perspective_shift else None
             body = rewritten if rewritten is not None else post
-            gen_prompt = gen_prefix + body + gen_suffix
+            if exemplar_pool is not None:
+                # Real multi-turn history: the k human replies sit in PRIOR
+                # assistant turns, then the held-out post is the final (and
+                # only unanswered) user turn. `body`/gen_prefix/gen_suffix are
+                # unused in this mode -- k-shot is mutually exclusive with the
+                # other steers.
+                exemplars = exemplar_rng.sample(exemplar_pool, args.k_shot_human)
+                gen_prompt = []
+                for ex_post, ex_human in exemplars:
+                    gen_prompt.append({"role": "user", "content": ex_post})
+                    gen_prompt.append({"role": "assistant", "content": ex_human})
+                gen_prompt.append({"role": "user", "content": body})
+            else:
+                gen_prompt = gen_prefix + body + gen_suffix
             if args.attempt:
                 torch.manual_seed(attempt_seed(post, args.attempt, args.seed))
             resp = generate_one(model, tokenizer, gen_prompt, args.sample_max_tokens,
@@ -612,6 +667,8 @@ def main():
             "explicit": args.explicit,
             "sharma_honesty": args.sharma_honesty,
             "be_sycophantic": args.be_sycophantic,
+            "k_shot_human": args.k_shot_human,
+            "exemplar_seed": args.exemplar_seed if args.k_shot_human else None,
             "gen_prefix": gen_prefix,
             "gen_suffix": gen_suffix,
             "perspective_shift": args.perspective_shift,
@@ -665,6 +722,8 @@ def main():
         "explicit": args.explicit,
         "sharma_honesty": args.sharma_honesty,
         "be_sycophantic": args.be_sycophantic,
+        "k_shot_human": args.k_shot_human,
+        "exemplar_seed": args.exemplar_seed if args.k_shot_human else None,
         "gen_prefix": gen_prefix,
         "gen_suffix": gen_suffix,
         "perspective_shift": args.perspective_shift,

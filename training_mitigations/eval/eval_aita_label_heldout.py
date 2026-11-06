@@ -428,9 +428,43 @@ def main():
         tag = re.sub(r"_shard\d+of\d+$", "", tag) + (
             "_gateloop" if args.gate_loop else f"_gateattempt{args.attempt}")
     responses_path = os.path.join(out_dir, f"responses_aita_{tag}.jsonl")
+    # OPT-IN mid-shard resume. A shard killed by the Slurm wall clock leaves a
+    # per-line-complete jsonl (rf.flush() below) but no csv, and the plain "w"
+    # open would throw every finished row away on the requeue. Touching
+    # `<jsonl>.resume` beside it means "reuse the rows already in this file and
+    # generate only the tail" -- added for the olmo3 AITA/FLIP shards that hit an
+    # 8h wall on 2026-09-04 at 926/1000, 491/500 and 464/500 rows. Inert unless
+    # that sentinel exists, so no other pipeline's behaviour changes. CAVEAT: the
+    # reused rows were drawn at a different point in the torch RNG stream than a
+    # clean run would draw them, so a resumed shard is not bit-reproducible from
+    # --seed; every row is still a temp-1.0 sample from the same adapter.
+    resumed = {}
+    if os.path.exists(responses_path + ".resume") and os.path.exists(responses_path):
+        with open(responses_path) as rf_in:
+            for line in rf_in:
+                line = line.strip()
+                if not line:
+                    continue
+                # A torn final line raises here on purpose: delete it by hand
+                # and requeue rather than silently regenerating the shard.
+                rec = json.loads(line)
+                resumed[str(rec["id"])] = rec
+        shard_ids = {str(i) for i in rows["id"].tolist()}
+        stray = [i for i in resumed if i not in shard_ids]
+        assert not stray, (
+            f"{len(stray)} ids in {responses_path} do not belong to this shard "
+            f"(e.g. {stray[:3]}) -- wrong shard or tag, refusing to resume")
+        print(f"[gen] resume: reusing {len(resumed)}/{len(rows)} rows already in "
+              f"{os.path.basename(responses_path)}", flush=True)
     records = []
-    with open(responses_path, "w") as rf:
+    with open(responses_path, "a" if resumed else "w") as rf:
         for k, row in rows.iterrows():
+            done_rec = resumed.get(str(row["id"]))
+            if done_rec is not None:
+                # Already on disk from the killed run -- keep it in row order for
+                # the csv, and do NOT re-append it to the jsonl.
+                records.append(done_rec)
+                continue
             if env == "AITA":
                 resp, rewritten, win, ntr = _respond(row["post_text"])
                 rec = {"id": row["id"], "post_text": row["post_text"],

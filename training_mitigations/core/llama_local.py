@@ -43,17 +43,68 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 DEFAULT_HF_MODEL_ID = "Qwen/Qwen3-8B"
 
 
-def _is_gemma4(model_id):
-    """True for Gemma-4 checkpoints (e.g. `google/gemma-4-12B-it`).
+def _is_multimodal_wrapper(model_id, cache_dir=None):
+    """True for checkpoints whose top-level architecture is a multimodal
+    `*ForConditionalGeneration` wrapper, which is NOT registered under
+    `AutoModelForCausalLM` and must load via `AutoModelForMultimodalLM`.
 
-    Gemma-4 ships as a UNIFIED text+image+audio model
-    (`architectures: ["Gemma4UnifiedForConditionalGeneration"]`,
-    `model_type: gemma4_unified`), which is NOT registered under
-    `AutoModelForCausalLM` and must be loaded via `AutoModelForMultimodalLM`.
-    Detection is by substring so it matches any Gemma-4 size/variant while
-    leaving Qwen / Llama / Gemma-2/3 on the default causal-LM path.
+    Covers Gemma-4 (`Gemma4UnifiedForConditionalGeneration`, model_type
+    `gemma4_unified`) and Mistral-3 (`Mistral3ForConditionalGeneration`,
+    model_type `mistral3`); verified 2026-07-28 that AutoModelForMultimodalLM
+    resolves both to exactly those concrete classes.
+
+    Assumption: the decision comes from the CHECKPOINT'S OWN CONFIG, not its
+    name. A name substring silently sends an unrecognised new family down the
+    causal-LM path, where it fails deep inside from_pretrained with an
+    unrelated-looking error. Text-only families (Qwen3ForCausalLM,
+    LlamaForCausalLM, ...) are unaffected — their architectures do not end in
+    ForConditionalGeneration.
+
+    Reading the config needs it present in the HF cache, which is already true
+    wherever the weights are about to be loaded from.
     """
-    return "gemma-4" in str(model_id).lower()
+    from transformers import AutoConfig
+    config = AutoConfig.from_pretrained(model_id, cache_dir=cache_dir)
+    architectures = getattr(config, "architectures", None) or []
+    assert architectures, (
+        f"{model_id} config declares no `architectures`; cannot tell whether it "
+        f"needs the multimodal or the causal-LM auto class"
+    )
+    return any(a.endswith("ForConditionalGeneration") for a in architectures)
+
+
+def assert_chat_template_round_trips(tokenizer, model_id):
+    """Fail loud unless `tokenize(render(x)) == apply_chat_template(tokenize=True)`.
+
+    `build_chat_input` below renders the chat template to a STRING and
+    re-tokenizes it, and `Trainer._retemplate_prompt` does the same because TRL's
+    DPO dataset API is string-based. Both silently assume the round trip is
+    lossless. It is for Qwen3-8B/32B and Gemma-4-12B (verified 2026-07-28), but
+    NOT for tokenizers whose control tokens are one-way: Ministral-3-14B's
+    mistral-common backend renders `[INST]` as text that never encodes back to
+    the control token, so BOS disappears and turn markers become literal
+    characters — a model trained and sampled outside its own instruction format,
+    with nothing in the logs to show for it.
+
+    Cheap enough to run once at load time, which is where the cost of a wrong
+    answer is lowest.
+    """
+    for prompt in ("hello world", "My friend ghosted me. AITA for being upset?"):
+        messages = [{"role": "user", "content": prompt}]
+        direct = tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, tokenize=True,
+            enable_thinking=False)
+        direct = list(direct["input_ids"]) if hasattr(direct, "keys") else list(direct)
+        text = tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, tokenize=False,
+            enable_thinking=False)
+        round_trip = list(tokenizer(text, add_special_tokens=False).input_ids)
+        assert direct == round_trip, (
+            f"{model_id}: chat template does not survive render-then-retokenize "
+            f"({len(direct)} vs {len(round_trip)} tokens). build_chat_input and "
+            f"Trainer._retemplate_prompt both depend on it; this tokenizer "
+            f"({type(tokenizer).__name__}) would feed the model malformed prompts."
+        )
 
 
 def load_llama(
@@ -99,8 +150,10 @@ def load_llama(
         dtype = torch.bfloat16 if on_cuda else torch.float32
 
     tokenizer = AutoTokenizer.from_pretrained(model_id, cache_dir=cache_dir)
-    if _is_gemma4(model_id):
-        # Gemma-4 (gemma4_unified) loads via AutoModelForMultimodalLM, not
+    assert_chat_template_round_trips(tokenizer, model_id)
+    if _is_multimodal_wrapper(model_id, cache_dir):
+        # Multimodal wrappers (gemma4_unified, mistral3) load via
+        # AutoModelForMultimodalLM, not
         # AutoModelForCausalLM. We train TEXT-ONLY: the tokenizer above already
         # carries the -it chat template, and a text-only forward (input_ids, no
         # pixel_values/audio) never enters the vision/audio input projections
@@ -138,12 +191,62 @@ def load_llama(
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
+    # Restore the checkpoint's own stop-token set. transformers ALIGNS
+    # generation_config.eos_token_id to the tokenizer's single eos at load time
+    # ("Updated tokens: {'eos_token_id': ...}"), which for GLM-4 throws away the
+    # two ids that actually end an assistant turn. Re-read it from disk so
+    # eos_ids_for_generate sees the real list rather than the collapsed one.
+    if os.environ.get("GEN_EOS_FROM_GENERATION_CONFIG") == "1":
+        from transformers import GenerationConfig
+        disk = GenerationConfig.from_pretrained(model_id, cache_dir=cache_dir)
+        assert disk.eos_token_id is not None, (
+            f"{model_id}: GEN_EOS_FROM_GENERATION_CONFIG=1 but its "
+            f"generation_config declares no eos_token_id")
+        model.generation_config.eos_token_id = disk.eos_token_id
+        print(f"[llama_local] stop ids restored from generation_config: "
+              f"{disk.eos_token_id} (tokenizer alone would give "
+              f"{tokenizer.eos_token_id})")
+
     return model, tokenizer
 
 
+def eos_ids_for_generate(model, tokenizer):
+    """Stop-token id(s) to pass to `model.generate()`.
+
+    Default is `tokenizer.eos_token_id` -- what every existing arm used, and
+    CORRECT for Qwen3 and phi-4, whose tokenizer eos (<|im_end|>) IS the token
+    that ends an assistant turn.
+
+    GEN_EOS_FROM_GENERATION_CONFIG=1 uses the checkpoint's own list instead.
+    GLM-4 needs it: its tokenizer eos is <|endoftext|> (151329) but its chat
+    template ends an assistant turn with <|user|> (151336) --
+    "<|assistant|>\\nhello<|user|>\\n..." with no <|endoftext|> anywhere -- so a
+    stop set of {151329} never fires. Measured on GLM-4-9B (job 402399): every
+    generation ran to the full 512-token cap and kept writing past the end of the
+    answer, versus 195/242 tokens and a clean stop with the full list.
+
+    Opt-in rather than always-on so pre-existing arms still generate
+    byte-identically: Qwen's and phi-4's generation_config ALSO list
+    <|endoftext|>, which would introduce a new stop token for them.
+    """
+    if os.environ.get("GEN_EOS_FROM_GENERATION_CONFIG") != "1":
+        return tokenizer.eos_token_id
+    eos = getattr(getattr(model, "generation_config", None), "eos_token_id", None)
+    assert eos is not None, (
+        "GEN_EOS_FROM_GENERATION_CONFIG=1 but the model exposes no "
+        "generation_config.eos_token_id; load via load_llama so it is restored")
+    return eos
+
+
 def build_chat_input(tokenizer, prompt, system, device):
-    """Build the templated input_ids for a single user turn (plus optional
-    system turn) using the model's chat template.
+    """Build the templated input_ids for one user turn (plus optional system
+    turn), or for a full pre-built multi-turn conversation, using the model's
+    chat template.
+
+    `prompt` is either a bare string (single user turn -- the original
+    contract) or a list of {"role","content"} dicts (e.g. k-shot exemplar
+    turns followed by the real target turn); `system`, if given, is
+    prepended as a system turn in both cases.
 
     Assumptions:
       - The tokenizer has a chat template registered (Llama-3.1 instruct
@@ -155,7 +258,10 @@ def build_chat_input(tokenizer, prompt, system, device):
     messages = []
     if system is not None:
         messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
+    if isinstance(prompt, str):
+        messages.append({"role": "user", "content": prompt})
+    else:
+        messages.extend(prompt)
     # Two-step (render-then-tokenize) is the only call shape that behaves
     # identically across the 4.x → 5.x transformers boundary: 4.x's
     # `apply_chat_template` returned a list[int] by default, 5.x's
@@ -204,7 +310,7 @@ def make_call_llm(model, tokenizer, do_sample=False, temperature=1.0):
             max_new_tokens=int(max_tokens),
             do_sample=bool(do_sample),
             pad_token_id=tokenizer.pad_token_id,
-            eos_token_id=tokenizer.eos_token_id,
+            eos_token_id=eos_ids_for_generate(model, tokenizer),
         )
         if do_sample:
             gen_kwargs["temperature"] = float(temperature)

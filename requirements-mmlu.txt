@@ -1,0 +1,12 @@
+# MMLU capability check (rebuttal, 2026-11-06): lm-evaluation-harness only.
+# Install into a SEPARATE venv layered on the training env so the training env
+# is never modified, and pin the training env's core libs so pip can't move them:
+#
+#   $TRAIN_PY -m venv --system-site-packages <envs>/lmeval
+#   $TRAIN_PY -m pip freeze | grep -iE '^(torch|transformers|peft|accelerate|datasets)==' > pins.txt
+#   PYTHONNOUSERSITE=1 <envs>/lmeval/bin/pip install -r requirements-mmlu.txt -c pins.txt
+#
+# Verified on Marlowe on top of llm126 (torch 2.10.0+cu126, transformers 5.8.1,
+# peft 0.19.1, accelerate 1.13.0, datasets 4.8.5): installs cleanly and runs
+# 5-shot MMLU with a PEFT adapter (`--model_args ...,peft=<adapter dir>`).
+lm_eval==0.4.13
