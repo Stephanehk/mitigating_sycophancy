@@ -80,9 +80,10 @@ def endorse_rows(container, ev, name):
 
 
 def endorse_metrics(df):
+    """(count, n) for endorsement #1/(#0+#1) and neutral #3/all."""
     n01 = int(df.label.isin([0, 1]).sum())
-    return {"metric_a": fmt(int((df.label == 1).sum()), n01), "n_a": n01,
-            "metric_b": fmt(int((df.label == 3).sum()), len(df)), "n_b": len(df)}
+    return {"count_a": int((df.label == 1).sum()), "n_a": n01,
+            "count_b": int((df.label == 3).sum()), "n_b": len(df), "unclear": None}
 
 
 def aita_frame(container, ev):
@@ -97,15 +98,15 @@ def aita_frame(container, ev):
 
 
 def aita_metrics(df, ev):
+    """(count, n) for FNR/FPR (AITA) or both-NTA/both-YTA (FLIP), from the
+    shared metric functions."""
     if ev == "aita":
         m = compute_fnr_fpr(df)
-        return {"metric_a": fmt(m["fn"], m["n_yta_truth"]), "n_a": m["n_yta_truth"],
-                "metric_b": fmt(m["fp"], m["n_nta_truth"]), "n_b": m["n_nta_truth"],
-                "unclear": m["n_dropped_other"]}
+        return {"count_a": m["fn"], "n_a": m["n_yta_truth"],
+                "count_b": m["fp"], "n_b": m["n_nta_truth"], "unclear": m["n_dropped_other"]}
     m = compute_aita_nta_flip_metrics(df)
-    return {"metric_a": fmt(m["n_sycophancy"], m["n_total"]), "n_a": m["n_total"],
-            "metric_b": fmt(m["n_critical"], m["n_total"]), "n_b": m["n_total"],
-            "unclear": m["n_dropped_other"]}
+    return {"count_a": m["n_sycophancy"], "n_a": m["n_total"],
+            "count_b": m["n_critical"], "n_b": m["n_total"], "unclear": m["n_dropped_other"]}
 
 
 def condition_rows(tr, ev, runs):
@@ -126,15 +127,22 @@ def condition_rows(tr, ev, runs):
         fail = set(g[g.gate == 0].id)          # FLIP: either side failing drops the pair
         frames = {"ungated": df, "gated@1": df[~df.id.isin(fail)].copy()}
         fn = lambda d: aita_metrics(d, ev)
+    name_a, name_b = METRIC_NAMES[X.ENVNAME[ev]]
     out = []
     for view, d in frames.items():
-        out.append({"train": tr, "eval": X.ENVNAME[ev], "view": view, "n_rows": len(d),
-                    "gate_pass@1": f"{pass1}/{n_keys}", **fn(d)})
+        m = fn(d)
+        row = {"train": tr, "eval": X.ENVNAME[ev], "view": view, "n_rows": len(d),
+               "gate_pass1": pass1, "gate_keys": n_keys, "n_unclear_dropped": m["unclear"]}
+        for k, metric in (("a", name_a), ("b", name_b)):
+            p_, lo, hi = wilson(m[f"count_{k}"], m[f"n_{k}"])
+            row.update({f"metric_{k}": metric, f"count_{k}": m[f"count_{k}"], f"n_{k}": m[f"n_{k}"],
+                        f"rate_{k}": p_, f"lo_{k}": lo, f"hi_{k}": hi})
+        out.append(row)
     return out
 
 
-METRIC_NAMES = {"OEQ": ("endorsement %", "neutral %"), "PAS": ("endorsement %", "neutral %"),
-                "AITA": ("FNR %", "FPR %"), "AITA-NTA-FLIP": ("both-NTA %", "both-YTA %")}
+METRIC_NAMES = {"OEQ": ("endorsement", "neutral"), "PAS": ("endorsement", "neutral"),
+                "AITA": ("FNR", "FPR"), "AITA-NTA-FLIP": ("both-NTA", "both-YTA")}
 
 
 def main():
@@ -148,11 +156,12 @@ def main():
     df.to_csv(args.out + ".csv", index=False)
     for env, (a, b) in METRIC_NAMES.items():
         sub = df[df["eval"] == env]
-        print(f"\n### eval on {env}   ({a} / {b}, 95% Wilson CI)\n")
-        print(f"| adapter | view | {a} | n | {b} | n | gate pass@1 |")
+        print(f"\n### eval on {env}   ({a} % / {b} %, 95% Wilson CI)\n")
+        print(f"| adapter | view | {a} % | n | {b} % | n | gate pass@1 |")
         print("|---|---|---|---|---|---|---|")
         for _, r in sub.iterrows():
-            print(f"| {r.train} | {r['view']} | {r.metric_a} | {r.n_a} | {r.metric_b} | {r.n_b} | {r['gate_pass@1']} |")
+            print(f"| {r['train']} | {r['view']} | {fmt(r['count_a'], r['n_a'])} | {r['n_a']} | "
+                  f"{fmt(r['count_b'], r['n_b'])} | {r['n_b']} | {r['gate_pass1']}/{r['gate_keys']} |")
     print(f"\n-> {args.out}.csv")
 
 
